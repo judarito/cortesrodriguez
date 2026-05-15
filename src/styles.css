@@ -53,22 +53,15 @@ img {
   min-height: 128px;
   padding: 10px clamp(20px, 6vw, 92px) 16px;
   background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 1px 0 rgba(6, 38, 83, 0.08);
+  box-shadow:
+    0 1px 0 rgba(6, 38, 83, 0.08),
+    0 18px 28px rgba(6, 38, 83, 0.18),
+    0 36px 58px rgba(6, 38, 83, 0.12);
   backdrop-filter: blur(14px);
 }
 
 .header::after {
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  left: 0;
-  z-index: -1;
-  height: 26px;
-  content: "";
-  background: var(--white);
-  border-bottom-left-radius: 38px;
-  box-shadow: 0 1px 0 rgba(6, 38, 83, 0.08);
-  clip-path: polygon(0 0, 44% 0, 46% 100%, 100% 100%, 100% 0, 0 0);
+  display: none;
 }
 
 .brand {
@@ -240,6 +233,7 @@ img {
   background-position: center center;
   background-size: cover;
   isolation: isolate;
+  overflow: hidden;
 }
 
 .hero::before {
@@ -1159,7 +1153,7 @@ h1 span {
 
 @media (max-width: 1120px) {
   .header {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 18px;
     min-height: 96px;
   }
@@ -1198,6 +1192,13 @@ h1 span {
   .hero {
     grid-template-columns: 1fr;
     gap: 26px;
+    min-height: auto;
+    padding-top: 46px;
+    padding-bottom: 46px;
+  }
+
+  .hero-visual-space {
+    display: none;
   }
 
   .service-grid,
@@ -1248,6 +1249,7 @@ h1 span {
 
 @media (max-width: 760px) {
   .header {
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 10px 16px;
   }
 
@@ -1315,6 +1317,7 @@ h1 span {
   }
 
   .hero-visual-space {
+    display: block;
     order: -1;
     min-height: clamp(32px, 9vw, 52px);
     margin: 0 -20px;
