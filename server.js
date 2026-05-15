@@ -1,5 +1,6 @@
 import express from 'express'
 import crypto from 'node:crypto'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer as createViteServer } from 'vite'
@@ -17,7 +18,32 @@ const contentCacheTtlMs = Number(process.env.CONTENT_CACHE_TTL_SECONDS || 300) *
 let contentCache = null
 
 const app = express()
-app.use(express.json({ limit: '1mb' }))
+const localImageDir = path.join(__dirname, 'local-r2', 'images')
+
+app.post('/api/admin/images', express.raw({ type: 'image/webp', limit: '480kb' }), requireAdmin, async (req, res) => {
+  try {
+    if (!req.body?.length) {
+      res.status(400).json({ error: 'La imagen está vacía.' })
+      return
+    }
+
+    const key = `gallery/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.webp`
+    const filePath = path.join(localImageDir, key)
+    await fs.mkdir(path.dirname(filePath), { recursive: true })
+    await fs.writeFile(filePath, req.body)
+    res.json({ key, url: `/images/${key}` })
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: 'No se pudo subir la imagen.' })
+  }
+})
+
+app.use('/images', express.static(localImageDir, {
+  immutable: true,
+  maxAge: '1y',
+}))
+
+app.use(express.json({ limit: '10mb' }))
 
 await ensureSchema()
 

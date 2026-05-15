@@ -40,3 +40,22 @@ export async function saveContent(content, jwt) {
 
   return response.json()
 }
+
+export async function uploadImage(blob, jwt, fileName = 'imagen.webp') {
+  const response = await fetch('/api/admin/images', {
+    method: 'POST',
+    headers: {
+      'Content-Type': blob.type || 'image/webp',
+      'X-File-Name': fileName,
+      Authorization: `Bearer ${jwt}`,
+    },
+    body: blob,
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'No se pudo subir la imagen.' }))
+    throw new Error(error.error || 'No se pudo subir la imagen.')
+  }
+
+  return response.json()
+}

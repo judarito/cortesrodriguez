@@ -31,6 +31,18 @@ const es = {
     title: 'Empresas que confían en nosotros',
   },
   clients: ['Grupo Andino', 'Industrias del Valle', 'Agroexport Colombia', 'Tecno Mecánica', 'Fashion Global', 'Suministros del Caribe'],
+  galleryHeading: {
+    kicker: 'Eventos y noticias',
+    title: 'Momentos que compartimos con nuestros clientes',
+  },
+  galleryItems: [
+    {
+      title: 'Actualidad en comercio exterior',
+      text: 'Comparta aquí fotografías de eventos, capacitaciones o noticias relevantes para sus clientes.',
+      image: '',
+      alt: 'Evento de Cortes Rodriguez Asesores',
+    },
+  ],
   testimonialsHeading: {
     kicker: 'Testimonios',
     title: 'Lo que dicen nuestros clientes',
@@ -140,6 +152,18 @@ const en = {
     title: 'Companies that trust us',
   },
   clients: ['Grupo Andino', 'Industrias del Valle', 'Agroexport Colombia', 'Tecno Mecánica', 'Fashion Global', 'Suministros del Caribe'],
+  galleryHeading: {
+    kicker: 'Events and news',
+    title: 'Moments we share with our clients',
+  },
+  galleryItems: [
+    {
+      title: 'Foreign trade updates',
+      text: 'Share photos from events, training sessions, or relevant news for your clients here.',
+      image: '',
+      alt: 'Cortes Rodriguez Asesores event',
+    },
+  ],
   testimonialsHeading: {
     kicker: 'Testimonials',
     title: 'What our clients say',
@@ -254,12 +278,14 @@ function mergeLocale(defaultLocale, locale) {
     hero: { ...defaultLocale.hero, ...locale?.hero },
     servicesHeading: { ...defaultLocale.servicesHeading, ...locale?.servicesHeading },
     clientsHeading: { ...defaultLocale.clientsHeading, ...locale?.clientsHeading },
+    galleryHeading: { ...defaultLocale.galleryHeading, ...locale?.galleryHeading },
     testimonialsHeading: { ...defaultLocale.testimonialsHeading, ...locale?.testimonialsHeading },
     reasonsHeading: { ...defaultLocale.reasonsHeading, ...locale?.reasonsHeading },
     processHeading: { ...defaultLocale.processHeading, ...locale?.processHeading },
     cta: { ...defaultLocale.cta, ...locale?.cta },
     footer: { ...defaultLocale.footer, ...locale?.footer },
     contact: { ...defaultLocale.contact, ...locale?.contact },
+    galleryItems: locale?.galleryItems || defaultLocale.galleryItems,
     socialLinks: locale?.socialLinks || defaultLocale.socialLinks,
   }
 }

@@ -22,6 +22,7 @@ import {
   Mail,
   MapPin,
   Menu,
+  ImagePlus,
   Phone,
   Plus,
   Quote,
@@ -36,9 +37,9 @@ import {
   UsersRound,
   X,
 } from 'lucide-vue-next'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { cloneDefaultContent } from './contentDefaults'
-import { fetchContent, loginAdmin, saveContent } from './lib/contentApi'
+import { fetchContent, loginAdmin, saveContent, uploadImage } from './lib/contentApi'
 import logoUrl from './assets/logo-cortes-rodriguez.png'
 import heroBgUrl from './assets/hero-logistica-aduanera.png'
 
@@ -79,6 +80,14 @@ const adminJwt = ref(localStorage.getItem('adminJwt') || '')
 const loginForm = ref({ email: '', password: '' })
 const adminStatus = ref('')
 const loading = ref(true)
+const hasUnsavedChanges = ref(false)
+const clientIndex = ref(0)
+const galleryIndex = ref(0)
+let carouselTimer
+
+const maxUploadBytes = 8 * 1024 * 1024
+const maxOptimizedImageBytes = 480 * 1024
+const maxImageDimension = 1600
 
 function getInitialLocale() {
   const savedLocale = localStorage.getItem('locale')
@@ -95,12 +104,29 @@ const draftLocale = computed(() => draft.value.locales?.[adminLocale.value] || d
 const navItems = computed(() => site.value.navItems || [])
 const services = computed(() => site.value.services || [])
 const clients = computed(() => site.value.clients || [])
+const galleryItems = computed(() => {
+  const items = site.value.galleryItems || []
+  const itemsWithImages = items.filter((item) => item.image)
+  return itemsWithImages.length ? itemsWithImages : items
+})
 const testimonials = computed(() => site.value.testimonials || [])
 const reasons = computed(() => site.value.reasons || [])
 const stats = computed(() => site.value.stats || [])
 const steps = computed(() => site.value.steps || [])
 const socialLinks = computed(() => site.value.socialLinks || [])
 const testimonialIndex = ref(0)
+const activeClientIndex = computed(() => clients.value.length ? clientIndex.value % clients.value.length : 0)
+const activeGalleryIndex = computed(() => galleryItems.value.length ? galleryIndex.value % galleryItems.value.length : 0)
+const visibleClients = computed(() => {
+  const items = clients.value
+  if (!items.length) return []
+  return [0, 1, 2, 3].map((offset) => items[(activeClientIndex.value + offset) % items.length]).slice(0, Math.min(4, items.length))
+})
+const activeGalleryItem = computed(() => {
+  const items = galleryItems.value
+  if (!items.length) return null
+  return items[activeGalleryIndex.value]
+})
 const visibleTestimonials = computed(() => {
   const items = testimonials.value
   if (!items.length) return []
@@ -146,6 +172,34 @@ function removeItem(collection, index) {
   collection.splice(index, 1)
 }
 
+function nextClient() {
+  if (!clients.value.length) return
+  clientIndex.value = (clientIndex.value + 1) % clients.value.length
+}
+
+function previousClient() {
+  if (!clients.value.length) return
+  clientIndex.value = (clientIndex.value - 1 + clients.value.length) % clients.value.length
+}
+
+function goToClient(index) {
+  clientIndex.value = index
+}
+
+function nextGalleryItem() {
+  if (!galleryItems.value.length) return
+  galleryIndex.value = (galleryIndex.value + 1) % galleryItems.value.length
+}
+
+function previousGalleryItem() {
+  if (!galleryItems.value.length) return
+  galleryIndex.value = (galleryIndex.value - 1 + galleryItems.value.length) % galleryItems.value.length
+}
+
+function goToGalleryItem(index) {
+  galleryIndex.value = index
+}
+
 function nextTestimonial() {
   if (!testimonials.value.length) return
   testimonialIndex.value = (testimonialIndex.value + 1) % testimonials.value.length
@@ -164,6 +218,9 @@ async function loadContent() {
   loading.value = true
   content.value = await fetchContent()
   draft.value = clone(content.value)
+  hasUnsavedChanges.value = false
+  clientIndex.value = 0
+  galleryIndex.value = 0
   loading.value = false
 }
 
@@ -197,15 +254,127 @@ function logout() {
 async function persistContent() {
   adminStatus.value = 'Guardando...'
   try {
-    await saveContent(draft.value, adminJwt.value)
-    content.value = clone(draft.value)
+    const cleanDraft = stripTransientGalleryState(draft.value)
+    validateOptimizedImages(cleanDraft)
+    await saveContent(cleanDraft, adminJwt.value)
+    content.value = clone(cleanDraft)
+    draft.value = clone(cleanDraft)
+    hasUnsavedChanges.value = false
     adminStatus.value = 'Cambios guardados.'
   } catch (error) {
     adminStatus.value = error.message
   }
 }
 
-onMounted(loadContent)
+function stripTransientGalleryState(value) {
+  const cleanValue = clone(value)
+  Object.values(cleanValue.locales || {}).forEach((locale) => {
+    locale.galleryItems = (locale.galleryItems || []).map(({ imageStatus, ...item }) => item)
+  })
+  return cleanValue
+}
+
+function validateOptimizedImages(value) {
+  Object.values(value.locales || {}).forEach((locale) => {
+    ;(locale.galleryItems || []).forEach((item) => {
+      if (!item.image) return
+      if (item.image.startsWith('data:')) {
+        throw new Error('Hay una imagen pendiente de subir. Vuelve a seleccionarla para enviarla al almacenamiento.')
+      }
+    })
+  })
+}
+
+async function handleGalleryImageUpload(event, item) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+
+  try {
+    item.imageStatus = 'Optimizando imagen...'
+    const optimized = await optimizeImage(file)
+    item.imageStatus = `Subiendo imagen optimizada: ${formatBytes(optimized.blob.size)}.`
+    const uploaded = await uploadImage(optimized.blob, adminJwt.value, file.name)
+    item.image = uploaded.url
+    item.imageKey = uploaded.key
+    item.imageStatus = `Imagen subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
+    if (!item.alt) item.alt = item.title || 'Imagen del sitio web'
+  } catch (error) {
+    item.imageStatus = error.message
+  }
+}
+
+async function optimizeImage(file) {
+  if (!file.type.startsWith('image/')) throw new Error('Selecciona una imagen válida.')
+  if (file.size > maxUploadBytes) throw new Error(`La imagen original no debe superar ${formatBytes(maxUploadBytes)}.`)
+
+  const image = await loadImage(file)
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d')
+
+  for (const maxDimension of [maxImageDimension, 1400, 1200, 1000]) {
+    const scale = Math.min(1, maxDimension / Math.max(image.width, image.height))
+    const width = Math.round(image.width * scale)
+    const height = Math.round(image.height * scale)
+    canvas.width = width
+    canvas.height = height
+    context.drawImage(image, 0, 0, width, height)
+
+    for (const quality of [0.92, 0.88, 0.84, 0.8, 0.76]) {
+      const blob = await canvasToBlob(canvas, 'image/webp', quality)
+      if (blob.size <= maxOptimizedImageBytes) return { blob, width, height }
+    }
+  }
+
+  throw new Error(`No se pudo optimizar por debajo de ${formatBytes(maxOptimizedImageBytes)}. Prueba con una imagen menos pesada.`)
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob)
+      else reject(new Error('No se pudo optimizar la imagen.'))
+    }, type, quality)
+  })
+}
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const image = new Image()
+    image.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve(image)
+    }
+    image.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('No se pudo leer la imagen.'))
+    }
+    image.src = url
+  })
+}
+
+function formatBytes(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${Math.round(bytes / 1024)} KB`
+}
+
+onMounted(() => {
+  loadContent()
+  carouselTimer = window.setInterval(() => {
+    nextClient()
+    nextGalleryItem()
+  }, 5200)
+})
+
+onBeforeUnmount(() => {
+  if (carouselTimer) window.clearInterval(carouselTimer)
+})
+
+watch(draft, () => {
+  if (loading.value) return
+  hasUnsavedChanges.value = JSON.stringify(stripTransientGalleryState(draft.value)) !== JSON.stringify(content.value)
+}, { deep: true })
 </script>
 
 <template>
@@ -214,7 +383,7 @@ onMounted(loadContent)
       <form class="login-card" @submit.prevent="login">
         <img :src="logoUrl" alt="" />
         <h1>Acceso administrativo</h1>
-        <p>Ingresa tus credenciales para gestionar el contenido de la landing.</p>
+        <p>Ingresa tus credenciales para gestionar el contenido del sitio web.</p>
         <label>
           Correo
           <input v-model="loginForm.email" type="email" autocomplete="username" />
@@ -224,7 +393,7 @@ onMounted(loadContent)
           <input v-model="loginForm.password" type="password" autocomplete="current-password" />
         </label>
         <button class="admin-save" type="submit"><LogIn :size="18" /> Entrar</button>
-        <a class="admin-link" href="/">Volver a la landing</a>
+        <a class="admin-link" href="/">Volver al sitio web</a>
         <span class="admin-status">{{ adminStatus }}</span>
       </form>
     </main>
@@ -242,18 +411,21 @@ onMounted(loadContent)
       <aside class="admin-sidebar">
         <img :src="logoUrl" alt="" />
         <h1>Administrador</h1>
-        <p>Edita el contenido de la landing conectado a Turso/libSQL.</p>
+        <p>Actualiza los textos, enlaces e información que aparecen en el sitio web.</p>
         <button class="admin-save" type="button" @click="persistContent">
           <Save :size="18" /> Guardar cambios
         </button>
         <button class="admin-link" type="button" @click="logout">Cerrar sesión</button>
-        <a class="admin-link" href="/">Ver landing</a>
+        <a class="admin-link" href="/">Ver sitio web</a>
         <span class="admin-status">{{ adminStatus }}</span>
       </aside>
 
       <section class="admin-editor" :aria-busy="loading">
         <div class="admin-section">
           <h2>Idioma del contenido</h2>
+          <p class="admin-note" :class="{ active: hasUnsavedChanges }">
+            {{ hasUnsavedChanges ? 'Tienes cambios sin guardar. Presiona "Guardar cambios" para publicarlos en el sitio web.' : 'Cuando realices cualquier cambio, presiona "Guardar cambios" para publicarlo en el sitio web.' }}
+          </p>
           <div class="language-tabs">
             <button type="button" :class="{ active: adminLocale === 'es' }" @click="adminLocale = 'es'">Contenido en español</button>
             <button type="button" :class="{ active: adminLocale === 'en' }" @click="adminLocale = 'en'">Contenido en inglés</button>
@@ -310,6 +482,36 @@ onMounted(loadContent)
             </label>
           </div>
           <button type="button" class="admin-add" @click="addItem(draftLocale.clients, 'Nuevo cliente')"><Plus :size="16" /> Agregar cliente</button>
+        </div>
+
+        <div class="admin-section">
+          <h2>Eventos y noticias</h2>
+          <label>Etiqueta <input v-model="draftLocale.galleryHeading.kicker" /></label>
+          <label>Título <input v-model="draftLocale.galleryHeading.title" /></label>
+          <article v-for="(item, index) in draftLocale.galleryItems" :key="index" class="admin-card gallery-admin-card">
+            <div class="image-preview">
+              <img v-if="item.image" :src="item.image" :alt="item.alt || item.title" />
+              <ImagePlus v-else :size="34" />
+            </div>
+            <div class="gallery-admin-fields">
+              <input v-model="item.title" placeholder="Título" />
+              <textarea v-model="item.text" rows="2" placeholder="Descripción o noticia"></textarea>
+              <input v-model="item.alt" placeholder="Texto alternativo de la imagen" />
+              <label class="file-field">
+                Subir foto optimizada
+                <input type="file" accept="image/png,image/jpeg,image/webp" @change="handleGalleryImageUpload($event, item)" />
+              </label>
+              <small>{{ item.imageStatus || `Máximo ${formatBytes(maxUploadBytes)}. Se guarda optimizada hasta ${formatBytes(maxOptimizedImageBytes)}.` }}</small>
+            </div>
+            <button type="button" class="danger" @click="removeItem(draftLocale.galleryItems, index)"><Trash2 :size="16" /> Eliminar</button>
+          </article>
+          <button
+            type="button"
+            class="admin-add"
+            @click="addItem(draftLocale.galleryItems, { title: 'Nuevo evento', text: '', image: '', alt: 'Evento de Cortes Rodriguez Asesores' })"
+          >
+            <Plus :size="16" /> Agregar evento o noticia
+          </button>
         </div>
 
         <div class="admin-section">
@@ -446,7 +648,7 @@ onMounted(loadContent)
       </nav>
 
       <main>
-        <section id="inicio" class="hero" :style="{ backgroundImage: `url(${heroBgUrl})` }">
+        <section id="inicio" class="hero" :style="{ '--hero-bg': `url(${heroBgUrl})` }">
           <div class="hero-copy">
             <p class="eyebrow">{{ site.hero.kicker }}</p>
             <h1>
@@ -478,12 +680,62 @@ onMounted(loadContent)
         </section>
 
         <section id="clientes" class="section client-section">
-          <p class="section-kicker">{{ site.clientsHeading.kicker }}</p>
-          <h2>{{ site.clientsHeading.title }}</h2>
-          <div class="client-strip">
-            <div v-for="client in clients" :key="client" class="client-logo">{{ client }}</div>
+          <div class="section-heading-row">
+            <div>
+              <p class="section-kicker">{{ site.clientsHeading.kicker }}</p>
+              <h2>{{ site.clientsHeading.title }}</h2>
+            </div>
+            <div class="slider-controls" aria-label="Controles de clientes">
+              <button type="button" aria-label="Cliente anterior" @click="previousClient"><ChevronLeft :size="20" /></button>
+              <button type="button" aria-label="Cliente siguiente" @click="nextClient"><ChevronRight :size="20" /></button>
+            </div>
           </div>
-          <div class="slider-dots" aria-hidden="true"><span class="active"></span><span></span><span></span><span></span></div>
+          <div class="client-strip">
+            <div v-for="client in visibleClients" :key="client" class="client-logo">{{ client }}</div>
+          </div>
+          <div class="slider-dots" aria-label="Seleccionar cliente">
+            <button
+              v-for="(_, index) in clients"
+              :key="index"
+              type="button"
+              :class="{ active: index === activeClientIndex }"
+              :aria-label="`Ver cliente ${index + 1}`"
+              @click="goToClient(index)"
+            ></button>
+          </div>
+        </section>
+
+        <section class="section gallery-section">
+          <div class="section-heading-row">
+            <div>
+              <p class="section-kicker">{{ site.galleryHeading.kicker }}</p>
+              <h2>{{ site.galleryHeading.title }}</h2>
+            </div>
+            <div class="slider-controls" aria-label="Controles de eventos y noticias">
+              <button type="button" aria-label="Foto anterior" @click="previousGalleryItem"><ChevronLeft :size="20" /></button>
+              <button type="button" aria-label="Foto siguiente" @click="nextGalleryItem"><ChevronRight :size="20" /></button>
+            </div>
+          </div>
+          <article class="gallery-card">
+            <img v-if="activeGalleryItem?.image" :src="activeGalleryItem.image" :alt="activeGalleryItem.alt || activeGalleryItem.title" />
+            <div v-else class="gallery-placeholder">
+              <ImagePlus :size="48" />
+            </div>
+            <div>
+              <h3>{{ activeGalleryItem?.title || site.galleryHeading.title }}</h3>
+              <p>{{ activeGalleryItem?.text || 'Muy pronto compartiremos fotos, eventos y noticias.' }}</p>
+            </div>
+          </article>
+          <div v-if="galleryItems.length > 1" class="slider-dots" aria-label="Seleccionar foto">
+            <button
+              v-for="(_, index) in galleryItems"
+              :key="index"
+              type="button"
+              :class="{ active: index === activeGalleryIndex }"
+              :aria-label="`Ver foto ${index + 1}`"
+              @click="goToGalleryItem(index)"
+            ></button>
+          </div>
         </section>
 
         <section id="nosotros" class="section testimonials-section">

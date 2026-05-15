@@ -1,11 +1,22 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "cortes-rodriguez-asesores",
-  "main": "worker/index.js",
-  "compatibility_date": "2026-05-13",
-  "assets": {
-    "directory": "./dist",
-    "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "cortes-rodriguez-asesores",
+	"main": "worker/index.js",
+	"compatibility_date": "2026-05-13",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application"
+	},
+	"r2_buckets": [
+		{
+			"binding": "GALLERY_IMAGES",
+			"bucket_name": "cortes-rodriguez-asesores-images"
+		},
+		{
+			"bucket_name": "cortes-rodriguez-asesores-images",
+			"binding": "cortes_rodriguez_asesores_images",
+			"remote": true
+		}
+	]
 }

@@ -44,6 +44,15 @@ export default {
         return json({ ok: true }, request)
       }
 
+      if (url.pathname === '/api/admin/images' && request.method === 'POST') {
+        await requireJwt(request, env)
+        return uploadImage(request, env)
+      }
+
+      if (url.pathname.startsWith('/images/') && request.method === 'GET') {
+        return getImage(request, env)
+      }
+
       return env.ASSETS.fetch(request)
     } catch (error) {
       console.error(error)
@@ -139,6 +148,47 @@ async function saveLandingContent(env, content) {
     `,
     args: [JSON.stringify(content)],
   })
+}
+
+async function uploadImage(request, env) {
+  if (!env.GALLERY_IMAGES) throw new Error('Falta configurar el bucket R2 GALLERY_IMAGES.')
+
+  const contentType = request.headers.get('content-type') || ''
+  if (!contentType.startsWith('image/webp')) throw new HttpError('Solo se aceptan imágenes WebP optimizadas.', 400)
+
+  const bytes = await request.arrayBuffer()
+  if (!bytes.byteLength) throw new HttpError('La imagen está vacía.', 400)
+  if (bytes.byteLength > 480 * 1024) throw new HttpError('La imagen optimizada supera el tamaño permitido.', 400)
+
+  const key = `gallery/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.webp`
+  await env.GALLERY_IMAGES.put(key, bytes, {
+    httpMetadata: {
+      contentType: 'image/webp',
+      cacheControl: 'public, max-age=31536000, immutable',
+    },
+    customMetadata: {
+      originalName: request.headers.get('x-file-name') || 'imagen.webp',
+    },
+  })
+
+  return json({ key, url: `/images/${key}` }, request)
+}
+
+async function getImage(request, env) {
+  if (!env.GALLERY_IMAGES) throw new Error('Falta configurar el bucket R2 GALLERY_IMAGES.')
+
+  const url = new URL(request.url)
+  const key = decodeURIComponent(url.pathname.replace(/^\/images\//, ''))
+  const object = await env.GALLERY_IMAGES.get(key)
+  if (!object) return new Response('Imagen no encontrada.', { status: 404, headers: corsHeaders(request) })
+
+  const headers = new Headers()
+  object.writeHttpMetadata(headers)
+  headers.set('etag', object.httpEtag)
+  headers.set('cache-control', headers.get('cache-control') || 'public, max-age=31536000, immutable')
+  Object.entries(corsHeaders(request)).forEach(([name, value]) => headers.set(name, value))
+
+  return new Response(object.body, { headers })
 }
 
 async function signJwt(env, payload) {
@@ -238,6 +288,6 @@ function corsHeaders(request) {
   return {
     'access-control-allow-origin': origin || '*',
     'access-control-allow-methods': 'GET,POST,PUT,OPTIONS',
-    'access-control-allow-headers': 'authorization,content-type',
+    'access-control-allow-headers': 'authorization,content-type,x-file-name',
   }
 }

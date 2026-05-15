@@ -1,6 +1,6 @@
 # Cortes Rodriguez Asesores
 
-Landing page Vue configurable desde un panel administrador con persistencia en Turso/libSQL y API en Cloudflare Worker.
+Sitio web Vue configurable desde un panel administrador con persistencia en Turso/libSQL y API en Cloudflare Worker.
 
 ## Configuración
 
@@ -70,7 +70,7 @@ npm run deploy
 
 ## Rutas
 
-- Landing: `/`
+- Sitio web: `/`
 - Administrador: `/admin`
 - API pública: `/api/content`
 - Login admin: `POST /api/admin/login`
@@ -93,7 +93,7 @@ El contenido se guarda en un JSON con esta estructura:
 }
 ```
 
-El panel `/admin` está en español, pero permite editar los datos de la landing en español e inglés.
+El panel `/admin` está en español, pero permite editar los datos del sitio web en español e inglés.
 
 ## Caché
 
@@ -101,7 +101,7 @@ El panel `/admin` está en español, pero permite editar los datos de la landing
 
 - Se evita consultar Turso en cada F5 mientras el caché esté vigente.
 - El TTL se controla con `CONTENT_CACHE_TTL_SECONDS`, por defecto `300`.
-- Cada guardado desde el admin borra el caché para que la landing lea el contenido nuevo.
+- Cada guardado desde el admin borra el caché para que el sitio web lea el contenido nuevo.
 
 En el servidor Node local de respaldo se usa el mismo TTL, pero en memoria.
 
