@@ -1,5 +1,5 @@
 const es = {
-  navItems: ['Inicio', 'Servicios', 'Nosotros', 'Clientes', 'Recursos', 'Contacto'],
+  navItems: ['Inicio', 'Servicios', 'Nosotros', 'Clientes', 'Eventos', 'Recursos', 'Contacto'],
   brand: {
     name: 'Cortes Rodriguez\nAsesores S.A.S.',
     subtitle: 'Asesores de aduana',
@@ -9,6 +9,7 @@ const es = {
     title: 'Soluciones aduaneras y de comercio exterior que impulsan su negocio',
     highlight: 'impulsan su negocio',
     text: 'Asesoría integral para que su empresa importe, exporte y crezca sin fronteras, con respaldo experto en cada trámite.',
+    image: '',
     primaryLabel: 'Cotiza ahora',
     primaryHref: '#contacto',
     secondaryLabel: 'Escríbenos por WhatsApp',
@@ -120,7 +121,7 @@ const es = {
 }
 
 const en = {
-  navItems: ['Home', 'Services', 'About', 'Clients', 'Resources', 'Contact'],
+  navItems: ['Home', 'Services', 'About', 'Clients', 'Events', 'Resources', 'Contact'],
   brand: {
     name: 'Cortes Rodriguez\nAsesores S.A.S.',
     subtitle: 'Customs advisors',
@@ -130,6 +131,7 @@ const en = {
     title: 'Customs and foreign trade solutions that drive your business',
     highlight: 'drive your business',
     text: 'End-to-end advisory so your company can import, export, and grow across borders with expert support in every procedure.',
+    image: '',
     primaryLabel: 'Request a quote',
     primaryHref: '#contacto',
     secondaryLabel: 'Message us on WhatsApp',
@@ -271,9 +273,12 @@ export function cloneDefaultContent() {
 }
 
 function mergeLocale(defaultLocale, locale) {
+  const navItems = normalizeNavItems(defaultLocale.navItems, locale?.navItems)
+
   return {
     ...defaultLocale,
     ...locale,
+    navItems,
     brand: { ...defaultLocale.brand, ...locale?.brand },
     hero: { ...defaultLocale.hero, ...locale?.hero },
     servicesHeading: { ...defaultLocale.servicesHeading, ...locale?.servicesHeading },
@@ -288,4 +293,17 @@ function mergeLocale(defaultLocale, locale) {
     galleryItems: locale?.galleryItems || defaultLocale.galleryItems,
     socialLinks: locale?.socialLinks || defaultLocale.socialLinks,
   }
+}
+
+function normalizeNavItems(defaultItems, navItems) {
+  if (!Array.isArray(navItems) || !navItems.length) return defaultItems
+  if (navItems.length === defaultItems.length) return navItems
+
+  if (navItems.length === defaultItems.length - 1) {
+    const normalized = [...navItems]
+    normalized.splice(4, 0, defaultItems[4])
+    return normalized
+  }
+
+  return navItems
 }

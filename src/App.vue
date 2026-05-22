@@ -59,6 +59,7 @@ const iconMap = {
   Instagram,
   Linkedin,
   Mail,
+  Phone,
   Route,
   ShieldCheck,
   Ship,
@@ -101,6 +102,7 @@ function getInitialLocale() {
 
 const site = computed(() => content.value.locales?.[activeLocale.value] || content.value.locales?.es || cloneDefaultContent().locales.es)
 const draftLocale = computed(() => draft.value.locales?.[adminLocale.value] || draft.value.locales.es)
+const heroBackgroundUrl = computed(() => site.value.hero?.image || heroBgUrl)
 const navItems = computed(() => site.value.navItems || [])
 const services = computed(() => site.value.services || [])
 const clients = computed(() => site.value.clients || [])
@@ -147,7 +149,7 @@ function sectionId(item) {
 }
 
 function navHref(index, item) {
-  const ids = ['inicio', 'servicios', 'nosotros', 'clientes', 'recursos', 'contacto']
+  const ids = ['inicio', 'servicios', 'nosotros', 'clientes', 'eventos', 'recursos', 'contacto']
   return `#${ids[index] || sectionId(item)}`
 }
 
@@ -162,6 +164,131 @@ function icon(name) {
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value))
+}
+
+function isFilled(value) {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function assertFilled(value, label) {
+  if (!isFilled(value)) {
+    throw new Error(`${label} es obligatorio.`)
+  }
+}
+
+function assertItems(items, label) {
+  if (!Array.isArray(items) || !items.length) {
+    throw new Error(`${label} debe tener al menos un elemento.`)
+  }
+}
+
+function validateLocaleContent(locale, localeKey) {
+  const localeLabel = localeKey === 'es' ? 'Español' : 'Inglés'
+
+  assertItems(locale.navItems, `Menú (${localeLabel})`)
+  locale.navItems.forEach((item, index) => assertFilled(item, `Menú (${localeLabel}) - opción ${index + 1}`))
+
+  assertFilled(locale.brand?.name, `Marca (${localeLabel}) - nombre`)
+  assertFilled(locale.brand?.subtitle, `Marca (${localeLabel}) - subtítulo`)
+
+  assertFilled(locale.hero?.kicker, `Inicio (${localeLabel}) - etiqueta`)
+  assertFilled(locale.hero?.title, `Inicio (${localeLabel}) - título`)
+  assertFilled(locale.hero?.highlight, `Inicio (${localeLabel}) - texto resaltado`)
+  assertFilled(locale.hero?.text, `Inicio (${localeLabel}) - descripción`)
+  assertFilled(locale.hero?.primaryLabel, `Inicio (${localeLabel}) - botón principal`)
+  assertFilled(locale.hero?.primaryHref, `Inicio (${localeLabel}) - URL principal`)
+  assertFilled(locale.hero?.secondaryLabel, `Inicio (${localeLabel}) - botón secundario`)
+  assertFilled(locale.hero?.secondaryHref, `Inicio (${localeLabel}) - URL secundaria`)
+
+  assertFilled(locale.servicesHeading?.kicker, `Servicios (${localeLabel}) - etiqueta`)
+  assertFilled(locale.servicesHeading?.title, `Servicios (${localeLabel}) - título`)
+  assertItems(locale.services, `Servicios (${localeLabel})`)
+  locale.services.forEach((service, index) => {
+    assertFilled(service?.title, `Servicios (${localeLabel}) - servicio ${index + 1} título`)
+    assertFilled(service?.text, `Servicios (${localeLabel}) - servicio ${index + 1} descripción`)
+    assertFilled(service?.icon, `Servicios (${localeLabel}) - servicio ${index + 1} icono`)
+  })
+
+  assertFilled(locale.clientsHeading?.kicker, `Clientes (${localeLabel}) - etiqueta`)
+  assertFilled(locale.clientsHeading?.title, `Clientes (${localeLabel}) - título`)
+  assertItems(locale.clients, `Clientes (${localeLabel})`)
+  locale.clients.forEach((client, index) => assertFilled(client, `Clientes (${localeLabel}) - cliente ${index + 1}`))
+
+  assertFilled(locale.galleryHeading?.kicker, `Eventos y noticias (${localeLabel}) - etiqueta`)
+  assertFilled(locale.galleryHeading?.title, `Eventos y noticias (${localeLabel}) - título`)
+  assertItems(locale.galleryItems, `Eventos y noticias (${localeLabel})`)
+  locale.galleryItems.forEach((item, index) => {
+    assertFilled(item?.title, `Eventos y noticias (${localeLabel}) - elemento ${index + 1} título`)
+    assertFilled(item?.text, `Eventos y noticias (${localeLabel}) - elemento ${index + 1} descripción`)
+    if (item?.image) {
+      assertFilled(item?.alt, `Eventos y noticias (${localeLabel}) - elemento ${index + 1} texto alternativo`)
+    }
+  })
+
+  assertFilled(locale.testimonialsHeading?.kicker, `Testimonios (${localeLabel}) - etiqueta`)
+  assertFilled(locale.testimonialsHeading?.title, `Testimonios (${localeLabel}) - título`)
+  assertItems(locale.testimonials, `Testimonios (${localeLabel})`)
+  locale.testimonials.forEach((item, index) => {
+    assertFilled(item?.text, `Testimonios (${localeLabel}) - testimonio ${index + 1}`)
+    assertFilled(item?.name, `Testimonios (${localeLabel}) - nombre ${index + 1}`)
+    assertFilled(item?.role, `Testimonios (${localeLabel}) - cargo ${index + 1}`)
+  })
+
+  assertFilled(locale.reasonsHeading?.kicker, `Razones (${localeLabel}) - etiqueta`)
+  assertFilled(locale.reasonsHeading?.title, `Razones (${localeLabel}) - título`)
+  assertItems(locale.reasons, `Razones (${localeLabel})`)
+  locale.reasons.forEach((item, index) => {
+    assertFilled(item?.title, `Razones (${localeLabel}) - razón ${index + 1} título`)
+    assertFilled(item?.text, `Razones (${localeLabel}) - razón ${index + 1} descripción`)
+    assertFilled(item?.icon, `Razones (${localeLabel}) - razón ${index + 1} icono`)
+  })
+
+  assertItems(locale.stats, `Métricas (${localeLabel})`)
+  locale.stats.forEach((item, index) => {
+    assertFilled(item?.value, `Métricas (${localeLabel}) - métrica ${index + 1} valor`)
+    assertFilled(item?.label, `Métricas (${localeLabel}) - métrica ${index + 1} texto`)
+    assertFilled(item?.icon, `Métricas (${localeLabel}) - métrica ${index + 1} icono`)
+  })
+
+  assertFilled(locale.processHeading?.kicker, `Proceso (${localeLabel}) - etiqueta`)
+  assertFilled(locale.processHeading?.title, `Proceso (${localeLabel}) - título`)
+  assertItems(locale.steps, `Proceso (${localeLabel})`)
+  locale.steps.forEach((item, index) => {
+    assertFilled(item?.title, `Proceso (${localeLabel}) - paso ${index + 1} título`)
+    assertFilled(item?.text, `Proceso (${localeLabel}) - paso ${index + 1} descripción`)
+    assertFilled(item?.icon, `Proceso (${localeLabel}) - paso ${index + 1} icono`)
+  })
+
+  assertFilled(locale.cta?.title, `CTA (${localeLabel}) - título`)
+  assertFilled(locale.cta?.text, `CTA (${localeLabel}) - texto`)
+  assertFilled(locale.cta?.primaryLabel, `CTA (${localeLabel}) - botón principal`)
+  assertFilled(locale.cta?.primaryHref, `CTA (${localeLabel}) - URL principal`)
+  assertFilled(locale.cta?.secondaryLabel, `CTA (${localeLabel}) - botón secundario`)
+  assertFilled(locale.cta?.secondaryHref, `CTA (${localeLabel}) - URL secundaria`)
+
+  assertFilled(locale.contact?.address, `Contacto (${localeLabel}) - dirección`)
+  assertFilled(locale.contact?.phone, `Contacto (${localeLabel}) - teléfono`)
+  assertFilled(locale.contact?.email, `Contacto (${localeLabel}) - email`)
+
+  assertFilled(locale.footer?.quickLinksTitle, `Footer (${localeLabel}) - título enlaces`)
+  assertFilled(locale.footer?.servicesTitle, `Footer (${localeLabel}) - título servicios`)
+  assertFilled(locale.footer?.contactTitle, `Footer (${localeLabel}) - título contacto`)
+  assertFilled(locale.footer?.description, `Footer (${localeLabel}) - descripción`)
+  assertFilled(locale.footer?.copyright, `Footer (${localeLabel}) - copyright`)
+  assertFilled(locale.footer?.legal, `Footer (${localeLabel}) - legal`)
+
+  assertItems(locale.socialLinks, `Redes sociales (${localeLabel})`)
+  locale.socialLinks.forEach((item, index) => {
+    assertFilled(item?.label, `Redes sociales (${localeLabel}) - red ${index + 1} nombre`)
+    assertFilled(item?.href, `Redes sociales (${localeLabel}) - red ${index + 1} enlace`)
+    assertFilled(item?.icon, `Redes sociales (${localeLabel}) - red ${index + 1} icono`)
+  })
+}
+
+function validateRequiredContent(value) {
+  Object.entries(value.locales || {}).forEach(([localeKey, locale]) => {
+    validateLocaleContent(locale, localeKey)
+  })
 }
 
 function addItem(collection, item) {
@@ -256,6 +383,7 @@ async function persistContent() {
   try {
     const cleanDraft = stripTransientGalleryState(draft.value)
     validateOptimizedImages(cleanDraft)
+    validateRequiredContent(cleanDraft)
     await saveContent(cleanDraft, adminJwt.value)
     content.value = clone(cleanDraft)
     draft.value = clone(cleanDraft)
@@ -269,6 +397,9 @@ async function persistContent() {
 function stripTransientGalleryState(value) {
   const cleanValue = clone(value)
   Object.values(cleanValue.locales || {}).forEach((locale) => {
+    if (locale.hero) {
+      delete locale.hero.imageStatus
+    }
     locale.galleryItems = (locale.galleryItems || []).map(({ imageStatus, ...item }) => item)
   })
   return cleanValue
@@ -276,6 +407,9 @@ function stripTransientGalleryState(value) {
 
 function validateOptimizedImages(value) {
   Object.values(value.locales || {}).forEach((locale) => {
+    if (locale.hero?.image?.startsWith('data:')) {
+      throw new Error('La imagen del inicio está pendiente de subir. Vuelve a seleccionarla para enviarla al almacenamiento.')
+    }
     ;(locale.galleryItems || []).forEach((item) => {
       if (!item.image) return
       if (item.image.startsWith('data:')) {
@@ -301,6 +435,24 @@ async function handleGalleryImageUpload(event, item) {
     if (!item.alt) item.alt = item.title || 'Imagen del sitio web'
   } catch (error) {
     item.imageStatus = error.message
+  }
+}
+
+async function handleHeroImageUpload(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+
+  try {
+    draftLocale.value.hero.imageStatus = 'Optimizando imagen...'
+    const optimized = await optimizeImage(file)
+    draftLocale.value.hero.imageStatus = `Subiendo imagen optimizada: ${formatBytes(optimized.blob.size)}.`
+    const uploaded = await uploadImage(optimized.blob, adminJwt.value, file.name)
+    draftLocale.value.hero.image = uploaded.url
+    draftLocale.value.hero.imageKey = uploaded.key
+    draftLocale.value.hero.imageStatus = `Imagen de inicio subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
+  } catch (error) {
+    draftLocale.value.hero.imageStatus = error.message
   }
 }
 
@@ -412,15 +564,16 @@ watch(draft, () => {
         <img :src="logoUrl" alt="" />
         <h1>Administrador</h1>
         <p>Actualiza los textos, enlaces e información que aparecen en el sitio web.</p>
-        <button class="admin-save" type="button" @click="persistContent">
-          <Save :size="18" /> Guardar cambios
-        </button>
         <button class="admin-link" type="button" @click="logout">Cerrar sesión</button>
         <a class="admin-link" href="/">Ver sitio web</a>
         <span class="admin-status">{{ adminStatus }}</span>
       </aside>
 
       <section class="admin-editor" :aria-busy="loading">
+        <button class="admin-save admin-save-floating" type="button" @click="persistContent">
+          <Save :size="18" /> Guardar cambios
+        </button>
+
         <div class="admin-section">
           <h2>Idioma del contenido</h2>
           <p class="admin-note" :class="{ active: hasUnsavedChanges }">
@@ -445,6 +598,15 @@ watch(draft, () => {
           <label>Título <textarea v-model="draftLocale.hero.title" rows="2"></textarea></label>
           <label>Texto resaltado <input v-model="draftLocale.hero.highlight" /></label>
           <label>Descripción <textarea v-model="draftLocale.hero.text" rows="3"></textarea></label>
+          <div class="image-preview hero-image-preview">
+            <img v-if="draftLocale.hero.image" :src="draftLocale.hero.image" alt="Vista previa de la imagen de inicio" />
+            <img v-else :src="heroBgUrl" alt="Imagen actual de respaldo del inicio" />
+          </div>
+          <label class="file-field">
+            Imagen de fondo del inicio
+            <input type="file" accept="image/png,image/jpeg,image/webp" @change="handleHeroImageUpload" />
+          </label>
+          <small>{{ draftLocale.hero.imageStatus || `Máximo ${formatBytes(maxUploadBytes)}. Se guarda optimizada hasta ${formatBytes(maxOptimizedImageBytes)}.` }}</small>
           <div class="admin-grid two">
             <label>Botón principal <input v-model="draftLocale.hero.primaryLabel" /></label>
             <label>URL principal <input v-model="draftLocale.hero.primaryHref" /></label>
@@ -460,9 +622,14 @@ watch(draft, () => {
           <article v-for="(service, index) in draftLocale.services" :key="index" class="admin-card">
             <input v-model="service.title" placeholder="Título" />
             <textarea v-model="service.text" rows="2" placeholder="Descripción"></textarea>
-            <select v-model="service.icon">
-              <option v-for="option in iconOptions" :key="option">{{ option }}</option>
-            </select>
+            <div class="icon-select-field">
+              <span class="icon-preview" aria-hidden="true">
+                <component :is="icon(service.icon)" :size="18" />
+              </span>
+              <select v-model="service.icon">
+                <option v-for="option in iconOptions" :key="option">{{ option }}</option>
+              </select>
+            </div>
             <button type="button" class="danger" @click="removeItem(draftLocale.services, index)"><Trash2 :size="16" /> Eliminar</button>
           </article>
           <button type="button" class="admin-add" @click="addItem(draftLocale.services, { title: 'Nuevo servicio', text: '', icon: 'Globe2' })">
@@ -536,7 +703,12 @@ watch(draft, () => {
           <article v-for="(reason, index) in draftLocale.reasons" :key="`reason-${index}`" class="admin-card">
             <input v-model="reason.title" placeholder="Título" />
             <input v-model="reason.text" placeholder="Descripción" />
-            <select v-model="reason.icon"><option v-for="option in iconOptions" :key="option">{{ option }}</option></select>
+            <div class="icon-select-field">
+              <span class="icon-preview" aria-hidden="true">
+                <component :is="icon(reason.icon)" :size="18" />
+              </span>
+              <select v-model="reason.icon"><option v-for="option in iconOptions" :key="option">{{ option }}</option></select>
+            </div>
             <button type="button" class="danger" @click="removeItem(draftLocale.reasons, index)"><Trash2 :size="16" /> Eliminar</button>
           </article>
           <button type="button" class="admin-add" @click="addItem(draftLocale.reasons, { title: 'Nueva razón', text: '', icon: 'ShieldCheck' })">
@@ -546,7 +718,12 @@ watch(draft, () => {
           <article v-for="(stat, index) in draftLocale.stats" :key="`stat-${index}`" class="admin-card">
             <input v-model="stat.value" placeholder="Valor" />
             <input v-model="stat.label" placeholder="Texto" />
-            <select v-model="stat.icon"><option v-for="option in iconOptions" :key="option">{{ option }}</option></select>
+            <div class="icon-select-field">
+              <span class="icon-preview" aria-hidden="true">
+                <component :is="icon(stat.icon)" :size="18" />
+              </span>
+              <select v-model="stat.icon"><option v-for="option in iconOptions" :key="option">{{ option }}</option></select>
+            </div>
             <button type="button" class="danger" @click="removeItem(draftLocale.stats, index)"><Trash2 :size="16" /> Eliminar</button>
           </article>
           <button type="button" class="admin-add" @click="addItem(draftLocale.stats, { value: '0+', label: 'Nueva métrica', icon: 'Award' })">
@@ -558,7 +735,12 @@ watch(draft, () => {
           <article v-for="(step, index) in draftLocale.steps" :key="`step-${index}`" class="admin-card">
             <input v-model="step.title" placeholder="Paso" />
             <input v-model="step.text" placeholder="Descripción" />
-            <select v-model="step.icon"><option v-for="option in iconOptions" :key="option">{{ option }}</option></select>
+            <div class="icon-select-field">
+              <span class="icon-preview" aria-hidden="true">
+                <component :is="icon(step.icon)" :size="18" />
+              </span>
+              <select v-model="step.icon"><option v-for="option in iconOptions" :key="option">{{ option }}</option></select>
+            </div>
             <button type="button" class="danger" @click="removeItem(draftLocale.steps, index)"><Trash2 :size="16" /> Eliminar</button>
           </article>
           <button type="button" class="admin-add" @click="addItem(draftLocale.steps, { title: 'Nuevo paso', text: '', icon: 'CheckCircle2' })">
@@ -592,13 +774,18 @@ watch(draft, () => {
           <article v-for="(social, index) in draftLocale.socialLinks" :key="index" class="admin-card social-admin-card">
             <input v-model="social.label" placeholder="Nombre" />
             <input v-model="social.href" placeholder="https://..." />
-            <select v-model="social.icon">
-              <option>Linkedin</option>
-              <option>Facebook</option>
-              <option>Instagram</option>
-              <option>Mail</option>
-              <option>Phone</option>
-            </select>
+            <div class="icon-select-field">
+              <span class="icon-preview" aria-hidden="true">
+                <component :is="icon(social.icon)" :size="18" />
+              </span>
+              <select v-model="social.icon">
+                <option>Linkedin</option>
+                <option>Facebook</option>
+                <option>Instagram</option>
+                <option>Mail</option>
+                <option>Phone</option>
+              </select>
+            </div>
             <button type="button" class="danger" @click="removeItem(draftLocale.socialLinks, index)"><Trash2 :size="16" /> Eliminar</button>
           </article>
           <button type="button" class="admin-add" @click="addItem(draftLocale.socialLinks, { label: 'Nueva red', icon: 'Linkedin', href: 'https://' })">
@@ -648,7 +835,7 @@ watch(draft, () => {
       </nav>
 
       <main>
-        <section id="inicio" class="hero" :style="{ '--hero-bg': `url(${heroBgUrl})` }">
+        <section id="inicio" class="hero" :style="{ '--hero-bg': `url(${heroBackgroundUrl})` }">
           <div class="hero-copy">
             <p class="eyebrow">{{ site.hero.kicker }}</p>
             <h1>
@@ -705,7 +892,7 @@ watch(draft, () => {
           </div>
         </section>
 
-        <section class="section gallery-section">
+        <section id="eventos" class="section gallery-section">
           <div class="section-heading-row">
             <div>
               <p class="section-kicker">{{ site.galleryHeading.kicker }}</p>
