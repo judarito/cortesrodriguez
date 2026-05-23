@@ -41,7 +41,6 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { cloneDefaultContent } from './contentDefaults'
 import { fetchContent, loginAdmin, saveContent, uploadImage } from './lib/contentApi'
 import logoUrl from './assets/logo-cortes-rodriguez.png'
-import heroBgUrl from './assets/hero-logistica-aduanera.png'
 
 const iconMap = {
   Award,
@@ -82,13 +81,16 @@ const loginForm = ref({ email: '', password: '' })
 const adminStatus = ref('')
 const loading = ref(true)
 const hasUnsavedChanges = ref(false)
+const heroIndex = ref(0)
 const clientIndex = ref(0)
 const galleryIndex = ref(0)
+let heroCarouselTimer
 let carouselTimer
 
 const maxUploadBytes = 8 * 1024 * 1024
 const maxOptimizedImageBytes = 480 * 1024
 const maxImageDimension = 1600
+const defaultHeroSlideAlt = 'Imagen de inicio'
 
 function getInitialLocale() {
   const savedLocale = localStorage.getItem('locale')
@@ -102,7 +104,6 @@ function getInitialLocale() {
 
 const site = computed(() => content.value.locales?.[activeLocale.value] || content.value.locales?.es || cloneDefaultContent().locales.es)
 const draftLocale = computed(() => draft.value.locales?.[adminLocale.value] || draft.value.locales.es)
-const heroBackgroundUrl = computed(() => site.value.hero?.image || heroBgUrl)
 const navItems = computed(() => site.value.navItems || [])
 const services = computed(() => site.value.services || [])
 const clients = computed(() => site.value.clients || [])
@@ -117,6 +118,10 @@ const stats = computed(() => site.value.stats || [])
 const steps = computed(() => site.value.steps || [])
 const socialLinks = computed(() => site.value.socialLinks || [])
 const testimonialIndex = ref(0)
+const heroSlides = computed(() => normalizeHeroSlides(site.value.hero))
+const draftHeroSlides = computed(() => normalizeHeroSlides(draftLocale.value.hero))
+const activeHeroIndex = computed(() => heroSlides.value.length ? heroIndex.value % heroSlides.value.length : 0)
+const activeHeroSlide = computed(() => heroSlides.value[activeHeroIndex.value] || null)
 const activeClientIndex = computed(() => clients.value.length ? clientIndex.value % clients.value.length : 0)
 const activeGalleryIndex = computed(() => galleryItems.value.length ? galleryIndex.value % galleryItems.value.length : 0)
 const visibleClients = computed(() => {
@@ -162,6 +167,26 @@ function icon(name) {
   return iconMap[name] || Globe2
 }
 
+function normalizeHeroSlides(hero) {
+  const slides = (hero?.images || [])
+    .filter((item) => isFilled(item?.image))
+    .map((item) => ({
+      image: item.image.trim(),
+      alt: isFilled(item?.alt) ? item.alt.trim() : defaultHeroSlideAlt,
+    }))
+
+  if (slides.length) return slides
+
+  if (isFilled(hero?.image)) {
+    return [{
+      image: hero.image.trim(),
+      alt: defaultHeroSlideAlt,
+    }]
+  }
+
+  return []
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value))
 }
@@ -199,6 +224,11 @@ function validateLocaleContent(locale, localeKey) {
   assertFilled(locale.hero?.primaryHref, `Inicio (${localeLabel}) - URL principal`)
   assertFilled(locale.hero?.secondaryLabel, `Inicio (${localeLabel}) - botón secundario`)
   assertFilled(locale.hero?.secondaryHref, `Inicio (${localeLabel}) - URL secundaria`)
+  assertItems(locale.hero?.images, `Inicio (${localeLabel}) - imágenes`)
+  locale.hero.images.forEach((item, index) => {
+    assertFilled(item?.image, `Inicio (${localeLabel}) - imagen ${index + 1}`)
+    assertFilled(item?.alt, `Inicio (${localeLabel}) - imagen ${index + 1} texto alternativo`)
+  })
 
   assertFilled(locale.servicesHeading?.kicker, `Servicios (${localeLabel}) - etiqueta`)
   assertFilled(locale.servicesHeading?.title, `Servicios (${localeLabel}) - título`)
@@ -299,6 +329,31 @@ function removeItem(collection, index) {
   collection.splice(index, 1)
 }
 
+function addHeroSlide() {
+  draftLocale.value.hero.images.push({
+    image: '',
+    alt: defaultHeroSlideAlt,
+  })
+}
+
+function removeHeroSlide(index) {
+  if ((draftLocale.value.hero.images || []).length <= 1) {
+    adminStatus.value = 'El carrusel del inicio debe conservar al menos una imagen.'
+    return
+  }
+
+  draftLocale.value.hero.images.splice(index, 1)
+}
+
+function nextHeroSlide() {
+  if (!heroSlides.value.length) return
+  heroIndex.value = (heroIndex.value + 1) % heroSlides.value.length
+}
+
+function goToHeroSlide(index) {
+  heroIndex.value = index
+}
+
 function nextClient() {
   if (!clients.value.length) return
   clientIndex.value = (clientIndex.value + 1) % clients.value.length
@@ -346,6 +401,7 @@ async function loadContent() {
   content.value = await fetchContent()
   draft.value = clone(content.value)
   hasUnsavedChanges.value = false
+  heroIndex.value = 0
   clientIndex.value = 0
   galleryIndex.value = 0
   loading.value = false
@@ -399,6 +455,8 @@ function stripTransientGalleryState(value) {
   Object.values(cleanValue.locales || {}).forEach((locale) => {
     if (locale.hero) {
       delete locale.hero.imageStatus
+      delete locale.hero.imageKey
+      locale.hero.images = (locale.hero.images || []).map(({ imageStatus, imageKey, ...item }) => item)
     }
     locale.galleryItems = (locale.galleryItems || []).map(({ imageStatus, ...item }) => item)
   })
@@ -410,6 +468,12 @@ function validateOptimizedImages(value) {
     if (locale.hero?.image?.startsWith('data:')) {
       throw new Error('La imagen del inicio está pendiente de subir. Vuelve a seleccionarla para enviarla al almacenamiento.')
     }
+    ;(locale.hero?.images || []).forEach((item) => {
+      if (!item.image) return
+      if (item.image.startsWith('data:')) {
+        throw new Error('Hay una imagen del carrusel de inicio pendiente de subir. Vuelve a seleccionarla para enviarla al almacenamiento.')
+      }
+    })
     ;(locale.galleryItems || []).forEach((item) => {
       if (!item.image) return
       if (item.image.startsWith('data:')) {
@@ -438,21 +502,21 @@ async function handleGalleryImageUpload(event, item) {
   }
 }
 
-async function handleHeroImageUpload(event) {
+async function handleHeroImageUpload(event, item) {
   const file = event.target.files?.[0]
   event.target.value = ''
   if (!file) return
 
   try {
-    draftLocale.value.hero.imageStatus = 'Optimizando imagen...'
+    item.imageStatus = 'Optimizando imagen...'
     const optimized = await optimizeImage(file)
-    draftLocale.value.hero.imageStatus = `Subiendo imagen optimizada: ${formatBytes(optimized.blob.size)}.`
+    item.imageStatus = `Subiendo imagen optimizada: ${formatBytes(optimized.blob.size)}.`
     const uploaded = await uploadImage(optimized.blob, adminJwt.value, file.name)
-    draftLocale.value.hero.image = uploaded.url
-    draftLocale.value.hero.imageKey = uploaded.key
-    draftLocale.value.hero.imageStatus = `Imagen de inicio subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
+    item.image = uploaded.url
+    item.imageKey = uploaded.key
+    item.imageStatus = `Imagen del carrusel subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
   } catch (error) {
-    draftLocale.value.hero.imageStatus = error.message
+    item.imageStatus = error.message
   }
 }
 
@@ -513,6 +577,9 @@ function formatBytes(bytes) {
 
 onMounted(() => {
   loadContent()
+  heroCarouselTimer = window.setInterval(() => {
+    nextHeroSlide()
+  }, 8400)
   carouselTimer = window.setInterval(() => {
     nextClient()
     nextGalleryItem()
@@ -520,6 +587,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (heroCarouselTimer) window.clearInterval(heroCarouselTimer)
   if (carouselTimer) window.clearInterval(carouselTimer)
 })
 
@@ -527,6 +595,15 @@ watch(draft, () => {
   if (loading.value) return
   hasUnsavedChanges.value = JSON.stringify(stripTransientGalleryState(draft.value)) !== JSON.stringify(content.value)
 }, { deep: true })
+
+watch(heroSlides, (items) => {
+  if (!items.length) {
+    heroIndex.value = 0
+    return
+  }
+
+  heroIndex.value %= items.length
+}, { immediate: true })
 </script>
 
 <template>
@@ -598,15 +675,24 @@ watch(draft, () => {
           <label>Título <textarea v-model="draftLocale.hero.title" rows="2"></textarea></label>
           <label>Texto resaltado <input v-model="draftLocale.hero.highlight" /></label>
           <label>Descripción <textarea v-model="draftLocale.hero.text" rows="3"></textarea></label>
-          <div class="image-preview hero-image-preview">
-            <img v-if="draftLocale.hero.image" :src="draftLocale.hero.image" alt="Vista previa de la imagen de inicio" />
-            <img v-else :src="heroBgUrl" alt="Imagen actual de respaldo del inicio" />
-          </div>
-          <label class="file-field">
-            Imagen de fondo del inicio
-            <input type="file" accept="image/png,image/jpeg,image/webp" @change="handleHeroImageUpload" />
-          </label>
-          <small>{{ draftLocale.hero.imageStatus || `Máximo ${formatBytes(maxUploadBytes)}. Se guarda optimizada hasta ${formatBytes(maxOptimizedImageBytes)}.` }}</small>
+          <article v-for="(item, index) in draftLocale.hero.images" :key="`hero-slide-${index}`" class="admin-card hero-slide-admin-card">
+            <div class="image-preview hero-image-preview">
+              <img v-if="item.image" :src="item.image" :alt="item.alt || `Vista previa de la imagen ${index + 1}`" />
+              <ImagePlus v-else :size="34" />
+            </div>
+            <div class="gallery-admin-fields">
+              <input v-model="item.alt" placeholder="Texto alternativo de la imagen" />
+              <label class="file-field">
+                Cambiar imagen del carrusel
+                <input type="file" accept="image/png,image/jpeg,image/webp" @change="handleHeroImageUpload($event, item)" />
+              </label>
+              <small>{{ item.imageStatus || `Máximo ${formatBytes(maxUploadBytes)}. Se guarda optimizada hasta ${formatBytes(maxOptimizedImageBytes)}.` }}</small>
+            </div>
+            <button type="button" class="danger" @click="removeHeroSlide(index)"><Trash2 :size="16" /> Eliminar</button>
+          </article>
+          <button type="button" class="admin-add" @click="addHeroSlide">
+            <Plus :size="16" /> Agregar imagen al carrusel
+          </button>
           <div class="admin-grid two">
             <label>Botón principal <input v-model="draftLocale.hero.primaryLabel" /></label>
             <label>URL principal <input v-model="draftLocale.hero.primaryHref" /></label>
@@ -835,7 +921,16 @@ watch(draft, () => {
       </nav>
 
       <main>
-        <section id="inicio" class="hero" :style="{ '--hero-bg': `url(${heroBackgroundUrl})` }">
+        <section id="inicio" class="hero">
+          <div class="hero-media" aria-hidden="true">
+            <div
+              v-for="(slide, index) in heroSlides"
+              :key="`${slide.image}-${index}`"
+              class="hero-slide"
+              :class="{ active: index === activeHeroIndex }"
+              :style="{ '--slide-bg': `url(${slide.image})` }"
+            ></div>
+          </div>
           <div class="hero-copy">
             <p class="eyebrow">{{ site.hero.kicker }}</p>
             <h1>
@@ -846,6 +941,16 @@ watch(draft, () => {
             <div class="hero-actions">
               <a class="primary-button" :href="site.hero.primaryHref">{{ site.hero.primaryLabel }} <ArrowRight :size="18" /></a>
               <a class="outline-button" :href="site.hero.secondaryHref">{{ site.hero.secondaryLabel }} <ArrowRight :size="17" /></a>
+            </div>
+            <div v-if="heroSlides.length > 1" class="slider-dots hero-dots" aria-label="Seleccionar imagen principal">
+              <button
+                v-for="(slide, index) in heroSlides"
+                :key="`${slide.image}-${index}`"
+                type="button"
+                :class="{ active: index === activeHeroIndex }"
+                :aria-label="slide.alt || `Imagen ${index + 1}`"
+                @click="goToHeroSlide(index)"
+              ></button>
             </div>
           </div>
           <div class="hero-visual-space" aria-hidden="true"></div>

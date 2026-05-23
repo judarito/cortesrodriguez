@@ -228,12 +228,38 @@ img {
   min-height: 560px;
   padding: 62px clamp(22px, 8vw, 118px);
   color: var(--white);
-  background-image: var(--hero-bg);
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.hero-media {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+}
+
+.hero-slide {
+  position: absolute;
+  inset: 0;
+  background-color: var(--navy-900);
+  background-image: var(--slide-bg);
   background-repeat: no-repeat;
   background-position: center center;
   background-size: cover;
-  isolation: isolate;
-  overflow: hidden;
+  opacity: 0;
+  filter: saturate(0.96) brightness(0.94);
+  transform: scale(1.06) translate3d(16px, 0, 0);
+  transition:
+    opacity 1800ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 2400ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 2000ms ease;
+  will-change: opacity, transform, filter;
+}
+
+.hero-slide.active {
+  opacity: 1;
+  filter: saturate(1) brightness(1);
+  transform: scale(1) translate3d(0, 0, 0);
 }
 
 .hero::before {
@@ -294,6 +320,11 @@ h1 span {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
+}
+
+.hero-dots {
+  justify-content: flex-start;
+  margin-top: 22px;
 }
 
 .primary-button {
@@ -1086,6 +1117,10 @@ h1 span {
   grid-template-columns: 180px minmax(260px, 1fr) auto;
 }
 
+.hero-slide-admin-card {
+  grid-template-columns: 220px minmax(260px, 1fr) auto;
+}
+
 .gallery-admin-fields {
   display: grid;
   gap: 10px;
@@ -1169,17 +1204,27 @@ h1 span {
 }
 
 .admin-list label {
+  display: grid;
   grid-template-columns: 1fr 44px;
+  gap: 10px;
   align-items: end;
+  min-width: 0;
+  padding: 14px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
 .admin-list label input {
   grid-column: 1;
+  min-width: 0;
+  width: 100%;
 }
 
 .admin-list label button {
   grid-column: 2;
   grid-row: 2;
+  justify-self: end;
 }
 
 .admin-login {
@@ -1320,18 +1365,15 @@ h1 span {
   .hero {
     min-height: auto;
     padding: 0 20px 36px;
-    background-color: var(--navy-900);
-    background-image:
-      linear-gradient(180deg, rgba(3, 25, 56, 0.08) 0%, rgba(3, 25, 56, 0.38) 35%, rgba(3, 25, 56, 0.94) 70%, rgba(3, 25, 56, 0.98) 100%),
-      var(--hero-bg);
-    background-repeat: no-repeat;
-    background-position: center top;
-    background-size: auto 100%;
   }
 
   .hero::before {
     background:
       linear-gradient(180deg, rgba(3, 25, 56, 0.08) 0%, rgba(3, 25, 56, 0.72) 100%);
+  }
+
+  .hero-slide {
+    background-position: 58% top;
   }
 
   .hero-copy {
@@ -1498,13 +1540,17 @@ h1 span {
     grid-column: auto;
     grid-row: auto;
   }
+
+  .admin-list label {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-list label button {
+    justify-self: start;
+  }
 }
 
 @media (max-width: 480px) {
-  .hero {
-    background-position: 58% top;
-  }
-
   .hero-visual-space {
     min-height: 36px;
   }

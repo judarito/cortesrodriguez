@@ -10,6 +10,11 @@ const es = {
     highlight: 'impulsan su negocio',
     text: 'Asesoría integral para que su empresa importe, exporte y crezca sin fronteras, con respaldo experto en cada trámite.',
     image: '',
+    images: [
+      { image: '/hero-carousel-default.png', alt: 'Operaciones logísticas y comercio exterior' },
+      { image: '/hero-carousel-1.png', alt: 'Gestión documental y operaciones portuarias internacionales' },
+      { image: '/hero-carousel-2.png', alt: 'Supervisión logística de carga en terminal portuaria' },
+    ],
     primaryLabel: 'Cotiza ahora',
     primaryHref: '#contacto',
     secondaryLabel: 'Escríbenos por WhatsApp',
@@ -132,6 +137,11 @@ const en = {
     highlight: 'drive your business',
     text: 'End-to-end advisory so your company can import, export, and grow across borders with expert support in every procedure.',
     image: '',
+    images: [
+      { image: '/hero-carousel-default.png', alt: 'Logistics and foreign trade operations' },
+      { image: '/hero-carousel-1.png', alt: 'Documentation management and international port operations' },
+      { image: '/hero-carousel-2.png', alt: 'Cargo logistics supervision at a port terminal' },
+    ],
     primaryLabel: 'Request a quote',
     primaryHref: '#contacto',
     secondaryLabel: 'Message us on WhatsApp',
@@ -274,13 +284,14 @@ export function cloneDefaultContent() {
 
 function mergeLocale(defaultLocale, locale) {
   const navItems = normalizeNavItems(defaultLocale.navItems, locale?.navItems)
+  const hero = normalizeHero(defaultLocale.hero, locale?.hero)
 
   return {
     ...defaultLocale,
     ...locale,
     navItems,
     brand: { ...defaultLocale.brand, ...locale?.brand },
-    hero: { ...defaultLocale.hero, ...locale?.hero },
+    hero,
     servicesHeading: { ...defaultLocale.servicesHeading, ...locale?.servicesHeading },
     clientsHeading: { ...defaultLocale.clientsHeading, ...locale?.clientsHeading },
     galleryHeading: { ...defaultLocale.galleryHeading, ...locale?.galleryHeading },
@@ -293,6 +304,41 @@ function mergeLocale(defaultLocale, locale) {
     galleryItems: locale?.galleryItems || defaultLocale.galleryItems,
     socialLinks: locale?.socialLinks || defaultLocale.socialLinks,
   }
+}
+
+function normalizeHero(defaultHero, hero) {
+  const mergedHero = { ...defaultHero, ...hero }
+  const normalizedImages = normalizeHeroImages(defaultHero.images, hero)
+
+  return {
+    ...mergedHero,
+    images: normalizedImages,
+  }
+}
+
+function normalizeHeroImages(defaultImages, hero) {
+  const imageList = Array.isArray(hero?.images)
+    ? hero.images
+      .filter((item) => typeof item?.image === 'string' && item.image.trim())
+      .map((item) => ({
+        image: item.image.trim(),
+        alt: typeof item?.alt === 'string' && item.alt.trim() ? item.alt.trim() : defaultImages[0]?.alt || 'Imagen de inicio',
+      }))
+    : []
+
+  if (imageList.length) return imageList
+
+  if (typeof hero?.image === 'string' && hero.image.trim()) {
+    return [
+      {
+        image: hero.image.trim(),
+        alt: defaultImages[0]?.alt || 'Imagen de inicio',
+      },
+      ...defaultImages.slice(1),
+    ]
+  }
+
+  return defaultImages
 }
 
 function normalizeNavItems(defaultItems, navItems) {
