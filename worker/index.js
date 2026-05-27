@@ -41,7 +41,26 @@ export default {
         const body = normalizeContent(await request.json())
         await saveLandingContent(env, body)
         await invalidateLandingContentCache(request, env)
-        return json({ ok: true }, request)
+        return json({ ok: true, cacheInvalidated: true }, request, 200, {
+          'x-content-cache-invalidated': 'true',
+        })
+      }
+
+      if (url.pathname === '/api/quote-requests' && request.method === 'POST') {
+        await ensureSchema(env)
+        return submitQuoteRequest(request, env)
+      }
+
+      if (url.pathname === '/api/admin/leads' && request.method === 'GET') {
+        await requireJwt(request, env)
+        await ensureSchema(env)
+        return getAdminLeads(request, env)
+      }
+
+      if (url.pathname.startsWith('/api/admin/leads/') && request.method === 'GET') {
+        await requireJwt(request, env)
+        await ensureSchema(env)
+        return getAdminLeadDetail(request, env)
       }
 
       if (url.pathname === '/api/admin/images' && request.method === 'POST') {
@@ -109,11 +128,26 @@ function getClient(env) {
 }
 
 async function ensureSchema(env) {
-  await getClient(env).execute(`
+  const client = getClient(env)
+  await client.execute(`
     CREATE TABLE IF NOT EXISTS site_content (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS contact_leads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      locale TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      message TEXT NOT NULL,
+      recipient_email TEXT NOT NULL,
+      email_status TEXT NOT NULL DEFAULT 'pending',
+      email_error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
 }
@@ -148,6 +182,291 @@ async function saveLandingContent(env, content) {
     `,
     args: [JSON.stringify(content)],
   })
+}
+
+async function submitQuoteRequest(request, env) {
+  const input = validateLeadPayload(await request.json())
+  const content = await getLandingContent(env)
+  const localeContent = content.locales?.[input.locale] || content.locales?.[content.defaultLocale] || content.locales?.es || defaultContent.locales.es
+  const recipientEmail = localeContent.contact?.email || defaultContent.locales.es.contact.email
+
+  const insertResult = await getClient(env).execute({
+    sql: `
+      INSERT INTO contact_leads (
+        locale,
+        full_name,
+        email,
+        phone,
+        message,
+        recipient_email,
+        email_status,
+        email_error
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL)
+    `,
+    args: [input.locale, input.fullName, input.email, input.phone, input.message, recipientEmail],
+  })
+
+  const leadId = Number(insertResult.lastInsertRowid)
+
+  try {
+    await sendLeadEmail(env, {
+      id: leadId,
+      locale: input.locale,
+      fullName: input.fullName,
+      email: input.email,
+      phone: input.phone,
+      message: input.message,
+      recipientEmail,
+      createdAt: new Date().toISOString(),
+    })
+
+    await updateLeadEmailStatus(env, leadId, 'sent', null)
+    return json({ ok: true, leadId, emailSent: true }, request, 201)
+  } catch (error) {
+    await updateLeadEmailStatus(env, leadId, 'failed', error.message || 'No se pudo enviar el correo.')
+    return json({
+      ok: true,
+      leadId,
+      emailSent: false,
+      warning: input.locale === 'en'
+        ? 'Your request was saved, but the email notification could not be sent.'
+        : 'Tu solicitud fue guardada, pero no se pudo enviar la notificación por correo.',
+    }, request, 201)
+  }
+}
+
+async function getAdminLeads(request, env) {
+  const url = new URL(request.url)
+  const page = clampPositiveInteger(url.searchParams.get('page'), 1)
+  const pageSize = clampPositiveInteger(url.searchParams.get('pageSize'), 10, 50)
+  const offset = (page - 1) * pageSize
+  const client = getClient(env)
+
+  const [countResult, leadsResult] = await Promise.all([
+    client.execute('SELECT COUNT(*) AS total FROM contact_leads'),
+    client.execute({
+      sql: `
+        SELECT id, locale, full_name, email, phone, recipient_email, email_status, created_at, message
+        FROM contact_leads
+        ORDER BY datetime(created_at) DESC, id DESC
+        LIMIT ? OFFSET ?
+      `,
+      args: [pageSize, offset],
+    }),
+  ])
+
+  const total = toNumber(countResult.rows[0]?.total)
+  return json({
+    items: leadsResult.rows.map((row) => serializeLeadSummary(row)),
+    pagination: {
+      page,
+      pageSize,
+      totalItems: total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    },
+  }, request)
+}
+
+async function getAdminLeadDetail(request, env) {
+  const url = new URL(request.url)
+  const leadId = Number(url.pathname.split('/').pop())
+  if (!Number.isInteger(leadId) || leadId <= 0) throw new HttpError('Solicitud inválida.', 400)
+
+  const result = await getClient(env).execute({
+    sql: `
+      SELECT id, locale, full_name, email, phone, message, recipient_email, email_status, email_error, created_at
+      FROM contact_leads
+      WHERE id = ?
+      LIMIT 1
+    `,
+    args: [leadId],
+  })
+
+  if (!result.rows.length) throw new HttpError('Solicitud no encontrada.', 404)
+  return json({ item: serializeLeadDetail(result.rows[0]) }, request)
+}
+
+function validateLeadPayload(payload) {
+  const locale = payload?.locale === 'en' ? 'en' : 'es'
+  const fullName = normalizeText(payload?.fullName)
+  const email = normalizeText(payload?.email).toLowerCase()
+  const phone = normalizeText(payload?.phone)
+  const message = normalizeText(payload?.message)
+
+  if (!fullName) throw new HttpError(locale === 'en' ? 'Name is required.' : 'El nombre es obligatorio.', 400)
+  if (!isValidEmail(email)) throw new HttpError(locale === 'en' ? 'Enter a valid email.' : 'Ingresa un correo válido.', 400)
+  if (!phone) throw new HttpError(locale === 'en' ? 'Phone is required.' : 'El teléfono es obligatorio.', 400)
+  if (!message) throw new HttpError(locale === 'en' ? 'Message is required.' : 'El mensaje es obligatorio.', 400)
+
+  return { locale, fullName, email, phone, message }
+}
+
+async function sendLeadEmail(env, lead) {
+  if (!env.RESEND_API_KEY) throw new Error('Falta RESEND_API_KEY.')
+  if (!env.RESEND_FROM_EMAIL) throw new Error('Falta RESEND_FROM_EMAIL.')
+
+  const subject = lead.locale === 'en'
+    ? `New quote request from ${lead.fullName}`
+    : `Nueva solicitud de cotización de ${lead.fullName}`
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: env.RESEND_FROM_EMAIL,
+      to: [lead.recipientEmail],
+      reply_to: lead.email,
+      subject,
+      text: formatLeadEmailText(lead),
+      html: formatLeadEmailHtml(lead),
+    }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null)
+    throw new Error(error?.message || 'Resend no aceptó el envío.')
+  }
+}
+
+function formatLeadEmailText(lead) {
+  const labels = lead.locale === 'en'
+    ? {
+        title: 'New quote request',
+        name: 'Name',
+        email: 'Email',
+        phone: 'Phone',
+        message: 'Message',
+        locale: 'Language',
+        createdAt: 'Created at',
+      }
+    : {
+        title: 'Nueva solicitud de cotización',
+        name: 'Nombre',
+        email: 'Correo',
+        phone: 'Teléfono',
+        message: 'Mensaje',
+        locale: 'Idioma',
+        createdAt: 'Fecha',
+      }
+
+  return [
+    labels.title,
+    `${labels.name}: ${lead.fullName}`,
+    `${labels.email}: ${lead.email}`,
+    `${labels.phone}: ${lead.phone}`,
+    `${labels.locale}: ${lead.locale.toUpperCase()}`,
+    `${labels.createdAt}: ${lead.createdAt}`,
+    '',
+    `${labels.message}:`,
+    lead.message,
+  ].join('\n')
+}
+
+function formatLeadEmailHtml(lead) {
+  const labels = lead.locale === 'en'
+    ? {
+        title: 'New quote request',
+        name: 'Name',
+        email: 'Email',
+        phone: 'Phone',
+        message: 'Message',
+        locale: 'Language',
+        createdAt: 'Created at',
+      }
+    : {
+        title: 'Nueva solicitud de cotización',
+        name: 'Nombre',
+        email: 'Correo',
+        phone: 'Teléfono',
+        message: 'Mensaje',
+        locale: 'Idioma',
+        createdAt: 'Fecha',
+      }
+
+  return `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0b2144;">
+      <h2>${escapeHtml(labels.title)}</h2>
+      <p><strong>${escapeHtml(labels.name)}:</strong> ${escapeHtml(lead.fullName)}</p>
+      <p><strong>${escapeHtml(labels.email)}:</strong> ${escapeHtml(lead.email)}</p>
+      <p><strong>${escapeHtml(labels.phone)}:</strong> ${escapeHtml(lead.phone)}</p>
+      <p><strong>${escapeHtml(labels.locale)}:</strong> ${escapeHtml(lead.locale.toUpperCase())}</p>
+      <p><strong>${escapeHtml(labels.createdAt)}:</strong> ${escapeHtml(lead.createdAt)}</p>
+      <p><strong>${escapeHtml(labels.message)}:</strong></p>
+      <p>${escapeHtml(lead.message).replace(/\n/g, '<br />')}</p>
+    </div>
+  `
+}
+
+async function updateLeadEmailStatus(env, leadId, status, errorMessage) {
+  await getClient(env).execute({
+    sql: 'UPDATE contact_leads SET email_status = ?, email_error = ? WHERE id = ?',
+    args: [status, errorMessage, leadId],
+  })
+}
+
+function serializeLeadSummary(row) {
+  return {
+    id: toNumber(row.id),
+    locale: String(row.locale),
+    fullName: String(row.full_name),
+    email: String(row.email),
+    phone: String(row.phone),
+    recipientEmail: String(row.recipient_email),
+    emailStatus: String(row.email_status),
+    createdAt: String(row.created_at),
+    messagePreview: truncateText(String(row.message), 140),
+  }
+}
+
+function serializeLeadDetail(row) {
+  return {
+    id: toNumber(row.id),
+    locale: String(row.locale),
+    fullName: String(row.full_name),
+    email: String(row.email),
+    phone: String(row.phone),
+    message: String(row.message),
+    recipientEmail: String(row.recipient_email),
+    emailStatus: String(row.email_status),
+    emailError: row.email_error ? String(row.email_error) : '',
+    createdAt: String(row.created_at),
+  }
+}
+
+function clampPositiveInteger(value, fallback, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback
+  return Math.min(parsed, max)
+}
+
+function normalizeText(value) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function toNumber(value) {
+  return typeof value === 'number' ? value : Number(value || 0)
+}
+
+function truncateText(value, maxLength) {
+  if (value.length <= maxLength) return value
+  return `${value.slice(0, maxLength - 1)}…`
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
 }
 
 async function uploadImage(request, env) {

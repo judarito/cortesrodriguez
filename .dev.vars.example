@@ -4,3 +4,5 @@ ADMIN_EMAIL=admin@cortesrodriguezasesores.com
 ADMIN_PASSWORD=cambia-esta-clave
 JWT_SECRET=cambia-este-secreto-largo
 CONTENT_CACHE_TTL_SECONDS=300
+RESEND_API_KEY=re_xxxxxxxxx
+RESEND_FROM_EMAIL=notificaciones@tu-dominio.com

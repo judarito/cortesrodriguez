@@ -105,6 +105,7 @@ const es = {
     secondaryHref: 'https://wa.me/573001234567',
   },
   footer: {
+    logo: '',
     quickLinksTitle: 'Enlaces rápidos',
     servicesTitle: 'Nuestros servicios',
     contactTitle: 'Contáctenos',
@@ -232,6 +233,7 @@ const en = {
     secondaryHref: 'https://wa.me/573001234567',
   },
   footer: {
+    logo: '',
     quickLinksTitle: 'Quick links',
     servicesTitle: 'Our services',
     contactTitle: 'Contact us',

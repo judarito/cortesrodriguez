@@ -1,7 +1,10 @@
 import { cloneDefaultContent, normalizeContent } from '../contentDefaults'
 
-export async function fetchContent() {
-  const response = await fetch('/api/content')
+export async function fetchContent(options = {}) {
+  const response = await fetch('/api/content', {
+    cache: 'no-store',
+    ...options,
+  })
   if (!response.ok) return cloneDefaultContent()
   return normalizeContent(await response.json())
 }
@@ -58,4 +61,51 @@ export async function uploadImage(blob, jwt, fileName = 'imagen.webp') {
   }
 
   return response.json()
+}
+
+export async function submitQuoteRequest(payload) {
+  const response = await fetch('/api/quote-requests', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  const data = await response.json().catch(() => ({ error: 'No se pudo enviar la solicitud.' }))
+  if (!response.ok) {
+    throw new Error(data.error || 'No se pudo enviar la solicitud.')
+  }
+
+  return data
+}
+
+export async function fetchAdminLeads(jwt, page = 1, pageSize = 10) {
+  const response = await fetch(`/api/admin/leads?page=${page}&pageSize=${pageSize}`, {
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+    },
+  })
+
+  const data = await response.json().catch(() => ({ error: 'No se pudieron cargar las solicitudes.' }))
+  if (!response.ok) {
+    throw new Error(data.error || 'No se pudieron cargar las solicitudes.')
+  }
+
+  return data
+}
+
+export async function fetchAdminLeadDetail(jwt, leadId) {
+  const response = await fetch(`/api/admin/leads/${leadId}`, {
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+    },
+  })
+
+  const data = await response.json().catch(() => ({ error: 'No se pudo cargar el detalle.' }))
+  if (!response.ok) {
+    throw new Error(data.error || 'No se pudo cargar el detalle.')
+  }
+
+  return data
 }
