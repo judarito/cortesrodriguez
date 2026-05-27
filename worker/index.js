@@ -388,15 +388,35 @@ function formatLeadEmailHtml(lead) {
       }
 
   return `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #0b2144;">
-      <h2>${escapeHtml(labels.title)}</h2>
-      <p><strong>${escapeHtml(labels.name)}:</strong> ${escapeHtml(lead.fullName)}</p>
-      <p><strong>${escapeHtml(labels.email)}:</strong> ${escapeHtml(lead.email)}</p>
-      <p><strong>${escapeHtml(labels.phone)}:</strong> ${escapeHtml(lead.phone)}</p>
-      <p><strong>${escapeHtml(labels.locale)}:</strong> ${escapeHtml(lead.locale.toUpperCase())}</p>
-      <p><strong>${escapeHtml(labels.createdAt)}:</strong> ${escapeHtml(lead.createdAt)}</p>
-      <p><strong>${escapeHtml(labels.message)}:</strong></p>
-      <p>${escapeHtml(lead.message).replace(/\n/g, '<br />')}</p>
+    <div style="margin:0;padding:32px 16px;background:#f4f7fb;font-family:Arial,sans-serif;color:#102544;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #dbe3ee;border-radius:18px;overflow:hidden;box-shadow:0 18px 48px rgba(16,37,68,0.08);">
+        <div style="padding:28px 32px;background:linear-gradient(135deg,#0a2a57,#123d79);color:#ffffff;">
+          <div style="font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;opacity:0.82;">Cortes Rodriguez Asesores</div>
+          <h1 style="margin:10px 0 0;font-size:28px;line-height:1.2;">${escapeHtml(labels.title)}</h1>
+        </div>
+        <div style="padding:28px 32px;">
+          <div style="display:grid;gap:14px;">
+            ${renderEmailRow(labels.name, lead.fullName)}
+            ${renderEmailRow(labels.email, lead.email)}
+            ${renderEmailRow(labels.phone, lead.phone)}
+            ${renderEmailRow(labels.locale, lead.locale.toUpperCase())}
+            ${renderEmailRow(labels.createdAt, lead.createdAt)}
+          </div>
+          <div style="margin-top:24px;padding:20px 22px;background:#f7f9fc;border:1px solid #e3eaf3;border-radius:14px;">
+            <div style="margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#5b6d85;">${escapeHtml(labels.message)}</div>
+            <p style="margin:0;font-size:15px;line-height:1.7;color:#102544;">${escapeHtml(lead.message).replace(/\n/g, '<br />')}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function renderEmailRow(label, value) {
+  return `
+    <div style="display:grid;gap:4px;padding-bottom:14px;border-bottom:1px solid #edf2f7;">
+      <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6a7b91;">${escapeHtml(label)}</div>
+      <div style="font-size:16px;line-height:1.5;color:#102544;">${escapeHtml(value)}</div>
     </div>
   `
 }

@@ -536,6 +536,14 @@ function emailStatusLabel(status) {
   return 'Pendiente'
 }
 
+function sortLeadsNewestFirst(items) {
+  return [...items].sort((a, b) => {
+    const dateDiff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    if (dateDiff !== 0) return dateDiff
+    return Number(b.id || 0) - Number(a.id || 0)
+  })
+}
+
 async function submitLead() {
   leadFormSubmitting.value = true
   leadFormStatus.value = ''
@@ -562,7 +570,7 @@ async function loadAdminLeads(page = adminLeadsPagination.value.page || 1) {
 
   try {
     const response = await fetchAdminLeads(adminJwt.value, page, adminLeadsPageSize)
-    adminLeads.value = response.items || []
+    adminLeads.value = sortLeadsNewestFirst(response.items || [])
     adminLeadsPagination.value = response.pagination || { page: 1, pageSize: adminLeadsPageSize, totalItems: 0, totalPages: 1 }
   } catch (error) {
     adminLeadsError.value = error.message
