@@ -1,5 +1,6 @@
 <script setup>
 import {
+  Check,
   ArrowRight,
   ArrowUp,
   Award,
@@ -42,10 +43,14 @@ import { cloneDefaultContent } from './contentDefaults'
 import {
   fetchAdminLeadDetail,
   fetchAdminLeads,
+  fetchAdminTestimonialDetail,
+  fetchAdminTestimonials,
   fetchContent,
   loginAdmin,
+  reviewAdminTestimonial,
   saveContent,
   submitQuoteRequest,
+  submitTestimonial,
   uploadImage,
 } from './lib/contentApi'
 import logoUrl from './assets/logo-cortes-rodriguez.png'
@@ -92,17 +97,31 @@ const adminToast = ref('')
 const loading = ref(true)
 const hasUnsavedChanges = ref(false)
 const leadModalOpen = ref(false)
+const testimonialModalOpen = ref(false)
 const leadForm = ref(createEmptyLeadForm(activeLocale.value))
 const leadFormStatus = ref('')
 const leadFormSubmitting = ref(false)
+const testimonialForm = ref(createEmptyTestimonialForm(activeLocale.value))
+const testimonialFormStatus = ref('')
+const testimonialFormSubmitting = ref(false)
 const adminLeads = ref([])
 const adminLeadsPagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
 const adminLeadsLoading = ref(false)
 const adminLeadsError = ref('')
+const adminTestimonials = ref([])
+const adminTestimonialsPagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
+const adminTestimonialsLoading = ref(false)
+const adminTestimonialsError = ref('')
 const selectedLeadId = ref(null)
 const selectedLead = ref(null)
 const selectedLeadLoading = ref(false)
 const selectedLeadError = ref('')
+const selectedTestimonialId = ref(null)
+const selectedTestimonial = ref(null)
+const selectedTestimonialLoading = ref(false)
+const selectedTestimonialError = ref('')
+const testimonialReviewNotes = ref('')
+const testimonialReviewSubmitting = ref(false)
 const heroIndex = ref(0)
 const clientIndex = ref(0)
 const galleryIndex = ref(0)
@@ -115,6 +134,7 @@ const maxOptimizedImageBytes = 480 * 1024
 const maxImageDimension = 1600
 const defaultHeroSlideAlt = 'Imagen de inicio'
 const adminLeadsPageSize = 10
+const adminTestimonialsPageSize = 10
 const quoteFormCopy = {
   es: {
     modalTitle: 'Solicita tu cotización',
@@ -152,10 +172,67 @@ const quoteFormCopy = {
   },
 }
 
+const testimonialFormCopy = {
+  es: {
+    title: 'Comparte tu testimonio',
+    text: 'Si quieres contarnos tu experiencia, déjanos tu mensaje. Lo revisaremos antes de publicarlo.',
+    openButtonLabel: 'Agregar comentario',
+    fullNameLabel: 'Nombre completo',
+    fullNamePlaceholder: 'Tu nombre',
+    roleLabel: 'Cargo o relación',
+    rolePlaceholder: 'Ej. Gerente, aliado, beneficiario',
+    companyLabel: 'Empresa u organización',
+    companyPlaceholder: 'Opcional',
+    emailLabel: 'Correo electrónico',
+    emailPlaceholder: 'nombre@empresa.com',
+    phoneLabel: 'Teléfono',
+    phonePlaceholder: '+57 300 123 4567',
+    messageLabel: 'Tu testimonio',
+    messagePlaceholder: 'Cuéntanos cómo ha sido tu experiencia.',
+    submitLabel: 'Enviar testimonio',
+    submittingLabel: 'Enviando...',
+    success: 'Recibimos tu testimonio. Quedó pendiente de revisión.',
+    successWithWarning: 'Recibimos tu testimonio, pero hubo un problema al enviar la notificación por correo.',
+  },
+  en: {
+    title: 'Share your testimonial',
+    text: 'If you want to tell us about your experience, leave your message here. We will review it before publishing it.',
+    openButtonLabel: 'Add comment',
+    fullNameLabel: 'Full name',
+    fullNamePlaceholder: 'Your name',
+    roleLabel: 'Role or relationship',
+    rolePlaceholder: 'E.g. Manager, partner, beneficiary',
+    companyLabel: 'Company or organization',
+    companyPlaceholder: 'Optional',
+    emailLabel: 'Email address',
+    emailPlaceholder: 'name@company.com',
+    phoneLabel: 'Phone',
+    phonePlaceholder: '+1 555 123 4567',
+    messageLabel: 'Your testimonial',
+    messagePlaceholder: 'Tell us about your experience.',
+    submitLabel: 'Send testimonial',
+    submittingLabel: 'Sending...',
+    success: 'We received your testimonial. It is now pending review.',
+    successWithWarning: 'We received your testimonial, but there was a problem sending the email notification.',
+  },
+}
+
 function createEmptyLeadForm(locale = 'es') {
   return {
     locale,
     fullName: '',
+    email: '',
+    phone: '',
+    message: '',
+  }
+}
+
+function createEmptyTestimonialForm(locale = 'es') {
+  return {
+    locale,
+    fullName: '',
+    role: '',
+    company: '',
     email: '',
     phone: '',
     message: '',
@@ -183,12 +260,15 @@ const galleryItems = computed(() => {
   return itemsWithImages.length ? itemsWithImages : items
 })
 const testimonials = computed(() => site.value.testimonials || [])
+const approvedTestimonials = computed(() => content.value.approvedTestimonials?.[activeLocale.value] || [])
+const allTestimonials = computed(() => [...approvedTestimonials.value, ...testimonials.value])
 const reasons = computed(() => site.value.reasons || [])
 const stats = computed(() => site.value.stats || [])
 const steps = computed(() => site.value.steps || [])
 const socialLinks = computed(() => site.value.socialLinks || [])
 const footerLogoUrl = computed(() => site.value.footer?.logo || logoUrl)
 const leadCopy = computed(() => quoteFormCopy[activeLocale.value] || quoteFormCopy.es)
+const testimonialCopy = computed(() => testimonialFormCopy[activeLocale.value] || testimonialFormCopy.es)
 const testimonialIndex = ref(0)
 const heroSlides = computed(() => normalizeHeroSlides(site.value.hero))
 const draftHeroSlides = computed(() => normalizeHeroSlides(draftLocale.value.hero))
@@ -207,7 +287,7 @@ const activeGalleryItem = computed(() => {
   return items[activeGalleryIndex.value]
 })
 const visibleTestimonials = computed(() => {
-  const items = testimonials.value
+  const items = allTestimonials.value
   if (!items.length) return []
   return [0, 1, 2].map((offset) => items[(testimonialIndex.value + offset) % items.length]).slice(0, Math.min(3, items.length))
 })
@@ -221,6 +301,7 @@ const navText = computed({
   },
 })
 const hasAdminLeads = computed(() => adminLeads.value.length > 0)
+const hasAdminTestimonials = computed(() => adminTestimonials.value.length > 0)
 
 function sectionId(item) {
   return item.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -315,7 +396,11 @@ function validateLocaleContent(locale, localeKey) {
   assertFilled(locale.clientsHeading?.kicker, `Clientes (${localeLabel}) - etiqueta`)
   assertFilled(locale.clientsHeading?.title, `Clientes (${localeLabel}) - título`)
   assertItems(locale.clients, `Clientes (${localeLabel})`)
-  locale.clients.forEach((client, index) => assertFilled(client, `Clientes (${localeLabel}) - cliente ${index + 1}`))
+  locale.clients.forEach((client, index) => {
+    assertFilled(client?.name, `Clientes (${localeLabel}) - elemento ${index + 1} nombre`)
+    assertFilled(client?.image, `Clientes (${localeLabel}) - elemento ${index + 1} imagen`)
+    assertFilled(client?.alt, `Clientes (${localeLabel}) - elemento ${index + 1} texto alternativo`)
+  })
 
   assertFilled(locale.galleryHeading?.kicker, `Eventos y noticias (${localeLabel}) - etiqueta`)
   assertFilled(locale.galleryHeading?.title, `Eventos y noticias (${localeLabel}) - título`)
@@ -456,13 +541,13 @@ function goToGalleryItem(index) {
 }
 
 function nextTestimonial() {
-  if (!testimonials.value.length) return
-  testimonialIndex.value = (testimonialIndex.value + 1) % testimonials.value.length
+  if (!allTestimonials.value.length) return
+  testimonialIndex.value = (testimonialIndex.value + 1) % allTestimonials.value.length
 }
 
 function previousTestimonial() {
-  if (!testimonials.value.length) return
-  testimonialIndex.value = (testimonialIndex.value - 1 + testimonials.value.length) % testimonials.value.length
+  if (!allTestimonials.value.length) return
+  testimonialIndex.value = (testimonialIndex.value - 1 + allTestimonials.value.length) % allTestimonials.value.length
 }
 
 function goToTestimonial(index) {
@@ -480,6 +565,19 @@ function closeLeadModal() {
   leadModalOpen.value = false
   leadFormStatus.value = ''
   leadFormSubmitting.value = false
+}
+
+function openTestimonialModal() {
+  testimonialModalOpen.value = true
+  menuOpen.value = false
+  testimonialForm.value = createEmptyTestimonialForm(activeLocale.value)
+  testimonialFormStatus.value = ''
+}
+
+function closeTestimonialModal() {
+  testimonialModalOpen.value = false
+  testimonialFormStatus.value = ''
+  testimonialFormSubmitting.value = false
 }
 
 async function loadContent() {
@@ -536,6 +634,12 @@ function emailStatusLabel(status) {
   return 'Pendiente'
 }
 
+function reviewStatusLabel(status) {
+  if (status === 'approved') return 'Publicado'
+  if (status === 'rejected') return 'Rechazado'
+  return 'Pendiente'
+}
+
 function sortLeadsNewestFirst(items) {
   return [...items].sort((a, b) => {
     const dateDiff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -559,6 +663,24 @@ async function submitLead() {
     leadFormStatus.value = error.message
   } finally {
     leadFormSubmitting.value = false
+  }
+}
+
+async function submitPublicTestimonial() {
+  testimonialFormSubmitting.value = true
+  testimonialFormStatus.value = ''
+
+  try {
+    const response = await submitTestimonial({
+      ...testimonialForm.value,
+      locale: activeLocale.value,
+    })
+    testimonialForm.value = createEmptyTestimonialForm(activeLocale.value)
+    testimonialFormStatus.value = response.emailSent ? testimonialCopy.value.success : testimonialCopy.value.successWithWarning
+  } catch (error) {
+    testimonialFormStatus.value = error.message
+  } finally {
+    testimonialFormSubmitting.value = false
   }
 }
 
@@ -597,6 +719,42 @@ async function loadAdminLeadDetailById(leadId) {
   }
 }
 
+async function loadAdminTestimonials(page = adminTestimonialsPagination.value.page || 1) {
+  if (!adminJwt.value) return
+
+  adminTestimonialsLoading.value = true
+  adminTestimonialsError.value = ''
+
+  try {
+    const response = await fetchAdminTestimonials(adminJwt.value, page, adminTestimonialsPageSize)
+    adminTestimonials.value = sortLeadsNewestFirst(response.items || [])
+    adminTestimonialsPagination.value = response.pagination || { page: 1, pageSize: adminTestimonialsPageSize, totalItems: 0, totalPages: 1 }
+  } catch (error) {
+    adminTestimonialsError.value = error.message
+  } finally {
+    adminTestimonialsLoading.value = false
+  }
+}
+
+async function loadAdminTestimonialDetailById(testimonialId) {
+  if (!adminJwt.value || !testimonialId) return
+
+  selectedTestimonialLoading.value = true
+  selectedTestimonialError.value = ''
+  selectedTestimonial.value = null
+
+  try {
+    const response = await fetchAdminTestimonialDetail(adminJwt.value, testimonialId)
+    selectedTestimonial.value = response.item
+    selectedTestimonialId.value = response.item?.id || testimonialId
+    testimonialReviewNotes.value = response.item?.reviewNotes || ''
+  } catch (error) {
+    selectedTestimonialError.value = error.message
+  } finally {
+    selectedTestimonialLoading.value = false
+  }
+}
+
 function closeAdminLeadDetail() {
   selectedLead.value = null
   selectedLeadId.value = null
@@ -604,11 +762,24 @@ function closeAdminLeadDetail() {
   selectedLeadLoading.value = false
 }
 
+function closeAdminTestimonialDetail() {
+  selectedTestimonial.value = null
+  selectedTestimonialId.value = null
+  selectedTestimonialError.value = ''
+  selectedTestimonialLoading.value = false
+  testimonialReviewNotes.value = ''
+  testimonialReviewSubmitting.value = false
+}
+
 async function setAdminView(view) {
   adminView.value = view
   closeAdminLeadDetail()
+  closeAdminTestimonialDetail()
   if (view === 'leads') {
     await loadAdminLeads(1)
+  }
+  if (view === 'testimonials') {
+    await loadAdminTestimonials(1)
   }
 }
 
@@ -633,10 +804,37 @@ function logout() {
   adminStatus.value = 'Sesión cerrada.'
   adminView.value = 'content'
   adminLeads.value = []
+  adminTestimonials.value = []
   selectedLead.value = null
   selectedLeadId.value = null
+  selectedTestimonial.value = null
+  selectedTestimonialId.value = null
   window.history.pushState({}, '', '/login')
   routePath.value = '/login'
+}
+
+async function reviewTestimonial(reviewStatus) {
+  if (!selectedTestimonialId.value || !adminJwt.value) return
+
+  testimonialReviewSubmitting.value = true
+  adminStatus.value = reviewStatus === 'approved' ? 'Publicando testimonio...' : 'Actualizando revisión...'
+
+  try {
+    const response = await reviewAdminTestimonial(adminJwt.value, selectedTestimonialId.value, {
+      reviewStatus,
+      reviewNotes: testimonialReviewNotes.value,
+    })
+    selectedTestimonial.value = response.item
+    testimonialReviewNotes.value = response.item?.reviewNotes || ''
+    adminStatus.value = reviewStatus === 'approved' ? 'Testimonio publicado.' : 'Testimonio rechazado.'
+    showAdminToast(reviewStatus === 'approved' ? 'Testimonio publicado.' : 'Testimonio rechazado.')
+    await loadAdminTestimonials(adminTestimonialsPagination.value.page || 1)
+    await refreshPublishedContent()
+  } catch (error) {
+    adminStatus.value = error.message
+  } finally {
+    testimonialReviewSubmitting.value = false
+  }
 }
 
 async function persistContent() {
@@ -666,6 +864,7 @@ function stripTransientGalleryState(value) {
       delete locale.footer.logoStatus
       delete locale.footer.logoKey
     }
+    locale.clients = (locale.clients || []).map(({ imageStatus, imageKey, ...item }) => item)
     locale.galleryItems = (locale.galleryItems || []).map(({ imageStatus, ...item }) => item)
   })
   return cleanValue
@@ -680,6 +879,12 @@ function validateOptimizedImages(value) {
       if (!item.image) return
       if (item.image.startsWith('data:')) {
         throw new Error('Hay una imagen del carrusel de inicio pendiente de subir. Vuelve a seleccionarla para enviarla al almacenamiento.')
+      }
+    })
+    ;(locale.clients || []).forEach((item) => {
+      if (!item.image) return
+      if (item.image.startsWith('data:')) {
+        throw new Error('Hay una imagen de la fundación pendiente de subir. Vuelve a seleccionarla para enviarla al almacenamiento.')
       }
     })
     ;(locale.galleryItems || []).forEach((item) => {
@@ -708,6 +913,25 @@ async function handleGalleryImageUpload(event, item) {
     item.imageKey = uploaded.key
     item.imageStatus = `Imagen subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
     if (!item.alt) item.alt = item.title || 'Imagen del sitio web'
+  } catch (error) {
+    item.imageStatus = error.message
+  }
+}
+
+async function handleClientImageUpload(event, item) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+
+  try {
+    item.imageStatus = 'Optimizando imagen...'
+    const optimized = await optimizeImage(file)
+    item.imageStatus = `Subiendo imagen optimizada: ${formatBytes(optimized.blob.size)}.`
+    const uploaded = await uploadImage(optimized.blob, adminJwt.value, file.name)
+    item.image = uploaded.url
+    item.imageKey = uploaded.key
+    item.imageStatus = `Imagen subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
+    if (!item.alt) item.alt = item.name || 'Imagen de la fundación'
   } catch (error) {
     item.imageStatus = error.message
   }
@@ -830,6 +1054,7 @@ watch(activeLocale, (locale) => {
   if (!leadModalOpen.value) {
     leadForm.value.locale = locale
   }
+  testimonialForm.value.locale = locale
 })
 
 watch(heroSlides, (items) => {
@@ -839,6 +1064,15 @@ watch(heroSlides, (items) => {
   }
 
   heroIndex.value %= items.length
+}, { immediate: true })
+
+watch(allTestimonials, (items) => {
+  if (!items.length) {
+    testimonialIndex.value = 0
+    return
+  }
+
+  testimonialIndex.value %= items.length
 }, { immediate: true })
 </script>
 
@@ -880,6 +1114,7 @@ watch(heroSlides, (items) => {
         <div class="admin-nav">
           <button type="button" class="admin-link" :class="{ active: adminView === 'content' }" @click="setAdminView('content')">Contenido</button>
           <button type="button" class="admin-link" :class="{ active: adminView === 'leads' }" @click="setAdminView('leads')">Solicitudes</button>
+          <button type="button" class="admin-link" :class="{ active: adminView === 'testimonials' }" @click="setAdminView('testimonials')">Testimonios</button>
         </div>
         <button class="admin-link" type="button" @click="logout">Cerrar sesión</button>
         <a class="admin-link" href="/">Ver sitio web</a>
@@ -966,17 +1201,33 @@ watch(heroSlides, (items) => {
         </div>
 
         <div class="admin-section">
-          <h2>Clientes</h2>
+          <h2>Nuestra fundación</h2>
           <label>Etiqueta <input v-model="draftLocale.clientsHeading.kicker" /></label>
           <label>Título <input v-model="draftLocale.clientsHeading.title" /></label>
-          <div class="admin-list">
-            <label v-for="(_, index) in draftLocale.clients" :key="index">
-              Cliente
-              <input v-model="draftLocale.clients[index]" />
-              <button type="button" class="danger compact" @click="removeItem(draftLocale.clients, index)"><Trash2 :size="16" /></button>
-            </label>
-          </div>
-          <button type="button" class="admin-add" @click="addItem(draftLocale.clients, 'Nuevo cliente')"><Plus :size="16" /> Agregar cliente</button>
+          <article v-for="(item, index) in draftLocale.clients" :key="index" class="admin-card gallery-admin-card">
+            <div class="image-preview">
+              <img v-if="item.image" :src="item.image" :alt="item.alt || item.name" />
+              <ImagePlus v-else :size="34" />
+            </div>
+            <div class="gallery-admin-fields">
+              <input v-model="item.name" placeholder="Título o nombre del momento" />
+              <textarea v-model="item.text" rows="2" placeholder="Descripción breve"></textarea>
+              <input v-model="item.alt" placeholder="Texto alternativo de la imagen" />
+              <label class="file-field">
+                Subir foto de la fundación
+                <input type="file" accept="image/png,image/jpeg,image/webp" @change="handleClientImageUpload($event, item)" />
+              </label>
+              <small>{{ item.imageStatus || `Máximo ${formatBytes(maxUploadBytes)}. Se guarda optimizada hasta ${formatBytes(maxOptimizedImageBytes)}.` }}</small>
+            </div>
+            <button type="button" class="danger" @click="removeItem(draftLocale.clients, index)"><Trash2 :size="16" /> Eliminar</button>
+          </article>
+          <button
+            type="button"
+            class="admin-add"
+            @click="addItem(draftLocale.clients, { name: 'Nuevo momento', text: '', image: '', alt: 'Imagen de la fundación' })"
+          >
+            <Plus :size="16" /> Agregar elemento
+          </button>
         </div>
 
         <div class="admin-section">
@@ -1135,7 +1386,7 @@ watch(heroSlides, (items) => {
         </div>
         </template>
 
-        <template v-else>
+        <template v-else-if="adminView === 'leads'">
           <div class="admin-section">
             <div class="admin-section-header">
               <div>
@@ -1239,6 +1490,130 @@ watch(heroSlides, (items) => {
               </div>
           </div>
         </template>
+        <template v-else>
+          <div class="admin-section">
+            <div class="admin-section-header">
+              <div>
+                <h2>Testimonios pendientes de revisión</h2>
+                <p class="admin-note">Los testimonios enviados desde el sitio llegan aquí. Desde este panel puedes aprobarlos para publicarlos o rechazarlos.</p>
+              </div>
+              <button type="button" class="admin-link" @click="loadAdminTestimonials(adminTestimonialsPagination.page)">Actualizar</button>
+            </div>
+
+            <div v-if="adminTestimonialsError" class="admin-inline-error">{{ adminTestimonialsError }}</div>
+
+            <div v-if="!selectedTestimonial && !selectedTestimonialLoading" class="lead-admin-list">
+              <div class="lead-list-toolbar">
+                <strong>{{ adminTestimonialsPagination.totalItems }} testimonios</strong>
+                <span>Página {{ adminTestimonialsPagination.page }} de {{ adminTestimonialsPagination.totalPages }}</span>
+              </div>
+
+              <div v-if="adminTestimonialsLoading" class="lead-empty-state">Cargando testimonios...</div>
+              <div v-else-if="!hasAdminTestimonials" class="lead-empty-state">Aún no hay testimonios registrados.</div>
+              <article
+                v-for="item in adminTestimonials"
+                v-else
+                :key="item.id"
+                class="lead-list-item"
+              >
+                <div class="lead-list-item-top">
+                  <strong>{{ item.fullName }}</strong>
+                  <span class="lead-status-pill" :class="item.reviewStatus">{{ reviewStatusLabel(item.reviewStatus) }}</span>
+                </div>
+                <span>{{ item.role }}<template v-if="item.company"> · {{ item.company }}</template></span>
+                <span>{{ item.email }}</span>
+                <small>{{ item.messagePreview }}</small>
+                <div class="lead-list-item-bottom">
+                  <small>{{ formatAdminLeadDate(item.createdAt) }}</small>
+                  <button type="button" class="admin-link lead-detail-button" @click="loadAdminTestimonialDetailById(item.id)">Ver detalle</button>
+                </div>
+              </article>
+
+              <div class="lead-pagination">
+                <button
+                  type="button"
+                  class="admin-link"
+                  :disabled="adminTestimonialsLoading || adminTestimonialsPagination.page <= 1"
+                  @click="loadAdminTestimonials(adminTestimonialsPagination.page - 1)"
+                >
+                  Anterior
+                </button>
+                <button
+                  type="button"
+                  class="admin-link"
+                  :disabled="adminTestimonialsLoading || adminTestimonialsPagination.page >= adminTestimonialsPagination.totalPages"
+                  @click="loadAdminTestimonials(adminTestimonialsPagination.page + 1)"
+                >
+                  Siguiente
+                </button>
+              </div>
+            </div>
+
+            <div v-else class="lead-admin-detail">
+              <div class="lead-detail-toolbar">
+                <button type="button" class="admin-link" @click="closeAdminTestimonialDetail">Volver al listado</button>
+                <button type="button" class="admin-link" @click="loadAdminTestimonials(adminTestimonialsPagination.page)">Actualizar listado</button>
+              </div>
+              <div v-if="selectedTestimonialLoading" class="lead-empty-state">Cargando detalle...</div>
+              <div v-else-if="selectedTestimonialError" class="admin-inline-error">{{ selectedTestimonialError }}</div>
+              <div v-else-if="selectedTestimonial" class="lead-detail-card">
+                <div class="lead-detail-header">
+                  <div>
+                    <h3>{{ selectedTestimonial.fullName }}</h3>
+                    <p>{{ formatAdminLeadDate(selectedTestimonial.createdAt) }}</p>
+                  </div>
+                  <span class="lead-status-pill" :class="selectedTestimonial.reviewStatus">{{ reviewStatusLabel(selectedTestimonial.reviewStatus) }}</span>
+                </div>
+                <div class="lead-detail-grid">
+                  <div>
+                    <span>Idioma</span>
+                    <strong>{{ selectedTestimonial.locale.toUpperCase() }}</strong>
+                  </div>
+                  <div>
+                    <span>Cargo</span>
+                    <strong>{{ selectedTestimonial.role }}</strong>
+                  </div>
+                  <div>
+                    <span>Empresa</span>
+                    <strong>{{ selectedTestimonial.company || 'Sin dato' }}</strong>
+                  </div>
+                  <div>
+                    <span>Correo</span>
+                    <strong>{{ selectedTestimonial.email }}</strong>
+                  </div>
+                  <div>
+                    <span>Teléfono</span>
+                    <strong>{{ selectedTestimonial.phone || 'Sin dato' }}</strong>
+                  </div>
+                  <div>
+                    <span>Destino del correo</span>
+                    <strong>{{ selectedTestimonial.recipientEmail }}</strong>
+                  </div>
+                </div>
+                <div class="lead-message-box">
+                  <span>Testimonio</span>
+                  <p>{{ selectedTestimonial.message }}</p>
+                </div>
+                <label>
+                  Notas de revisión
+                  <textarea v-model="testimonialReviewNotes" rows="4" placeholder="Notas internas para el equipo"></textarea>
+                </label>
+                <div class="review-actions">
+                  <button type="button" class="admin-save" :disabled="testimonialReviewSubmitting" @click="reviewTestimonial('approved')">
+                    <Check :size="16" /> Publicar
+                  </button>
+                  <button type="button" class="danger" :disabled="testimonialReviewSubmitting" @click="reviewTestimonial('rejected')">
+                    <X :size="16" /> Rechazar
+                  </button>
+                </div>
+                <div v-if="selectedTestimonial.emailError" class="admin-inline-error">
+                  Error de correo: {{ selectedTestimonial.emailError }}
+                </div>
+              </div>
+              <div v-else class="lead-empty-state">Selecciona un testimonio para ver el detalle.</div>
+            </div>
+          </div>
+        </template>
       </section>
     </main>
 
@@ -1338,21 +1713,27 @@ watch(heroSlides, (items) => {
               <p class="section-kicker">{{ site.clientsHeading.kicker }}</p>
               <h2>{{ site.clientsHeading.title }}</h2>
             </div>
-            <div class="slider-controls" aria-label="Controles de clientes">
-              <button type="button" aria-label="Cliente anterior" @click="previousClient"><ChevronLeft :size="20" /></button>
-              <button type="button" aria-label="Cliente siguiente" @click="nextClient"><ChevronRight :size="20" /></button>
+            <div class="slider-controls" aria-label="Controles de la fundación">
+              <button type="button" aria-label="Elemento anterior" @click="previousClient"><ChevronLeft :size="20" /></button>
+              <button type="button" aria-label="Elemento siguiente" @click="nextClient"><ChevronRight :size="20" /></button>
             </div>
           </div>
           <div class="client-strip">
-            <div v-for="client in visibleClients" :key="client" class="client-logo">{{ client }}</div>
+            <article v-for="client in visibleClients" :key="client.name" class="client-logo foundation-card">
+              <img :src="client.image" :alt="client.alt || client.name" />
+              <div>
+                <strong>{{ client.name }}</strong>
+                <small>{{ client.text }}</small>
+              </div>
+            </article>
           </div>
-          <div class="slider-dots" aria-label="Seleccionar cliente">
+          <div class="slider-dots" aria-label="Seleccionar elemento de fundación">
             <button
               v-for="(_, index) in clients"
               :key="index"
               type="button"
               :class="{ active: index === activeClientIndex }"
-              :aria-label="`Ver cliente ${index + 1}`"
+              :aria-label="`Ver elemento ${index + 1}`"
               @click="goToClient(index)"
             ></button>
           </div>
@@ -1396,34 +1777,43 @@ watch(heroSlides, (items) => {
             <div>
               <p class="section-kicker">{{ site.testimonialsHeading.kicker }}</p>
               <h2>{{ site.testimonialsHeading.title }}</h2>
+              <p class="testimonial-intro">{{ testimonialCopy.text }}</p>
             </div>
-            <div class="slider-controls" aria-label="Controles de testimonios">
+            <div class="testimonial-actions">
+              <button type="button" class="outline-button testimonial-open-button" @click="openTestimonialModal">
+                {{ testimonialCopy.openButtonLabel }}
+                <ArrowRight :size="17" />
+              </button>
+              <div class="slider-controls" aria-label="Controles de testimonios">
               <button type="button" aria-label="Testimonio anterior" @click="previousTestimonial"><ChevronLeft :size="20" /></button>
               <button type="button" aria-label="Testimonio siguiente" @click="nextTestimonial"><ChevronRight :size="20" /></button>
+              </div>
             </div>
           </div>
-          <div class="testimonial-grid">
-            <article v-for="item in visibleTestimonials" :key="`${item.name}-${item.role}`" class="testimonial-card">
-              <Quote class="quote-icon" :size="30" />
-              <p>{{ item.text }}</p>
-              <div class="person">
-                <span>{{ item.name.slice(0, 1) }}</span>
-                <div>
-                  <strong>{{ item.name }}</strong>
-                  <small>{{ item.role }}</small>
+          <div class="testimonials-content">
+            <div class="testimonial-grid">
+              <article v-for="item in visibleTestimonials" :key="`${item.name}-${item.role}`" class="testimonial-card">
+                <Quote class="quote-icon" :size="30" />
+                <p>{{ item.text }}</p>
+                <div class="person">
+                  <span>{{ item.name.slice(0, 1) }}</span>
+                  <div>
+                    <strong>{{ item.name }}</strong>
+                    <small>{{ item.role }}</small>
+                  </div>
                 </div>
-              </div>
-            </article>
-          </div>
-          <div class="slider-dots testimonial-dots" aria-label="Seleccionar testimonio">
-            <button
-              v-for="(_, index) in testimonials"
-              :key="index"
-              type="button"
-              :class="{ active: index === testimonialIndex }"
-              :aria-label="`Ver testimonio ${index + 1}`"
-              @click="goToTestimonial(index)"
-            ></button>
+              </article>
+            </div>
+            <div class="slider-dots testimonial-dots" aria-label="Seleccionar testimonio">
+              <button
+                v-for="(_, index) in allTestimonials"
+                :key="index"
+                type="button"
+                :class="{ active: index === testimonialIndex }"
+                :aria-label="`Ver testimonio ${index + 1}`"
+                @click="goToTestimonial(index)"
+              ></button>
+            </div>
           </div>
         </section>
 
@@ -1506,6 +1896,48 @@ watch(heroSlides, (items) => {
               {{ leadFormSubmitting ? leadCopy.submittingLabel : leadCopy.submitLabel }}
             </button>
             <span class="lead-form-status">{{ leadFormStatus }}</span>
+          </form>
+        </div>
+      </div>
+
+      <div v-if="testimonialModalOpen" class="lead-modal-backdrop" @click.self="closeTestimonialModal">
+        <div class="lead-modal testimonial-modal" role="dialog" aria-modal="true" :aria-label="testimonialCopy.title">
+          <button type="button" class="lead-modal-close" aria-label="Cerrar" @click="closeTestimonialModal">
+            <X :size="20" />
+          </button>
+          <h2>{{ testimonialCopy.title }}</h2>
+          <p>{{ testimonialCopy.text }}</p>
+          <form class="lead-form" @submit.prevent="submitPublicTestimonial">
+            <label>
+              {{ testimonialCopy.fullNameLabel }}
+              <input v-model="testimonialForm.fullName" :placeholder="testimonialCopy.fullNamePlaceholder" />
+            </label>
+            <label>
+              {{ testimonialCopy.roleLabel }}
+              <input v-model="testimonialForm.role" :placeholder="testimonialCopy.rolePlaceholder" />
+            </label>
+            <label>
+              {{ testimonialCopy.companyLabel }}
+              <input v-model="testimonialForm.company" :placeholder="testimonialCopy.companyPlaceholder" />
+            </label>
+            <div class="testimonial-form-grid">
+              <label>
+                {{ testimonialCopy.emailLabel }}
+                <input v-model="testimonialForm.email" type="email" :placeholder="testimonialCopy.emailPlaceholder" />
+              </label>
+              <label>
+                {{ testimonialCopy.phoneLabel }}
+                <input v-model="testimonialForm.phone" :placeholder="testimonialCopy.phonePlaceholder" />
+              </label>
+            </div>
+            <label>
+              {{ testimonialCopy.messageLabel }}
+              <textarea v-model="testimonialForm.message" rows="5" :placeholder="testimonialCopy.messagePlaceholder"></textarea>
+            </label>
+            <button class="admin-save lead-submit-button" type="submit" :disabled="testimonialFormSubmitting">
+              {{ testimonialFormSubmitting ? testimonialCopy.submittingLabel : testimonialCopy.submitLabel }}
+            </button>
+            <span class="lead-form-status">{{ testimonialFormStatus }}</span>
           </form>
         </div>
       </div>

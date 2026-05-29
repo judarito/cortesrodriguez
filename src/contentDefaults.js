@@ -33,10 +33,29 @@ const es = {
     { title: 'Gestión documental', text: 'Administración y revisión de documentos para procesos sin contratiempos.', icon: 'FolderKanban' },
   ],
   clientsHeading: {
-    kicker: 'Nuestros clientes',
-    title: 'Empresas que confían en nosotros',
+    kicker: 'Nuestra fundación',
+    title: 'Historias y momentos que construimos en comunidad',
   },
-  clients: ['Grupo Andino', 'Industrias del Valle', 'Agroexport Colombia', 'Tecno Mecánica', 'Fashion Global', 'Suministros del Caribe'],
+  clients: [
+    {
+      name: 'Jornadas de acompañamiento',
+      image: '/hero-carousel-1.png',
+      alt: 'Equipo de la fundación acompañando una jornada comunitaria',
+      text: 'Programas de apoyo y orientación para familias y emprendedores.',
+    },
+    {
+      name: 'Formación y bienestar',
+      image: '/hero-carousel-2.png',
+      alt: 'Espacio de formación y bienestar liderado por la fundación',
+      text: 'Encuentros que fortalecen capacidades y redes de apoyo.',
+    },
+    {
+      name: 'Alianzas con impacto',
+      image: '/hero-carousel-default.png',
+      alt: 'Actividad de la fundación con aliados estratégicos',
+      text: 'Acciones conjuntas para impulsar oportunidades sostenibles.',
+    },
+  ],
   galleryHeading: {
     kicker: 'Eventos y noticias',
     title: 'Momentos que compartimos con nuestros clientes',
@@ -51,7 +70,7 @@ const es = {
   ],
   testimonialsHeading: {
     kicker: 'Testimonios',
-    title: 'Lo que dicen nuestros clientes',
+    title: 'Lo que dicen nuestros clientes y aliados',
   },
   testimonials: [
     {
@@ -161,10 +180,29 @@ const en = {
     { title: 'Document management', text: 'Administration and review of documents for smooth customs processes.', icon: 'FolderKanban' },
   ],
   clientsHeading: {
-    kicker: 'Our clients',
-    title: 'Companies that trust us',
+    kicker: 'Our foundation',
+    title: 'Stories and moments we build together',
   },
-  clients: ['Grupo Andino', 'Industrias del Valle', 'Agroexport Colombia', 'Tecno Mecánica', 'Fashion Global', 'Suministros del Caribe'],
+  clients: [
+    {
+      name: 'Support programs',
+      image: '/hero-carousel-1.png',
+      alt: 'Foundation team supporting a community outreach event',
+      text: 'Support and guidance programs for families and entrepreneurs.',
+    },
+    {
+      name: 'Training and wellbeing',
+      image: '/hero-carousel-2.png',
+      alt: 'Training and wellbeing session led by the foundation',
+      text: 'Sessions that strengthen capabilities and support networks.',
+    },
+    {
+      name: 'Impact partnerships',
+      image: '/hero-carousel-default.png',
+      alt: 'Foundation activity with strategic partners',
+      text: 'Joint actions to create sustainable opportunities.',
+    },
+  ],
   galleryHeading: {
     kicker: 'Events and news',
     title: 'Moments we share with our clients',
@@ -179,7 +217,7 @@ const en = {
   ],
   testimonialsHeading: {
     kicker: 'Testimonials',
-    title: 'What our clients say',
+    title: 'What our clients and partners say',
   },
   testimonials: [
     {
@@ -287,11 +325,13 @@ export function cloneDefaultContent() {
 function mergeLocale(defaultLocale, locale) {
   const navItems = normalizeNavItems(defaultLocale.navItems, locale?.navItems)
   const hero = normalizeHero(defaultLocale.hero, locale?.hero)
+  const clients = normalizeClients(defaultLocale.clients, locale?.clients)
 
   return {
     ...defaultLocale,
     ...locale,
     navItems,
+    clients,
     brand: { ...defaultLocale.brand, ...locale?.brand },
     hero,
     servicesHeading: { ...defaultLocale.servicesHeading, ...locale?.servicesHeading },
@@ -354,4 +394,27 @@ function normalizeNavItems(defaultItems, navItems) {
   }
 
   return navItems
+}
+
+function normalizeClients(defaultItems, clients) {
+  if (!Array.isArray(clients) || !clients.length) return defaultItems
+
+  return clients.map((item, index) => {
+    const fallback = defaultItems[index] || defaultItems[0]
+    if (typeof item === 'string') {
+      return {
+        name: item,
+        image: fallback?.image || '',
+        alt: fallback?.alt || item,
+        text: fallback?.text || '',
+      }
+    }
+
+    return {
+      name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim() : fallback?.name || 'Elemento',
+      image: typeof item?.image === 'string' ? item.image.trim() : fallback?.image || '',
+      alt: typeof item?.alt === 'string' && item.alt.trim() ? item.alt.trim() : fallback?.alt || fallback?.name || 'Imagen',
+      text: typeof item?.text === 'string' ? item.text.trim() : fallback?.text || '',
+    }
+  })
 }

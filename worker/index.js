@@ -51,6 +51,11 @@ export default {
         return submitQuoteRequest(request, env)
       }
 
+      if (url.pathname === '/api/testimonials' && request.method === 'POST') {
+        await ensureSchema(env)
+        return submitTestimonial(request, env)
+      }
+
       if (url.pathname === '/api/admin/leads' && request.method === 'GET') {
         await requireJwt(request, env)
         await ensureSchema(env)
@@ -61,6 +66,24 @@ export default {
         await requireJwt(request, env)
         await ensureSchema(env)
         return getAdminLeadDetail(request, env)
+      }
+
+      if (url.pathname === '/api/admin/testimonials' && request.method === 'GET') {
+        await requireJwt(request, env)
+        await ensureSchema(env)
+        return getAdminTestimonials(request, env)
+      }
+
+      if (url.pathname.startsWith('/api/admin/testimonials/') && url.pathname.endsWith('/review') && request.method === 'PUT') {
+        await requireJwt(request, env)
+        await ensureSchema(env)
+        return reviewAdminTestimonial(request, env)
+      }
+
+      if (url.pathname.startsWith('/api/admin/testimonials/') && request.method === 'GET') {
+        await requireJwt(request, env)
+        await ensureSchema(env)
+        return getAdminTestimonialDetail(request, env)
       }
 
       if (url.pathname === '/api/admin/images' && request.method === 'POST') {
@@ -91,7 +114,10 @@ async function getCachedLandingContent(request, env) {
 
   await ensureSchema(env)
   const content = await getLandingContent(env)
-  const response = json(content, request, 200, {
+  const response = json({
+    ...content,
+    approvedTestimonials: await getApprovedTestimonials(env),
+  }, request, 200, {
     'cache-control': `public, max-age=${getContentCacheTtl(env)}`,
     'x-content-cache': 'MISS',
   })
@@ -150,6 +176,25 @@ async function ensureSchema(env) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS testimonial_submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      locale TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      company TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      message TEXT NOT NULL,
+      recipient_email TEXT NOT NULL,
+      review_status TEXT NOT NULL DEFAULT 'pending',
+      review_notes TEXT,
+      published_at TEXT,
+      email_status TEXT NOT NULL DEFAULT 'pending',
+      email_error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
 }
 
 async function getLandingContent(env) {
@@ -182,6 +227,23 @@ async function saveLandingContent(env, content) {
     `,
     args: [JSON.stringify(content)],
   })
+}
+
+async function getApprovedTestimonials(env) {
+  const result = await getClient(env).execute({
+    sql: `
+      SELECT id, locale, full_name, role, company, message, published_at, created_at
+      FROM testimonial_submissions
+      WHERE review_status = 'approved'
+      ORDER BY datetime(COALESCE(published_at, created_at)) DESC, id DESC
+    `,
+  })
+
+  return result.rows.reduce((accumulator, row) => {
+    const locale = String(row.locale) === 'en' ? 'en' : 'es'
+    accumulator[locale].push(serializeApprovedTestimonial(row))
+    return accumulator
+  }, { es: [], en: [] })
 }
 
 async function submitQuoteRequest(request, env) {
@@ -232,6 +294,66 @@ async function submitQuoteRequest(request, env) {
       warning: input.locale === 'en'
         ? 'Your request was saved, but the email notification could not be sent.'
         : 'Tu solicitud fue guardada, pero no se pudo enviar la notificación por correo.',
+    }, request, 201)
+  }
+}
+
+async function submitTestimonial(request, env) {
+  const input = validateTestimonialPayload(await request.json())
+  const content = await getLandingContent(env)
+  const localeContent = content.locales?.[input.locale] || content.locales?.[content.defaultLocale] || content.locales?.es || defaultContent.locales.es
+  const recipientEmail = localeContent.contact?.email || defaultContent.locales.es.contact.email
+
+  const insertResult = await getClient(env).execute({
+    sql: `
+      INSERT INTO testimonial_submissions (
+        locale,
+        full_name,
+        role,
+        company,
+        email,
+        phone,
+        message,
+        recipient_email,
+        review_status,
+        review_notes,
+        published_at,
+        email_status,
+        email_error
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, 'pending', NULL)
+    `,
+    args: [input.locale, input.fullName, input.role, input.company, input.email, input.phone, input.message, recipientEmail],
+  })
+
+  const testimonialId = Number(insertResult.lastInsertRowid)
+
+  try {
+    await sendTestimonialEmail(env, {
+      id: testimonialId,
+      locale: input.locale,
+      fullName: input.fullName,
+      role: input.role,
+      company: input.company,
+      email: input.email,
+      phone: input.phone,
+      message: input.message,
+      recipientEmail,
+      createdAt: new Date().toISOString(),
+      reviewStatus: 'pending',
+    })
+
+    await updateTestimonialEmailStatus(env, testimonialId, 'sent', null)
+    return json({ ok: true, testimonialId, emailSent: true }, request, 201)
+  } catch (error) {
+    await updateTestimonialEmailStatus(env, testimonialId, 'failed', error.message || 'No se pudo enviar el correo.')
+    return json({
+      ok: true,
+      testimonialId,
+      emailSent: false,
+      warning: input.locale === 'en'
+        ? 'Your testimonial was saved, but the email notification could not be sent.'
+        : 'Tu testimonio fue guardado, pero no se pudo enviar la notificación por correo.',
     }, request, 201)
   }
 }
@@ -287,6 +409,92 @@ async function getAdminLeadDetail(request, env) {
   return json({ item: serializeLeadDetail(result.rows[0]) }, request)
 }
 
+async function getAdminTestimonials(request, env) {
+  const url = new URL(request.url)
+  const page = clampPositiveInteger(url.searchParams.get('page'), 1)
+  const pageSize = clampPositiveInteger(url.searchParams.get('pageSize'), 10, 50)
+  const offset = (page - 1) * pageSize
+  const client = getClient(env)
+
+  const [countResult, testimonialsResult] = await Promise.all([
+    client.execute('SELECT COUNT(*) AS total FROM testimonial_submissions'),
+    client.execute({
+      sql: `
+        SELECT id, locale, full_name, role, company, email, phone, recipient_email, review_status, email_status, created_at, message
+        FROM testimonial_submissions
+        ORDER BY datetime(created_at) DESC, id DESC
+        LIMIT ? OFFSET ?
+      `,
+      args: [pageSize, offset],
+    }),
+  ])
+
+  const total = toNumber(countResult.rows[0]?.total)
+  return json({
+    items: testimonialsResult.rows.map((row) => serializeTestimonialSummary(row)),
+    pagination: {
+      page,
+      pageSize,
+      totalItems: total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    },
+  }, request)
+}
+
+async function getAdminTestimonialDetail(request, env) {
+  const url = new URL(request.url)
+  const testimonialId = Number(url.pathname.split('/').pop())
+  if (!Number.isInteger(testimonialId) || testimonialId <= 0) throw new HttpError('Testimonio inválido.', 400)
+
+  const result = await getClient(env).execute({
+    sql: `
+      SELECT id, locale, full_name, role, company, email, phone, message, recipient_email, review_status, review_notes, published_at, email_status, email_error, created_at
+      FROM testimonial_submissions
+      WHERE id = ?
+      LIMIT 1
+    `,
+    args: [testimonialId],
+  })
+
+  if (!result.rows.length) throw new HttpError('Testimonio no encontrado.', 404)
+  return json({ item: serializeTestimonialDetail(result.rows[0]) }, request)
+}
+
+async function reviewAdminTestimonial(request, env) {
+  const url = new URL(request.url)
+  const testimonialId = Number(url.pathname.split('/').slice(-2, -1)[0])
+  if (!Number.isInteger(testimonialId) || testimonialId <= 0) throw new HttpError('Testimonio inválido.', 400)
+
+  const body = await request.json()
+  const reviewStatus = body?.reviewStatus === 'approved' ? 'approved' : body?.reviewStatus === 'rejected' ? 'rejected' : ''
+  if (!reviewStatus) throw new HttpError('Estado de revisión inválido.', 400)
+
+  const reviewNotes = normalizeText(body?.reviewNotes)
+  const publishedAt = reviewStatus === 'approved' ? new Date().toISOString() : null
+
+  await getClient(env).execute({
+    sql: `
+      UPDATE testimonial_submissions
+      SET review_status = ?, review_notes = ?, published_at = ?
+      WHERE id = ?
+    `,
+    args: [reviewStatus, reviewNotes || null, publishedAt, testimonialId],
+  })
+
+  const result = await getClient(env).execute({
+    sql: `
+      SELECT id, locale, full_name, role, company, email, phone, message, recipient_email, review_status, review_notes, published_at, email_status, email_error, created_at
+      FROM testimonial_submissions
+      WHERE id = ?
+      LIMIT 1
+    `,
+    args: [testimonialId],
+  })
+
+  if (!result.rows.length) throw new HttpError('Testimonio no encontrado.', 404)
+  return json({ ok: true, item: serializeTestimonialDetail(result.rows[0]) }, request)
+}
+
 function validateLeadPayload(payload) {
   const locale = payload?.locale === 'en' ? 'en' : 'es'
   const fullName = normalizeText(payload?.fullName)
@@ -300,6 +508,23 @@ function validateLeadPayload(payload) {
   if (!message) throw new HttpError(locale === 'en' ? 'Message is required.' : 'El mensaje es obligatorio.', 400)
 
   return { locale, fullName, email, phone, message }
+}
+
+function validateTestimonialPayload(payload) {
+  const locale = payload?.locale === 'en' ? 'en' : 'es'
+  const fullName = normalizeText(payload?.fullName)
+  const role = normalizeText(payload?.role)
+  const company = normalizeText(payload?.company)
+  const email = normalizeText(payload?.email).toLowerCase()
+  const phone = normalizeText(payload?.phone)
+  const message = normalizeText(payload?.message)
+
+  if (!fullName) throw new HttpError(locale === 'en' ? 'Name is required.' : 'El nombre es obligatorio.', 400)
+  if (!role) throw new HttpError(locale === 'en' ? 'Role is required.' : 'El cargo es obligatorio.', 400)
+  if (!isValidEmail(email)) throw new HttpError(locale === 'en' ? 'Enter a valid email.' : 'Ingresa un correo válido.', 400)
+  if (!message) throw new HttpError(locale === 'en' ? 'Testimonial is required.' : 'El testimonio es obligatorio.', 400)
+
+  return { locale, fullName, role, company, email, phone, message }
 }
 
 async function sendLeadEmail(env, lead) {
@@ -323,6 +548,36 @@ async function sendLeadEmail(env, lead) {
       subject,
       text: formatLeadEmailText(lead),
       html: formatLeadEmailHtml(lead),
+    }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null)
+    throw new Error(error?.message || 'Resend no aceptó el envío.')
+  }
+}
+
+async function sendTestimonialEmail(env, testimonial) {
+  if (!env.RESEND_API_KEY) throw new Error('Falta RESEND_API_KEY.')
+  if (!env.RESEND_FROM_EMAIL) throw new Error('Falta RESEND_FROM_EMAIL.')
+
+  const subject = testimonial.locale === 'en'
+    ? `New testimonial pending review from ${testimonial.fullName}`
+    : `Nuevo testimonio pendiente de revisión de ${testimonial.fullName}`
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: env.RESEND_FROM_EMAIL,
+      to: [testimonial.recipientEmail],
+      reply_to: testimonial.email,
+      subject,
+      text: formatTestimonialEmailText(testimonial),
+      html: formatTestimonialEmailHtml(testimonial),
     }),
   })
 
@@ -412,6 +667,98 @@ function formatLeadEmailHtml(lead) {
   `
 }
 
+function formatTestimonialEmailText(testimonial) {
+  const labels = testimonial.locale === 'en'
+    ? {
+        title: 'New testimonial pending review',
+        name: 'Name',
+        role: 'Role',
+        company: 'Company',
+        email: 'Email',
+        phone: 'Phone',
+        testimonial: 'Testimonial',
+        locale: 'Language',
+        createdAt: 'Created at',
+      }
+    : {
+        title: 'Nuevo testimonio pendiente de revisión',
+        name: 'Nombre',
+        role: 'Cargo',
+        company: 'Empresa',
+        email: 'Correo',
+        phone: 'Teléfono',
+        testimonial: 'Testimonio',
+        locale: 'Idioma',
+        createdAt: 'Fecha',
+      }
+
+  return [
+    labels.title,
+    `${labels.name}: ${testimonial.fullName}`,
+    `${labels.role}: ${testimonial.role}`,
+    `${labels.company}: ${testimonial.company || '-'}`,
+    `${labels.email}: ${testimonial.email}`,
+    `${labels.phone}: ${testimonial.phone || '-'}`,
+    `${labels.locale}: ${testimonial.locale.toUpperCase()}`,
+    `${labels.createdAt}: ${testimonial.createdAt}`,
+    '',
+    `${labels.testimonial}:`,
+    testimonial.message,
+  ].join('\n')
+}
+
+function formatTestimonialEmailHtml(testimonial) {
+  const labels = testimonial.locale === 'en'
+    ? {
+        title: 'New testimonial pending review',
+        name: 'Name',
+        role: 'Role',
+        company: 'Company',
+        email: 'Email',
+        phone: 'Phone',
+        testimonial: 'Testimonial',
+        locale: 'Language',
+        createdAt: 'Created at',
+      }
+    : {
+        title: 'Nuevo testimonio pendiente de revisión',
+        name: 'Nombre',
+        role: 'Cargo',
+        company: 'Empresa',
+        email: 'Correo',
+        phone: 'Teléfono',
+        testimonial: 'Testimonio',
+        locale: 'Idioma',
+        createdAt: 'Fecha',
+      }
+
+  return `
+    <div style="margin:0;padding:32px 16px;background:#f4f7fb;font-family:Arial,sans-serif;color:#102544;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #dbe3ee;border-radius:18px;overflow:hidden;box-shadow:0 18px 48px rgba(16,37,68,0.08);">
+        <div style="padding:28px 32px;background:linear-gradient(135deg,#7a1217,#ed1c24);color:#ffffff;">
+          <div style="font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;opacity:0.82;">Cortes Rodriguez Asesores</div>
+          <h1 style="margin:10px 0 0;font-size:28px;line-height:1.2;">${escapeHtml(labels.title)}</h1>
+        </div>
+        <div style="padding:28px 32px;">
+          <div style="display:grid;gap:14px;">
+            ${renderEmailRow(labels.name, testimonial.fullName)}
+            ${renderEmailRow(labels.role, testimonial.role)}
+            ${renderEmailRow(labels.company, testimonial.company || '-')}
+            ${renderEmailRow(labels.email, testimonial.email)}
+            ${renderEmailRow(labels.phone, testimonial.phone || '-')}
+            ${renderEmailRow(labels.locale, testimonial.locale.toUpperCase())}
+            ${renderEmailRow(labels.createdAt, testimonial.createdAt)}
+          </div>
+          <div style="margin-top:24px;padding:20px 22px;background:#fff6f6;border:1px solid #f2d8da;border-radius:14px;">
+            <div style="margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#8c4a50;">${escapeHtml(labels.testimonial)}</div>
+            <p style="margin:0;font-size:15px;line-height:1.7;color:#102544;">${escapeHtml(testimonial.message).replace(/\n/g, '<br />')}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+}
+
 function renderEmailRow(label, value) {
   return `
     <div style="display:grid;gap:4px;padding-bottom:14px;border-bottom:1px solid #edf2f7;">
@@ -425,6 +772,13 @@ async function updateLeadEmailStatus(env, leadId, status, errorMessage) {
   await getClient(env).execute({
     sql: 'UPDATE contact_leads SET email_status = ?, email_error = ? WHERE id = ?',
     args: [status, errorMessage, leadId],
+  })
+}
+
+async function updateTestimonialEmailStatus(env, testimonialId, status, errorMessage) {
+  await getClient(env).execute({
+    sql: 'UPDATE testimonial_submissions SET email_status = ?, email_error = ? WHERE id = ?',
+    args: [status, errorMessage, testimonialId],
   })
 }
 
@@ -454,6 +808,56 @@ function serializeLeadDetail(row) {
     emailStatus: String(row.email_status),
     emailError: row.email_error ? String(row.email_error) : '',
     createdAt: String(row.created_at),
+  }
+}
+
+function serializeTestimonialSummary(row) {
+  return {
+    id: toNumber(row.id),
+    locale: String(row.locale),
+    fullName: String(row.full_name),
+    role: String(row.role),
+    company: String(row.company || ''),
+    email: String(row.email),
+    phone: String(row.phone || ''),
+    recipientEmail: String(row.recipient_email),
+    reviewStatus: String(row.review_status),
+    emailStatus: String(row.email_status),
+    createdAt: String(row.created_at),
+    messagePreview: truncateText(String(row.message), 140),
+  }
+}
+
+function serializeTestimonialDetail(row) {
+  return {
+    id: toNumber(row.id),
+    locale: String(row.locale),
+    fullName: String(row.full_name),
+    role: String(row.role),
+    company: String(row.company || ''),
+    email: String(row.email),
+    phone: String(row.phone || ''),
+    message: String(row.message),
+    recipientEmail: String(row.recipient_email),
+    reviewStatus: String(row.review_status),
+    reviewNotes: row.review_notes ? String(row.review_notes) : '',
+    publishedAt: row.published_at ? String(row.published_at) : '',
+    emailStatus: String(row.email_status),
+    emailError: row.email_error ? String(row.email_error) : '',
+    createdAt: String(row.created_at),
+  }
+}
+
+function serializeApprovedTestimonial(row) {
+  const company = String(row.company || '').trim()
+  const role = String(row.role || '').trim()
+  return {
+    id: toNumber(row.id),
+    name: String(row.full_name),
+    role: company ? `${role} · ${company}` : role,
+    text: String(row.message),
+    createdAt: String(row.created_at),
+    publishedAt: row.published_at ? String(row.published_at) : '',
   }
 }
 

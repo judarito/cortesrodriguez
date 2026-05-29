@@ -437,16 +437,35 @@ h1 span {
 .client-logo {
   display: grid;
   min-height: 74px;
-  place-items: center;
-  padding: 14px;
-  color: #8b94a3;
-  font-size: 18px;
-  font-weight: 900;
-  line-height: 1.05;
-  text-transform: uppercase;
   background: var(--white);
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.foundation-card {
+  overflow: hidden;
+}
+
+.foundation-card img {
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+}
+
+.foundation-card div {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+
+.foundation-card strong {
+  color: var(--navy);
+  font-size: 18px;
+}
+
+.foundation-card small {
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .slider-dots {
@@ -531,10 +550,35 @@ h1 span {
 
 .testimonials-section {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: 280px 1fr;
   gap: 34px;
-  align-items: center;
+  align-items: start;
   text-align: left;
+}
+
+.testimonial-intro {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.testimonials-content {
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+
+.testimonial-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.testimonial-open-button {
+  color: var(--navy);
+  background: var(--white);
+  border: 1px solid var(--line);
 }
 
 .split-heading h2 {
@@ -571,17 +615,36 @@ h1 span {
 .testimonial-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  gap: 22px;
 }
 
 .testimonial-card {
   display: block;
-  min-height: 214px;
+  min-height: 260px;
+  padding: 28px 24px;
+  background: linear-gradient(180deg, #fff, #fbfcfe);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 18px 34px rgba(6, 38, 83, 0.06);
 }
 
 .testimonial-dots {
-  grid-column: 2;
-  margin-top: -6px;
+  margin-top: -2px;
+}
+
+.testimonial-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.testimonial-submit-button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.testimonial-modal {
+  width: min(640px, 100%);
 }
 
 .quote-icon {
@@ -1459,6 +1522,22 @@ h1 span {
   background: #fff6d8;
 }
 
+.lead-status-pill.approved {
+  color: #0d5f38;
+  background: #e6f6ee;
+}
+
+.lead-status-pill.rejected {
+  color: #7a1116;
+  background: #fff0f1;
+}
+
+.review-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .lead-pagination {
   display: flex;
   justify-content: space-between;
@@ -1617,8 +1696,8 @@ h1 span {
     grid-template-columns: 1fr;
   }
 
-  .testimonial-dots {
-    grid-column: 1;
+  .testimonial-actions {
+    justify-content: flex-start;
   }
 
   .stats-band article:nth-child(2) {
@@ -1728,6 +1807,11 @@ h1 span {
     grid-template-columns: 1fr;
   }
 
+  .testimonial-form-grid,
+  .lead-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
   .service-card {
     grid-template-columns: auto 1fr;
   }
@@ -1738,6 +1822,15 @@ h1 span {
 
   .client-logo {
     min-height: 62px;
+  }
+
+  .testimonial-card {
+    min-height: auto;
+  }
+
+
+  .foundation-card img {
+    height: 220px;
   }
 
   .gallery-card img {

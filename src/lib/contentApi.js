@@ -6,7 +6,11 @@ export async function fetchContent(options = {}) {
     ...options,
   })
   if (!response.ok) return cloneDefaultContent()
-  return normalizeContent(await response.json())
+  const data = await response.json()
+  return {
+    ...normalizeContent(data),
+    approvedTestimonials: data?.approvedTestimonials || { es: [], en: [] },
+  }
 }
 
 export async function loginAdmin(credentials) {
@@ -80,6 +84,23 @@ export async function submitQuoteRequest(payload) {
   return data
 }
 
+export async function submitTestimonial(payload) {
+  const response = await fetch('/api/testimonials', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  const data = await response.json().catch(() => ({ error: 'No se pudo enviar el testimonio.' }))
+  if (!response.ok) {
+    throw new Error(data.error || 'No se pudo enviar el testimonio.')
+  }
+
+  return data
+}
+
 export async function fetchAdminLeads(jwt, page = 1, pageSize = 10) {
   const response = await fetch(`/api/admin/leads?page=${page}&pageSize=${pageSize}`, {
     headers: {
@@ -105,6 +126,54 @@ export async function fetchAdminLeadDetail(jwt, leadId) {
   const data = await response.json().catch(() => ({ error: 'No se pudo cargar el detalle.' }))
   if (!response.ok) {
     throw new Error(data.error || 'No se pudo cargar el detalle.')
+  }
+
+  return data
+}
+
+export async function fetchAdminTestimonials(jwt, page = 1, pageSize = 10) {
+  const response = await fetch(`/api/admin/testimonials?page=${page}&pageSize=${pageSize}`, {
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+    },
+  })
+
+  const data = await response.json().catch(() => ({ error: 'No se pudieron cargar los testimonios.' }))
+  if (!response.ok) {
+    throw new Error(data.error || 'No se pudieron cargar los testimonios.')
+  }
+
+  return data
+}
+
+export async function fetchAdminTestimonialDetail(jwt, testimonialId) {
+  const response = await fetch(`/api/admin/testimonials/${testimonialId}`, {
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+    },
+  })
+
+  const data = await response.json().catch(() => ({ error: 'No se pudo cargar el detalle del testimonio.' }))
+  if (!response.ok) {
+    throw new Error(data.error || 'No se pudo cargar el detalle del testimonio.')
+  }
+
+  return data
+}
+
+export async function reviewAdminTestimonial(jwt, testimonialId, payload) {
+  const response = await fetch(`/api/admin/testimonials/${testimonialId}/review`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${jwt}`,
+    },
+    body: JSON.stringify(payload),
+  })
+
+  const data = await response.json().catch(() => ({ error: 'No se pudo revisar el testimonio.' }))
+  if (!response.ok) {
+    throw new Error(data.error || 'No se pudo revisar el testimonio.')
   }
 
   return data
