@@ -22,7 +22,7 @@ TURSO_AUTH_TOKEN=tu-token-de-turso
 ADMIN_EMAIL=admin@cortesrodriguezasesores.com
 ADMIN_PASSWORD=una-clave-segura
 JWT_SECRET=un-secreto-largo-para-firmar-jwt
-CONTENT_CACHE_TTL_SECONDS=300
+CONTENT_CACHE_TTL_SECONDS=0
 ```
 
 Para desplegar, guarda los secretos en Cloudflare:
@@ -49,7 +49,7 @@ TURSO_AUTH_TOKEN=tu-token-de-turso
 ADMIN_EMAIL=admin@cortesrodriguezasesores.com
 ADMIN_PASSWORD=una-clave-segura
 JWT_SECRET=un-secreto-largo-para-firmar-jwt
-CONTENT_CACHE_TTL_SECONDS=300
+CONTENT_CACHE_TTL_SECONDS=0
 PORT=5173
 ```
 
@@ -97,12 +97,18 @@ El panel `/admin` está en español, pero permite editar los datos del sitio web
 
 ## Caché
 
-`GET /api/content` se cachea en Cloudflare Worker con `caches.default`.
+`GET /api/content` puede cachearse en Cloudflare Worker con `caches.default`.
 
-- Se evita consultar Turso en cada F5 mientras el caché esté vigente.
-- El TTL se controla con `CONTENT_CACHE_TTL_SECONDS`, por defecto `300`.
+- Para priorizar consistencia, el caché viene desactivado por defecto.
+- Si decides activarlo, el TTL se controla con `CONTENT_CACHE_TTL_SECONDS`.
 - Cada guardado desde el admin borra el caché para que el sitio web lea el contenido nuevo.
 
-En el servidor Node local de respaldo se usa el mismo TTL, pero en memoria.
+En el servidor Node local de respaldo se usa el mismo criterio, pero en memoria.
+
+## Integridad de contenido
+
+- El guardado del contenido usa control de concurrencia optimista: si otra sesión publicó cambios antes, el guardado se rechaza con conflicto para evitar sobrescrituras silenciosas.
+- Cada cambio exitoso se registra en `content_change_audit` con actor, fecha, revisión anterior y nueva.
+- Los scripts `npm run db:init` y `npm run db:seed:bilingual` ya no sobrescriben contenido existente a menos que se usen con `--force`.
 
 Cloudflare recomienda usar `@libsql/client/web` para conectar Workers con Turso.

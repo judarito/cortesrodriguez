@@ -14,7 +14,7 @@ const port = Number(process.env.PORT || 5173)
 const adminEmail = process.env.ADMIN_EMAIL || 'admin@local.dev'
 const adminPassword = process.env.ADMIN_PASSWORD || 'admin-dev-password'
 const jwtSecret = process.env.JWT_SECRET || 'local-development-secret'
-const contentCacheTtlMs = Number(process.env.CONTENT_CACHE_TTL_SECONDS || 300) * 1000
+const contentCacheTtlMs = Number(process.env.CONTENT_CACHE_TTL_SECONDS || 0) * 1000
 let contentCache = null
 
 const app = express()
@@ -47,41 +47,324 @@ app.use(express.json({ limit: '10mb' }))
 
 await ensureSchema()
 
-async function getLandingContent() {
-  if (contentCache && contentCache.expiresAt > Date.now()) {
-    return contentCache.value
-  }
-
+async function getLatestLandingContentRecord() {
   const result = await db.execute({
-    sql: 'SELECT value FROM site_content WHERE key = ?',
+    sql: `
+      SELECT id, content_key, value, created_at, created_by, source, base_revision, request_id
+      FROM site_content_versions
+      WHERE content_key = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `,
     args: ['landing'],
   })
 
-  if (!result.rows.length) {
-    await saveLandingContent(defaultContent)
-    contentCache = { value: defaultContent, expiresAt: Date.now() + contentCacheTtlMs }
-    return defaultContent
-  }
+  if (!result.rows.length) return null
 
-  const storedContent = JSON.parse(String(result.rows[0].value))
-  const content = normalizeContent(storedContent)
-  if (content.version !== storedContent.version) await saveLandingContent(content)
-  contentCache = { value: content, expiresAt: Date.now() + contentCacheTtlMs }
-  return content
+  return serializeContentVersionRecord(result.rows[0])
 }
 
-async function saveLandingContent(content) {
+async function getLegacyLandingContentRecord() {
+  const result = await db.execute({
+    sql: 'SELECT key, value, updated_at FROM site_content WHERE key = ?',
+    args: ['landing'],
+  })
+
+  if (!result.rows.length) return null
+
+  return {
+    key: String(result.rows[0].key),
+    value: String(result.rows[0].value),
+    updatedAt: String(result.rows[0].updated_at),
+  }
+}
+
+async function ensureLandingContentRecord() {
+  const existingRecord = await getLatestLandingContentRecord()
+  if (existingRecord) return existingRecord
+
+  const legacyRecord = await getLegacyLandingContentRecord()
+  const content = normalizeContent(legacyRecord ? JSON.parse(legacyRecord.value) : defaultContent)
+  const createdAt = legacyRecord?.updatedAt || createRevisionTimestamp()
   await db.execute({
     sql: `
-      INSERT INTO site_content (key, value, updated_at)
-      VALUES ('landing', ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
-        updated_at = CURRENT_TIMESTAMP
+      INSERT INTO site_content_versions (
+        content_key,
+        value,
+        created_at,
+        created_by,
+        source,
+        base_revision,
+        request_id
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `,
-    args: [JSON.stringify(content)],
+    args: [
+      'landing',
+      JSON.stringify(content),
+      createdAt,
+      legacyRecord ? 'legacy-import' : 'system',
+      legacyRecord ? 'site_content-bootstrap' : 'default-bootstrap',
+      null,
+      crypto.randomUUID(),
+    ],
   })
+
+  return getLatestLandingContentRecord()
+}
+
+function createRevisionTimestamp() {
+  return new Date().toISOString()
+}
+
+function createContentMeta(record) {
+  return {
+    key: 'landing',
+    revision: record.revision,
+    updatedAt: record.updatedAt,
+  }
+}
+
+async function writeLandingContent({ content, previousRecord, actorType, actorId, source, requestId }) {
+  const normalizedContent = normalizeContent(content)
+  const serializedContent = JSON.stringify(normalizedContent)
+  const nextUpdatedAt = createRevisionTimestamp()
+
+  let insertResult
+  try {
+    insertResult = await db.execute({
+      sql: `
+        INSERT INTO site_content_versions (
+          content_key,
+          value,
+          created_at,
+          created_by,
+          source,
+          base_revision,
+          request_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: ['landing', serializedContent, nextUpdatedAt, actorId, source, previousRecord.revision, requestId],
+    })
+  } catch (error) {
+    if (isBaseRevisionConflictError(error)) {
+      throw new HttpError('El contenido cambió en otra sesión. Recarga antes de guardar nuevamente.', 409)
+    }
+    throw error
+  }
+
+  const insertedRevision = String(insertResult.lastInsertRowid || '')
+
+  await db.execute({
+    sql: `
+      INSERT INTO content_change_audit (
+        content_key,
+        actor_type,
+        actor_id,
+      source,
+      request_id,
+      previous_updated_at,
+      new_updated_at,
+      previous_value,
+        new_value
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      'landing',
+      actorType,
+      actorId,
+      source,
+      requestId,
+      previousRecord.updatedAt,
+      nextUpdatedAt,
+      previousRecord.value,
+      serializedContent,
+    ],
+  })
+
   contentCache = null
+  return {
+    content: normalizedContent,
+    meta: createContentMeta({
+      revision: insertedRevision,
+      updatedAt: nextUpdatedAt,
+    }),
+  }
+}
+
+async function getLandingContent() {
+  if (contentCacheTtlMs > 0 && contentCache && contentCache.expiresAt > Date.now()) {
+    return contentCache.value
+  }
+
+  const record = await ensureLandingContentRecord()
+  const storedContent = JSON.parse(record.value)
+  const content = normalizeContent(storedContent)
+  let meta = createContentMeta(record)
+
+  if (JSON.stringify(content) !== JSON.stringify(storedContent)) {
+    const saved = await writeLandingContent({
+      content,
+      previousRecord: record,
+      actorType: 'system',
+      actorId: 'content-normalizer',
+      source: 'server-normalization',
+      requestId: crypto.randomUUID(),
+    })
+    meta = saved.meta
+  }
+
+  if (contentCacheTtlMs > 0) {
+    contentCache = { value: { content, meta }, expiresAt: Date.now() + contentCacheTtlMs }
+  }
+  return { content, meta }
+}
+
+async function saveLandingContent(content, options = {}) {
+  const previousRecord = await ensureLandingContentRecord()
+  const expectedRevision = normalizeText(options.expectedRevision)
+
+  if (!expectedRevision) {
+    throw new HttpError('Falta la revisión esperada del contenido.', 400)
+  }
+
+  if (previousRecord.revision !== expectedRevision) {
+    throw new HttpError('El contenido cambió en otra sesión. Recarga antes de guardar nuevamente.', 409)
+  }
+
+  return writeLandingContent({
+    content,
+    previousRecord,
+    actorType: options.actorType || 'admin',
+    actorId: options.actorId || 'unknown',
+    source: options.source || 'admin-panel',
+    requestId: options.requestId || crypto.randomUUID(),
+  })
+}
+
+async function listContentAuditEntries(limit = 50) {
+  const safeLimit = clampPositiveInteger(limit, 20, 200)
+  const result = await db.execute({
+    sql: `
+      SELECT id, content_key, actor_type, actor_id, source, request_id, previous_updated_at, new_updated_at, created_at
+      FROM content_change_audit
+      WHERE content_key = 'landing'
+      ORDER BY id DESC
+      LIMIT ?
+    `,
+    args: [safeLimit],
+  })
+
+  return result.rows.map((row) => ({
+    id: toNumber(row.id),
+    contentKey: String(row.content_key),
+    actorType: String(row.actor_type),
+    actorId: String(row.actor_id),
+    source: String(row.source),
+    requestId: String(row.request_id),
+    previousUpdatedAt: row.previous_updated_at ? String(row.previous_updated_at) : '',
+    newUpdatedAt: String(row.new_updated_at),
+    createdAt: String(row.created_at),
+  }))
+}
+
+async function listContentVersions(limit = 20) {
+  const safeLimit = clampPositiveInteger(limit, 20, 200)
+  const result = await db.execute({
+    sql: `
+      SELECT id, content_key, value, created_at, created_by, source, base_revision, request_id
+      FROM site_content_versions
+      WHERE content_key = 'landing'
+      ORDER BY id DESC
+      LIMIT ?
+    `,
+    args: [safeLimit],
+  })
+
+  return result.rows.map((row) => {
+    const item = serializeContentVersionRecord(row)
+    return {
+      revision: item.revision,
+      updatedAt: item.updatedAt,
+      createdBy: item.createdBy,
+      source: item.source,
+      baseRevision: item.baseRevision,
+      requestId: item.requestId,
+    }
+  })
+}
+
+async function getContentVersionByRevision(revision) {
+  const revisionNumber = Number(revision)
+  if (!Number.isInteger(revisionNumber) || revisionNumber <= 0) {
+    throw new HttpError('Versión inválida.', 400)
+  }
+
+  const result = await db.execute({
+    sql: `
+      SELECT id, content_key, value, created_at, created_by, source, base_revision, request_id
+      FROM site_content_versions
+      WHERE content_key = 'landing' AND id = ?
+      LIMIT 1
+    `,
+    args: [revisionNumber],
+  })
+
+  if (!result.rows.length) {
+    throw new HttpError('Versión no encontrada.', 404)
+  }
+
+  return serializeContentVersionRecord(result.rows[0])
+}
+
+async function restoreContentVersion(revision, options = {}) {
+  const previousRecord = await ensureLandingContentRecord()
+  const expectedRevision = normalizeText(options.expectedRevision)
+
+  if (!expectedRevision) {
+    throw new HttpError('Falta la revisión esperada del contenido.', 400)
+  }
+
+  if (previousRecord.revision !== expectedRevision) {
+    throw new HttpError('El contenido cambió en otra sesión. Recarga antes de restaurar.', 409)
+  }
+
+  const targetRecord = await getContentVersionByRevision(revision)
+  const restored = await writeLandingContent({
+    content: JSON.parse(targetRecord.value),
+    previousRecord,
+    actorType: options.actorType || 'admin',
+    actorId: options.actorId || 'unknown',
+    source: options.source || `admin-restore:${targetRecord.revision}`,
+    requestId: options.requestId || crypto.randomUUID(),
+  })
+
+  return {
+    ...restored,
+    restoredFromRevision: targetRecord.revision,
+  }
+}
+
+function serializeContentVersionRecord(row) {
+  return {
+    id: toNumber(row.id),
+    key: String(row.content_key),
+    revision: String(row.id),
+    value: String(row.value),
+    updatedAt: String(row.created_at),
+    createdBy: row.created_by ? String(row.created_by) : '',
+    source: row.source ? String(row.source) : '',
+    baseRevision: row.base_revision ? String(row.base_revision) : '',
+    requestId: row.request_id ? String(row.request_id) : '',
+  }
+}
+
+function isBaseRevisionConflictError(error) {
+  const message = String(error?.message || '')
+  return message.includes('idx_site_content_versions_key_base_revision_unique')
+    || (message.includes('UNIQUE constraint failed') && message.includes('site_content_versions.content_key') && message.includes('site_content_versions.base_revision'))
 }
 
 async function saveLead(lead) {
@@ -173,20 +456,25 @@ async function getApprovedTestimonials() {
 
 function requireAdmin(req, res, next) {
   const token = req.header('authorization')?.replace(/^Bearer\s+/i, '')
-  if (!token || !verifyJwt(token)) {
+  const claims = token ? verifyJwt(token) : null
+  if (!claims) {
     res.status(401).json({ error: 'Sesión inválida.' })
     return
   }
 
+  req.adminClaims = claims
   next()
 }
 
 app.get('/api/content', async (_req, res) => {
   try {
-    const landingContent = await getLandingContent()
-    res.set('Cache-Control', `public, max-age=${Math.floor(contentCacheTtlMs / 1000)}`)
+    const { content: landingContent, meta } = await getLandingContent()
+    res.set('Cache-Control', contentCacheTtlMs > 0
+      ? `public, max-age=${Math.floor(contentCacheTtlMs / 1000)}`
+      : 'no-store')
     res.json({
       ...landingContent,
+      contentMeta: meta,
       approvedTestimonials: await getApprovedTestimonials(),
     })
   } catch (error) {
@@ -208,19 +496,65 @@ app.post('/api/admin/login', async (req, res) => {
 
 app.put('/api/admin/content', requireAdmin, async (req, res) => {
   try {
-    await saveLandingContent(normalizeContent(req.body))
+    const saved = await saveLandingContent(req.body, {
+      expectedRevision: req.header('x-content-revision'),
+      actorType: 'admin',
+      actorId: req.adminClaims?.sub || 'admin',
+      source: req.header('x-save-source') || 'admin-panel',
+      requestId: req.header('x-request-id') || crypto.randomUUID(),
+    })
     res.set('x-content-cache-invalidated', 'true')
-    res.json({ ok: true, cacheInvalidated: true })
+    res.json({ ok: true, cacheInvalidated: true, contentMeta: saved.meta })
   } catch (error) {
     console.error(error)
-    res.status(500).json({ error: 'No se pudo guardar el contenido.' })
+    res.status(error.status || 500).json({ error: error.message || 'No se pudo guardar el contenido.' })
+  }
+})
+
+app.get('/api/admin/content/audit', requireAdmin, async (req, res) => {
+  try {
+    res.json({ items: await listContentAuditEntries(req.query.limit) })
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ error: 'No se pudo cargar la auditoría.' })
+  }
+})
+
+app.get('/api/admin/content/versions', requireAdmin, async (req, res) => {
+  try {
+    res.json({ items: await listContentVersions(req.query.limit) })
+  } catch (error) {
+    console.error(error)
+    res.status(error.status || 500).json({ error: error.message || 'No se pudieron cargar las versiones.' })
+  }
+})
+
+app.post('/api/admin/content/versions/:revision/restore', requireAdmin, async (req, res) => {
+  try {
+    const restored = await restoreContentVersion(req.params.revision, {
+      expectedRevision: req.header('x-content-revision'),
+      actorType: 'admin',
+      actorId: req.adminClaims?.sub || 'admin',
+      source: req.header('x-save-source') || 'admin-history',
+      requestId: req.header('x-request-id') || crypto.randomUUID(),
+    })
+    res.set('x-content-cache-invalidated', 'true')
+    res.json({
+      ok: true,
+      cacheInvalidated: true,
+      contentMeta: restored.meta,
+      restoredFromRevision: restored.restoredFromRevision,
+    })
+  } catch (error) {
+    console.error(error)
+    res.status(error.status || 500).json({ error: error.message || 'No se pudo restaurar la versión.' })
   }
 })
 
 app.post('/api/quote-requests', async (req, res) => {
   try {
     const input = validateLeadPayload(req.body)
-    const content = await getLandingContent()
+    const { content } = await getLandingContent()
     const localeContent = content.locales?.[input.locale] || content.locales?.[content.defaultLocale] || content.locales?.es || defaultContent.locales.es
     const recipientEmail = localeContent.contact?.email || defaultContent.locales.es.contact.email
     const leadId = await saveLead({ ...input, recipientEmail })
@@ -255,7 +589,7 @@ app.post('/api/quote-requests', async (req, res) => {
 app.post('/api/testimonials', async (req, res) => {
   try {
     const input = validateTestimonialPayload(req.body)
-    const content = await getLandingContent()
+    const { content } = await getLandingContent()
     const localeContent = content.locales?.[input.locale] || content.locales?.[content.defaultLocale] || content.locales?.es || defaultContent.locales.es
     const recipientEmail = localeContent.contact?.email || defaultContent.locales.es.contact.email
     const testimonialId = await saveTestimonialSubmission({ ...input, recipientEmail })
@@ -469,7 +803,7 @@ app.put('/api/admin/testimonials/:id/review', requireAdmin, async (req, res) => 
 function signJwt(payload) {
   const now = Math.floor(Date.now() / 1000)
   const header = { alg: 'HS256', typ: 'JWT' }
-  const claims = { ...payload, iat: now, exp: now + 60 * 60 * 8 }
+  const claims = { ...payload, iat: now, exp: now + 60 * 60 * 12 }
   const data = `${base64Url(JSON.stringify(header))}.${base64Url(JSON.stringify(claims))}`
   return `${data}.${hmac(data)}`
 }
@@ -480,7 +814,8 @@ function verifyJwt(token) {
   const expected = hmac(`${header}.${payload}`)
   if (signature !== expected) return false
   const claims = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64url').toString('utf8'))
-  return claims.role === 'admin' && claims.exp >= Math.floor(Date.now() / 1000)
+  if (claims.role !== 'admin' || claims.exp < Math.floor(Date.now() / 1000)) return false
+  return claims
 }
 
 function hmac(data) {

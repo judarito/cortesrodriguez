@@ -16,6 +16,29 @@ export async function ensureSchema() {
   `)
 
   await db.execute(`
+    CREATE TABLE IF NOT EXISTS site_content_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content_key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by TEXT NOT NULL DEFAULT 'system',
+      source TEXT NOT NULL DEFAULT 'system',
+      base_revision TEXT,
+      request_id TEXT
+    )
+  `)
+
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_site_content_versions_key_id
+    ON site_content_versions (content_key, id DESC)
+  `)
+
+  await db.execute(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_site_content_versions_key_base_revision_unique
+    ON site_content_versions (content_key, base_revision)
+  `)
+
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS contact_leads (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       locale TEXT NOT NULL,
@@ -46,6 +69,22 @@ export async function ensureSchema() {
       published_at TEXT,
       email_status TEXT NOT NULL DEFAULT 'pending',
       email_error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS content_change_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content_key TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      previous_updated_at TEXT,
+      new_updated_at TEXT NOT NULL,
+      previous_value TEXT,
+      new_value TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)

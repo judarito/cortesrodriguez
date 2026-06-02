@@ -1,0 +1,545 @@
+{
+  "version": 2,
+  "defaultLocale": "es",
+  "locales": {
+    "es": {
+      "navItems": [
+        "Inicio",
+        "Servicios",
+        "Nosotros",
+        "Clientes",
+        "Eventos",
+        "Recursos",
+        "Contacto"
+      ],
+      "brand": {
+        "name": "Cortes Rodriguez\nAsesores S.A.S.",
+        "subtitle": "Asesores de aduana"
+      },
+      "hero": {
+        "kicker": "Experiencia • Confianza • Soluciones",
+        "title": "Especialistas en trámites aduaneros para importación y exportación de vehículos",
+        "highlight": "importación y exportación de vehículos",
+        "text": "En Cortes Rodríguez Asesores S.A.S. somos especialistas en trámites aduaneros para importación y exportación de vehículos.\nBrindamos acompañamiento integral a clientes nacionales e internacionales, ofreciendo soluciones seguras, ágiles y confiables en cada etapa del proceso.\nNuestro compromiso es facilitar la movilidad internacional de vehículos mediante una gestión transparente, personalizada y respaldada por la experiencia.",
+        "image": "",
+        "images": [
+          {
+            "image": "/hero-carousel-default.png",
+            "alt": "Operaciones logísticas y comercio exterior"
+          },
+          {
+            "image": "/hero-carousel-1.png",
+            "alt": "Gestión documental y operaciones portuarias internacionales"
+          },
+          {
+            "image": "/hero-carousel-2.png",
+            "alt": "Supervisión logística de carga en terminal portuaria"
+          }
+        ],
+        "primaryLabel": "Cotiza ahora",
+        "primaryHref": "#contacto",
+        "secondaryLabel": "Escríbenos por WhatsApp",
+        "secondaryHref": "https://wa.me/573014146464"
+      },
+      "servicesHeading": {
+        "kicker": "Nuestros servicios",
+        "title": "Soluciones integrales para cada operación"
+      },
+      "services": [
+        {
+          "title": "Importaciones",
+          "text": "Coordinamos los procedimientos requeridos para el ingreso legal de vehículos al territorio nacional.",
+          "icon": "Import"
+        },
+        {
+          "title": "Exportaciones",
+          "text": "Coordinamos operaciones de exportación de vehículos con un enfoque integral, asegurando la correcta gestión aduanera, documental y logística requerida para cada destino internacional.",
+          "icon": "Ship"
+        },
+        {
+          "title": "Tránsito aduanero",
+          "text": "Movilizamos su carga de forma segura y ágil.",
+          "icon": "Truck"
+        },
+        {
+          "title": "Asesoría en comercio exterior",
+          "text": "Estrategias especializadas para fortalecer su competitividad internacional.",
+          "icon": "Globe2"
+        },
+        {
+          "title": "Clasificación arancelaria",
+          "text": "Determinación correcta de partidas arancelarias para evitar riesgos y sanciones.",
+          "icon": "FileCheck2"
+        },
+        {
+          "title": "Gestión documental",
+          "text": "Administración y revisión de documentos para procesos sin contratiempos.",
+          "icon": "FolderKanban"
+        }
+      ],
+      "clientsHeading": {
+        "kicker": "Nuestra fundación",
+        "title": "Una fundación creada con el propósito de ayudar a personas, comunidades o grupos que necesitan apoyo."
+      },
+      "clients": [
+        {
+          "name": "Grupo Andino",
+          "image": "/hero-carousel-1.png",
+          "alt": "Equipo de la fundación acompañando una jornada comunitaria",
+          "text": "Programas de apoyo y orientación para familias y emprendedores."
+        },
+        {
+          "name": "Industrias del Valle",
+          "image": "/hero-carousel-2.png",
+          "alt": "Espacio de formación y bienestar liderado por la fundación",
+          "text": "Encuentros que fortalecen capacidades y redes de apoyo."
+        },
+        {
+          "name": "Agroexport Colombia",
+          "image": "/hero-carousel-default.png",
+          "alt": "Actividad de la fundación con aliados estratégicos",
+          "text": "Acciones conjuntas para impulsar oportunidades sostenibles."
+        },
+        {
+          "name": "Tecno Mecánica",
+          "image": "/hero-carousel-1.png",
+          "alt": "Equipo de la fundación acompañando una jornada comunitaria",
+          "text": "Programas de apoyo y orientación para familias y emprendedores."
+        },
+        {
+          "name": "Fashion Global",
+          "image": "/hero-carousel-1.png",
+          "alt": "Equipo de la fundación acompañando una jornada comunitaria",
+          "text": "Programas de apoyo y orientación para familias y emprendedores."
+        },
+        {
+          "name": "Suministros del Caribe",
+          "image": "/hero-carousel-1.png",
+          "alt": "Equipo de la fundación acompañando una jornada comunitaria",
+          "text": "Programas de apoyo y orientación para familias y emprendedores."
+        }
+      ],
+      "galleryHeading": {
+        "kicker": "Eventos y noticias",
+        "title": "Momentos que compartimos con nuestros clientes"
+      },
+      "galleryItems": [
+        {
+          "title": "Actualidad en comercio exterior",
+          "text": "Comparta aquí fotografías de eventos, capacitaciones o noticias relevantes para sus clientes.",
+          "image": "/images/gallery/2026-05-15/114a5bd4-17dd-4ea9-8f39-5a5e08ae6a97.webp",
+          "alt": "Evento de Cortes Rodriguez Asesores",
+          "imageKey": "gallery/2026-05-15/114a5bd4-17dd-4ea9-8f39-5a5e08ae6a97.webp"
+        }
+      ],
+      "testimonialsHeading": {
+        "kicker": "Testimonios",
+        "title": "Lo que dicen nuestros clientes"
+      },
+      "testimonials": [
+        {
+          "text": "Cortes Rodriguez Asesores nos ha brindado un servicio impecable, con soluciones rápidas y efectivas en cada operación.",
+          "name": "Juan Pablo Gómez",
+          "role": "Gerente de Logística"
+        },
+        {
+          "text": "Su conocimiento y acompañamiento han sido clave para nuestro crecimiento en mercados internacionales.",
+          "name": "María Fernanda Ruiz",
+          "role": "Directora de Comercio Exterior"
+        },
+        {
+          "text": "Profesionalismo, transparencia y cumplimiento. Un aliado estratégico que recomendamos totalmente.",
+          "name": "Andrés Cardona",
+          "role": "Gerente General"
+        }
+      ],
+      "reasonsHeading": {
+        "kicker": "¿Por qué elegirnos?",
+        "title": "Su aliado estratégico en comercio exterior"
+      },
+      "reasons": [
+        {
+          "title": "Experiencia y conocimiento",
+          "text": "Más de 15 años en el sector aduanero.",
+          "icon": "ShieldCheck"
+        },
+        {
+          "title": "Atención personalizada",
+          "text": "Soluciones adaptadas a cada empresa.",
+          "icon": "UserRoundCheck"
+        },
+        {
+          "title": "Cumplimiento y seguridad",
+          "text": "Procesos alineados con la normatividad vigente.",
+          "icon": "BadgeCheck"
+        },
+        {
+          "title": "Agilidad y eficiencia",
+          "text": "Optimizamos tiempos y costos operativos.",
+          "icon": "Clock3"
+        }
+      ],
+      "stats": [
+        {
+          "value": "15+",
+          "label": "Años de experiencia",
+          "icon": "CalendarDays"
+        },
+        {
+          "value": "5.500+",
+          "label": "Operaciones exitosas",
+          "icon": "Container"
+        },
+        {
+          "value": "250+",
+          "label": "Clientes satisfechos",
+          "icon": "UsersRound"
+        },
+        {
+          "value": "98%",
+          "label": "Cumplimiento normativo",
+          "icon": "Award"
+        }
+      ],
+      "processHeading": {
+        "kicker": "Nuestro proceso",
+        "title": "Así trabajamos por su tranquilidad"
+      },
+      "steps": [
+        {
+          "title": "Escuchamos",
+          "text": "Entendemos sus necesidades y objetivos de negocio.",
+          "icon": "Mail"
+        },
+        {
+          "title": "Analizamos",
+          "text": "Evaluamos su operación y proponemos la mejor estrategia.",
+          "icon": "ClipboardCheck"
+        },
+        {
+          "title": "Gestionamos",
+          "text": "Ejecutamos el proceso aduanero con eficiencia.",
+          "icon": "Route"
+        },
+        {
+          "title": "Acompañamos",
+          "text": "Brindamos seguimiento y soporte permanente.",
+          "icon": "CheckCircle2"
+        }
+      ],
+      "cta": {
+        "title": "¿Listo para llevar su negocio más allá de las fronteras?",
+        "text": "Contáctenos hoy y reciba asesoría personalizada.",
+        "primaryLabel": "Cotiza ahora",
+        "primaryHref": "tel:+573014146464",
+        "secondaryLabel": "WhatsApp",
+        "secondaryHref": "https://wa.me/573014146464"
+      },
+      "footer": {
+        "logo": "/images/gallery/2026-06-02/f839f28b-960f-47a0-b34a-555f97a91bf9.webp",
+        "quickLinksTitle": "Enlaces rápidos",
+        "servicesTitle": "Nuestros servicios",
+        "contactTitle": "Contáctenos",
+        "description": "Asesoría integral en comercio exterior y operaciones aduaneras con experiencia, confianza y soluciones a la medida.",
+        "copyright": "© 2026 Cortes Rodriguez Asesores S.A.S.",
+        "legal": "Política de Privacidad · Términos y Condiciones"
+      },
+      "contact": {
+        "address": "Dg. 26a tv. 45-15 Paraguay, Cartagena de Indias, Colombia",
+        "phone": "+57 301 414 6464",
+        "email": "cortesrodriguez.asesores@gmail.com"
+      },
+      "socialLinks": [
+        {
+          "label": "TikTok",
+          "icon": "Phone",
+          "href": "https://www.tiktok.com/@f.cortes.rodriguez"
+        },
+        {
+          "label": "Facebook",
+          "icon": "Facebook",
+          "href": "https://www.facebook.com/tramiteexportacionvehiculoscartagena"
+        },
+        {
+          "label": "Instagram",
+          "icon": "Instagram",
+          "href": "https://www.instagram.com/cortesrodriguez.asesores/?hl=es"
+        },
+        {
+          "label": "Correo",
+          "icon": "Mail",
+          "href": "mailto:cortesrodriguez.asesores@gmail.com"
+        }
+      ]
+    },
+    "en": {
+      "navItems": [
+        "Home",
+        "Services",
+        "About",
+        "Clients",
+        "Events",
+        "Resources",
+        "Contact"
+      ],
+      "brand": {
+        "name": "Cortes Rodriguez\nAsesores S.A.S.",
+        "subtitle": "Customs advisors"
+      },
+      "hero": {
+        "kicker": "Experience • Trust • Solutions",
+        "title": "Specialists in customs procedures for the import and export of vehicles",
+        "highlight": "import and export of vehicles",
+        "text": "At Cortes Rodríguez Asesores S.A.S., we specialize in customs procedures for the import and export of vehicles.\nWe provide comprehensive support to national and international clients, offering secure, efficient, and reliable solutions at every stage of the process.\nOur commitment is to facilitate the international movement of vehicles through transparent, personalized management backed by experience.",
+        "image": "",
+        "images": [
+          {
+            "image": "/hero-carousel-default.png",
+            "alt": "Logistics and foreign trade operations"
+          },
+          {
+            "image": "/hero-carousel-1.png",
+            "alt": "Documentation management and international port operations"
+          },
+          {
+            "image": "/hero-carousel-2.png",
+            "alt": "Cargo logistics supervision at a port terminal"
+          }
+        ],
+        "primaryLabel": "Request a quote",
+        "primaryHref": "#contacto",
+        "secondaryLabel": "Message us on WhatsApp",
+        "secondaryHref": "https://wa.me/573014146464"
+      },
+      "servicesHeading": {
+        "kicker": "Our services",
+        "title": "Comprehensive solutions for every operation"
+      },
+      "services": [
+        {
+          "title": "Imports",
+          "text": "We coordinate the procedures required for the legal entry of vehicles into the national territory.",
+          "icon": "Import"
+        },
+        {
+          "title": "Exports",
+          "text": "We provide specialized support in the international export of vehicles, guaranteeing reliable processes, regulatory compliance and efficient execution in every operation.",
+          "icon": "Ship"
+        },
+        {
+          "title": "Customs transit",
+          "text": "We coordinate and manage customs transit operations when the vehicle requires movement under the control of customs authorities between ports, warehouses or authorized zones, guaranteeing compliance with current regulations and the continuity of the logistics process.",
+          "icon": "Truck"
+        },
+        {
+          "title": "Travel coordination and booking",
+          "text": "We offer traveler support services, including managing reservations in Panama and purchasing airline tickets to national and international destinations, contributing to a more organized and efficient experience.",
+          "icon": "Globe2"
+        },
+        {
+          "title": "Tariff classification",
+          "text": "Correct tariff code determination to avoid risks and penalties.",
+          "icon": "FileCheck2"
+        },
+        {
+          "title": "Vehicle Protection and Care",
+          "text": "We offer anti-humidity solutions for the protection of vehicles during transport and storage, helping to prevent the formation of mold, bad odors, corrosion and damage caused by humidity.",
+          "icon": "FolderKanban"
+        }
+      ],
+      "clientsHeading": {
+        "kicker": "Our clients",
+        "title": "Companies that trust us"
+      },
+      "clients": [
+        {
+          "name": "Grupo Andino",
+          "image": "/hero-carousel-1.png",
+          "alt": "Foundation team supporting a community outreach event",
+          "text": "Support and guidance programs for families and entrepreneurs."
+        },
+        {
+          "name": "Industrias del Valle",
+          "image": "/hero-carousel-2.png",
+          "alt": "Training and wellbeing session led by the foundation",
+          "text": "Sessions that strengthen capabilities and support networks."
+        },
+        {
+          "name": "Agroexport Colombia",
+          "image": "/hero-carousel-default.png",
+          "alt": "Foundation activity with strategic partners",
+          "text": "Joint actions to create sustainable opportunities."
+        },
+        {
+          "name": "Tecno Mecánica",
+          "image": "/hero-carousel-1.png",
+          "alt": "Foundation team supporting a community outreach event",
+          "text": "Support and guidance programs for families and entrepreneurs."
+        },
+        {
+          "name": "Fashion Global",
+          "image": "/hero-carousel-1.png",
+          "alt": "Foundation team supporting a community outreach event",
+          "text": "Support and guidance programs for families and entrepreneurs."
+        },
+        {
+          "name": "Suministros del Caribe",
+          "image": "/hero-carousel-1.png",
+          "alt": "Foundation team supporting a community outreach event",
+          "text": "Support and guidance programs for families and entrepreneurs."
+        }
+      ],
+      "galleryHeading": {
+        "kicker": "Events and news",
+        "title": "Moments we share with our clients"
+      },
+      "galleryItems": [
+        {
+          "title": "Foreign trade updates",
+          "text": "Share photos from events, training sessions, or relevant news for your clients here.",
+          "image": "",
+          "alt": "Cortes Rodriguez Asesores event"
+        }
+      ],
+      "testimonialsHeading": {
+        "kicker": "Testimonials",
+        "title": "What our clients say"
+      },
+      "testimonials": [
+        {
+          "text": "Cortes Rodriguez Asesores has provided impeccable service, with fast and effective solutions in every operation.",
+          "name": "Juan Pablo Gómez",
+          "role": "Logistics Manager"
+        },
+        {
+          "text": "Their knowledge and support have been key to our growth in international markets.",
+          "name": "María Fernanda Ruiz",
+          "role": "Foreign Trade Director"
+        },
+        {
+          "text": "Professionalism, transparency, and compliance. A strategic partner we fully recommend.",
+          "name": "Andrés Cardona",
+          "role": "General Manager"
+        }
+      ],
+      "reasonsHeading": {
+        "kicker": "Why choose us?",
+        "title": "Your strategic partner in foreign trade"
+      },
+      "reasons": [
+        {
+          "title": "Experience and knowledge",
+          "text": "More than 15 years in the customs sector.",
+          "icon": "ShieldCheck"
+        },
+        {
+          "title": "Personalized attention",
+          "text": "Solutions tailored to each company.",
+          "icon": "UserRoundCheck"
+        },
+        {
+          "title": "Compliance and security",
+          "text": "Processes aligned with current regulations.",
+          "icon": "BadgeCheck"
+        },
+        {
+          "title": "Speed and efficiency",
+          "text": "We optimize time and operating costs.",
+          "icon": "Clock3"
+        }
+      ],
+      "stats": [
+        {
+          "value": "15+",
+          "label": "Years of experience",
+          "icon": "CalendarDays"
+        },
+        {
+          "value": "5,500+",
+          "label": "Successful operations",
+          "icon": "Container"
+        },
+        {
+          "value": "250+",
+          "label": "Satisfied clients",
+          "icon": "UsersRound"
+        },
+        {
+          "value": "98%",
+          "label": "Regulatory compliance",
+          "icon": "Award"
+        }
+      ],
+      "processHeading": {
+        "kicker": "Our process",
+        "title": "How we work for your peace of mind"
+      },
+      "steps": [
+        {
+          "title": "We listen",
+          "text": "We understand your needs and business goals.",
+          "icon": "Mail"
+        },
+        {
+          "title": "We analyze",
+          "text": "We evaluate your operation and propose the best strategy.",
+          "icon": "ClipboardCheck"
+        },
+        {
+          "title": "We manage",
+          "text": "We execute the customs process with efficiency.",
+          "icon": "Route"
+        },
+        {
+          "title": "We support",
+          "text": "We provide ongoing follow-up and support.",
+          "icon": "CheckCircle2"
+        }
+      ],
+      "cta": {
+        "title": "Ready to take your business beyond borders?",
+        "text": "Contact us today and receive personalized advisory.",
+        "primaryLabel": "Request a quote",
+        "primaryHref": "tel:+573001234567",
+        "secondaryLabel": "WhatsApp",
+        "secondaryHref": "https://wa.me/573014146464"
+      },
+      "footer": {
+        "logo": "/images/gallery/2026-05-29/07c26a5a-bc5c-4d7a-80fd-3c074e4f67ea.webp",
+        "quickLinksTitle": "Quick links",
+        "servicesTitle": "Our services",
+        "contactTitle": "Contact us",
+        "description": "Comprehensive advisory in foreign trade and customs operations with experience, trust, and tailored solutions.",
+        "copyright": "© 2026 Cortes Rodriguez Asesores S.A.S.",
+        "legal": "Privacy Policy · Terms and Conditions"
+      },
+      "contact": {
+        "address": "Calle 100 # 11A-45, Bogotá, Colombia",
+        "phone": "+57 301 414 6464",
+        "email": "cortesrodriguez.asesores@gmail.com"
+      },
+      "socialLinks": [
+        {
+          "label": "LinkedIn",
+          "icon": "Phone",
+          "href": "https://www.tiktok.com/@f.cortes.rodriguez"
+        },
+        {
+          "label": "Facebook",
+          "icon": "Facebook",
+          "href": "https://www.facebook.com/tramiteexportacionvehiculoscartagena"
+        },
+        {
+          "label": "Instagram",
+          "icon": "Instagram",
+          "href": "https://www.instagram.com/cortesrodriguez.asesores/?hl=es"
+        },
+        {
+          "label": "Email",
+          "icon": "Mail",
+          "href": "mailto:cortesrodriguez.asesores@gmail.com"
+        }
+      ]
+    }
+  }
+}

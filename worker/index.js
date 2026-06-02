@@ -35,13 +35,53 @@ export default {
       }
 
       if (url.pathname === '/api/admin/content' && request.method === 'PUT') {
-        await requireJwt(request, env)
+        const claims = await requireJwt(request, env)
 
         await ensureSchema(env)
-        const body = normalizeContent(await request.json())
-        await saveLandingContent(env, body)
+        const body = await request.json()
+        const saved = await saveLandingContent(env, body, {
+          expectedRevision: request.headers.get('x-content-revision'),
+          actorType: 'admin',
+          actorId: claims.sub || 'admin',
+          source: request.headers.get('x-save-source') || 'admin-panel',
+          requestId: request.headers.get('x-request-id') || crypto.randomUUID(),
+        })
         await invalidateLandingContentCache(request, env)
-        return json({ ok: true, cacheInvalidated: true }, request, 200, {
+        return json({ ok: true, cacheInvalidated: true, contentMeta: saved.meta }, request, 200, {
+          'x-content-cache-invalidated': 'true',
+        })
+      }
+
+      if (url.pathname === '/api/admin/content/audit' && request.method === 'GET') {
+        await requireJwt(request, env)
+        await ensureSchema(env)
+        return json({ items: await listContentAuditEntries(request, env) }, request)
+      }
+
+      if (url.pathname === '/api/admin/content/versions' && request.method === 'GET') {
+        await requireJwt(request, env)
+        await ensureSchema(env)
+        return json({ items: await listContentVersions(request, env) }, request)
+      }
+
+      if (url.pathname.startsWith('/api/admin/content/versions/') && url.pathname.endsWith('/restore') && request.method === 'POST') {
+        const claims = await requireJwt(request, env)
+        await ensureSchema(env)
+        const revision = url.pathname.split('/').slice(-2, -1)[0]
+        const restored = await restoreContentVersion(env, revision, {
+          expectedRevision: request.headers.get('x-content-revision'),
+          actorType: 'admin',
+          actorId: claims.sub || 'admin',
+          source: request.headers.get('x-save-source') || 'admin-history',
+          requestId: request.headers.get('x-request-id') || crypto.randomUUID(),
+        })
+        await invalidateLandingContentCache(request, env)
+        return json({
+          ok: true,
+          cacheInvalidated: true,
+          contentMeta: restored.meta,
+          restoredFromRevision: restored.restoredFromRevision,
+        }, request, 200, {
           'x-content-cache-invalidated': 'true',
         })
       }
@@ -104,6 +144,20 @@ export default {
 }
 
 async function getCachedLandingContent(request, env) {
+  const ttl = getContentCacheTtl(env)
+  if (ttl <= 0) {
+    await ensureSchema(env)
+    const { content, meta } = await getLandingContent(env)
+    return json({
+      ...content,
+      contentMeta: meta,
+      approvedTestimonials: await getApprovedTestimonials(env),
+    }, request, 200, {
+      'cache-control': 'no-store',
+      'x-content-cache': 'BYPASS',
+    })
+  }
+
   const cache = caches.default
   const cacheRequest = getContentCacheRequest(request)
   const cachedResponse = await cache.match(cacheRequest)
@@ -113,12 +167,13 @@ async function getCachedLandingContent(request, env) {
   }
 
   await ensureSchema(env)
-  const content = await getLandingContent(env)
+  const { content, meta } = await getLandingContent(env)
   const response = json({
     ...content,
+    contentMeta: meta,
     approvedTestimonials: await getApprovedTestimonials(env),
   }, request, 200, {
-    'cache-control': `public, max-age=${getContentCacheTtl(env)}`,
+    'cache-control': `public, max-age=${ttl}`,
     'x-content-cache': 'MISS',
   })
 
@@ -138,8 +193,8 @@ function getContentCacheRequest(request) {
 }
 
 function getContentCacheTtl(env) {
-  const ttl = Number(env.CONTENT_CACHE_TTL_SECONDS || 300)
-  return Number.isFinite(ttl) && ttl > 0 ? ttl : 300
+  const ttl = Number(env.CONTENT_CACHE_TTL_SECONDS || 0)
+  return Number.isFinite(ttl) && ttl > 0 ? ttl : 0
 }
 
 function getClient(env) {
@@ -161,6 +216,22 @@ async function ensureSchema(env) {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `)
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS site_content_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content_key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by TEXT NOT NULL DEFAULT 'system',
+      source TEXT NOT NULL DEFAULT 'system',
+      base_revision TEXT,
+      request_id TEXT
+    )
+  `)
+  await client.execute(`
+    CREATE INDEX IF NOT EXISTS idx_site_content_versions_key_id
+    ON site_content_versions (content_key, id DESC)
   `)
   await client.execute(`
     CREATE TABLE IF NOT EXISTS contact_leads (
@@ -195,38 +266,335 @@ async function ensureSchema(env) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS content_change_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content_key TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      previous_updated_at TEXT,
+      new_updated_at TEXT NOT NULL,
+      previous_value TEXT,
+      new_value TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
 }
 
-async function getLandingContent(env) {
+async function getLatestLandingContentRecord(env) {
   const result = await getClient(env).execute({
-    sql: 'SELECT value FROM site_content WHERE key = ?',
+    sql: `
+      SELECT id, content_key, value, created_at, created_by, source, base_revision, request_id
+      FROM site_content_versions
+      WHERE content_key = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `,
     args: ['landing'],
   })
 
-  if (!result.rows.length) {
-    await saveLandingContent(env, defaultContent)
-    return defaultContent
-  }
+  if (!result.rows.length) return null
 
-  const storedContent = JSON.parse(String(result.rows[0].value))
-  const content = normalizeContent(storedContent)
-  if (content.version !== storedContent.version) {
-    await saveLandingContent(env, content)
-  }
-  return content
+  return serializeContentVersionRecord(result.rows[0])
 }
 
-async function saveLandingContent(env, content) {
+async function getLegacyLandingContentRecord(env) {
+  const result = await getClient(env).execute({
+    sql: 'SELECT key, value, updated_at FROM site_content WHERE key = ?',
+    args: ['landing'],
+  })
+
+  if (!result.rows.length) return null
+
+  return {
+    key: String(result.rows[0].key),
+    value: String(result.rows[0].value),
+    updatedAt: String(result.rows[0].updated_at),
+  }
+}
+
+async function ensureLandingContentRecord(env) {
+  const existingRecord = await getLatestLandingContentRecord(env)
+  if (existingRecord) return existingRecord
+
+  const legacyRecord = await getLegacyLandingContentRecord(env)
+  const content = normalizeContent(legacyRecord ? JSON.parse(legacyRecord.value) : defaultContent)
+  const updatedAt = legacyRecord?.updatedAt || createRevisionTimestamp()
   await getClient(env).execute({
     sql: `
-      INSERT INTO site_content (key, value, updated_at)
-      VALUES ('landing', ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
-        updated_at = CURRENT_TIMESTAMP
+      INSERT INTO site_content_versions (
+        content_key,
+        value,
+        created_at,
+        created_by,
+        source,
+        base_revision,
+        request_id
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `,
-    args: [JSON.stringify(content)],
+    args: [
+      'landing',
+      JSON.stringify(content),
+      updatedAt,
+      legacyRecord ? 'legacy-import' : 'system',
+      legacyRecord ? 'site_content-bootstrap' : 'default-bootstrap',
+      null,
+      crypto.randomUUID(),
+    ],
   })
+
+  return getLatestLandingContentRecord(env)
+}
+
+function createRevisionTimestamp() {
+  return new Date().toISOString()
+}
+
+function createContentMeta(record) {
+  return {
+    key: 'landing',
+    revision: record.revision,
+    updatedAt: record.updatedAt,
+  }
+}
+
+async function writeLandingContent(env, { content, previousRecord, actorType, actorId, source, requestId }) {
+  const normalizedContent = normalizeContent(content)
+  const serializedContent = JSON.stringify(normalizedContent)
+  const nextUpdatedAt = createRevisionTimestamp()
+
+  let insertResult
+  try {
+    insertResult = await getClient(env).execute({
+      sql: `
+        INSERT INTO site_content_versions (
+          content_key,
+          value,
+          created_at,
+          created_by,
+          source,
+          base_revision,
+          request_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: ['landing', serializedContent, nextUpdatedAt, actorId, source, previousRecord.revision, requestId],
+    })
+  } catch (error) {
+    if (isBaseRevisionConflictError(error)) {
+      throw new HttpError('El contenido cambió en otra sesión. Recarga antes de guardar nuevamente.', 409)
+    }
+    throw error
+  }
+
+  const insertedRevision = String(insertResult.lastInsertRowid || '')
+
+  await getClient(env).execute({
+    sql: `
+      INSERT INTO content_change_audit (
+        content_key,
+        actor_type,
+        actor_id,
+        source,
+        request_id,
+        previous_updated_at,
+        new_updated_at,
+        previous_value,
+        new_value
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      'landing',
+      actorType,
+      actorId,
+      source,
+      requestId,
+      previousRecord.updatedAt,
+      nextUpdatedAt,
+      previousRecord.value,
+      serializedContent,
+    ],
+  })
+
+  return {
+    content: normalizedContent,
+    meta: createContentMeta({
+      revision: insertedRevision,
+      updatedAt: nextUpdatedAt,
+    }),
+  }
+}
+
+async function getLandingContent(env) {
+  const record = await ensureLandingContentRecord(env)
+  const storedContent = JSON.parse(record.value)
+  const content = normalizeContent(storedContent)
+  let meta = createContentMeta(record)
+
+  if (JSON.stringify(content) !== JSON.stringify(storedContent)) {
+    const saved = await writeLandingContent(env, {
+      content,
+      previousRecord: record,
+      actorType: 'system',
+      actorId: 'content-normalizer',
+      source: 'worker-normalization',
+      requestId: crypto.randomUUID(),
+    })
+    meta = saved.meta
+  }
+
+  return { content, meta }
+}
+
+async function saveLandingContent(env, content, options = {}) {
+  const previousRecord = await ensureLandingContentRecord(env)
+  const expectedRevision = normalizeText(options.expectedRevision)
+
+  if (!expectedRevision) {
+    throw new HttpError('Falta la revisión esperada del contenido.', 400)
+  }
+
+  if (previousRecord.revision !== expectedRevision) {
+    throw new HttpError('El contenido cambió en otra sesión. Recarga antes de guardar nuevamente.', 409)
+  }
+
+  return writeLandingContent(env, {
+    content,
+    previousRecord,
+    actorType: options.actorType || 'admin',
+    actorId: options.actorId || 'unknown',
+    source: options.source || 'admin-panel',
+    requestId: options.requestId || crypto.randomUUID(),
+  })
+}
+
+async function listContentAuditEntries(request, env) {
+  const url = new URL(request.url)
+  const limit = clampPositiveInteger(url.searchParams.get('limit'), 20, 200)
+  const result = await getClient(env).execute({
+    sql: `
+      SELECT id, content_key, actor_type, actor_id, source, request_id, previous_updated_at, new_updated_at, created_at
+      FROM content_change_audit
+      WHERE content_key = 'landing'
+      ORDER BY id DESC
+      LIMIT ?
+    `,
+    args: [limit],
+  })
+
+  return result.rows.map((row) => ({
+    id: toNumber(row.id),
+    contentKey: String(row.content_key),
+    actorType: String(row.actor_type),
+    actorId: String(row.actor_id),
+    source: String(row.source),
+    requestId: String(row.request_id),
+    previousUpdatedAt: row.previous_updated_at ? String(row.previous_updated_at) : '',
+    newUpdatedAt: String(row.new_updated_at),
+    createdAt: String(row.created_at),
+  }))
+}
+
+async function listContentVersions(request, env) {
+  const url = new URL(request.url)
+  const limit = clampPositiveInteger(url.searchParams.get('limit'), 20, 200)
+  const result = await getClient(env).execute({
+    sql: `
+      SELECT id, content_key, value, created_at, created_by, source, base_revision, request_id
+      FROM site_content_versions
+      WHERE content_key = 'landing'
+      ORDER BY id DESC
+      LIMIT ?
+    `,
+    args: [limit],
+  })
+
+  return result.rows.map((row) => {
+    const item = serializeContentVersionRecord(row)
+    return {
+      revision: item.revision,
+      updatedAt: item.updatedAt,
+      createdBy: item.createdBy,
+      source: item.source,
+      baseRevision: item.baseRevision,
+      requestId: item.requestId,
+    }
+  })
+}
+
+async function getContentVersionByRevision(env, revision) {
+  const revisionNumber = Number(revision)
+  if (!Number.isInteger(revisionNumber) || revisionNumber <= 0) {
+    throw new HttpError('Versión inválida.', 400)
+  }
+
+  const result = await getClient(env).execute({
+    sql: `
+      SELECT id, content_key, value, created_at, created_by, source, base_revision, request_id
+      FROM site_content_versions
+      WHERE content_key = 'landing' AND id = ?
+      LIMIT 1
+    `,
+    args: [revisionNumber],
+  })
+
+  if (!result.rows.length) {
+    throw new HttpError('Versión no encontrada.', 404)
+  }
+
+  return serializeContentVersionRecord(result.rows[0])
+}
+
+async function restoreContentVersion(env, revision, options = {}) {
+  const previousRecord = await ensureLandingContentRecord(env)
+  const expectedRevision = normalizeText(options.expectedRevision)
+
+  if (!expectedRevision) {
+    throw new HttpError('Falta la revisión esperada del contenido.', 400)
+  }
+
+  if (previousRecord.revision !== expectedRevision) {
+    throw new HttpError('El contenido cambió en otra sesión. Recarga antes de restaurar.', 409)
+  }
+
+  const targetRecord = await getContentVersionByRevision(env, revision)
+  const restored = await writeLandingContent(env, {
+    content: JSON.parse(targetRecord.value),
+    previousRecord,
+    actorType: options.actorType || 'admin',
+    actorId: options.actorId || 'unknown',
+    source: options.source || `admin-restore:${targetRecord.revision}`,
+    requestId: options.requestId || crypto.randomUUID(),
+  })
+
+  return {
+    ...restored,
+    restoredFromRevision: targetRecord.revision,
+  }
+}
+
+function serializeContentVersionRecord(row) {
+  return {
+    id: toNumber(row.id),
+    key: String(row.content_key),
+    revision: String(row.id),
+    value: String(row.value),
+    updatedAt: String(row.created_at),
+    createdBy: row.created_by ? String(row.created_by) : '',
+    source: row.source ? String(row.source) : '',
+    baseRevision: row.base_revision ? String(row.base_revision) : '',
+    requestId: row.request_id ? String(row.request_id) : '',
+  }
+}
+
+function isBaseRevisionConflictError(error) {
+  const message = String(error?.message || '')
+  return message.includes('idx_site_content_versions_key_base_revision_unique')
+    || (message.includes('UNIQUE constraint failed') && message.includes('site_content_versions.content_key') && message.includes('site_content_versions.base_revision'))
 }
 
 async function getApprovedTestimonials(env) {
@@ -248,7 +616,7 @@ async function getApprovedTestimonials(env) {
 
 async function submitQuoteRequest(request, env) {
   const input = validateLeadPayload(await request.json())
-  const content = await getLandingContent(env)
+  const { content } = await getLandingContent(env)
   const localeContent = content.locales?.[input.locale] || content.locales?.[content.defaultLocale] || content.locales?.es || defaultContent.locales.es
   const recipientEmail = localeContent.contact?.email || defaultContent.locales.es.contact.email
 
@@ -300,7 +668,7 @@ async function submitQuoteRequest(request, env) {
 
 async function submitTestimonial(request, env) {
   const input = validateTestimonialPayload(await request.json())
-  const content = await getLandingContent(env)
+  const { content } = await getLandingContent(env)
   const localeContent = content.locales?.[input.locale] || content.locales?.[content.defaultLocale] || content.locales?.es || defaultContent.locales.es
   const recipientEmail = localeContent.contact?.email || defaultContent.locales.es.contact.email
 
@@ -940,7 +1308,7 @@ async function signJwt(env, payload) {
   const claims = {
     ...payload,
     iat: now,
-    exp: now + 60 * 60 * 8,
+    exp: now + 60 * 60 * 12,
   }
   const data = `${base64UrlEncode(JSON.stringify(header))}.${base64UrlEncode(JSON.stringify(claims))}`
   const signature = await hmac(env, data)

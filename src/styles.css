@@ -1449,6 +1449,68 @@ h1 span {
   gap: 14px;
 }
 
+.version-history-list {
+  display: grid;
+  gap: 14px;
+}
+
+.version-history-item {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.version-history-top {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.version-history-top strong {
+  display: block;
+  color: var(--navy);
+}
+
+.version-history-top small {
+  color: var(--muted);
+}
+
+.version-history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.version-history-grid div {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.version-history-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.version-history-grid strong {
+  color: var(--navy);
+  word-break: break-word;
+}
+
+.version-history-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .lead-list-toolbar {
   display: flex;
   align-items: center;
@@ -1946,7 +2008,9 @@ h1 span {
   .lead-list-item-bottom,
   .lead-detail-toolbar,
   .lead-detail-header,
+  .version-history-top,
   .lead-detail-grid,
+  .version-history-grid,
   .lead-pagination {
     grid-template-columns: 1fr;
     display: grid;

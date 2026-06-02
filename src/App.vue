@@ -41,13 +41,16 @@ import {
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { cloneDefaultContent } from './contentDefaults'
 import {
+  ApiError,
   fetchAdminLeadDetail,
   fetchAdminLeads,
   fetchAdminTestimonialDetail,
   fetchAdminTestimonials,
   fetchContent,
+  fetchContentVersions,
   loginAdmin,
   reviewAdminTestimonial,
+  restoreContentVersion,
   saveContent,
   submitQuoteRequest,
   submitTestimonial,
@@ -95,6 +98,7 @@ const loginForm = ref({ email: '', password: '' })
 const adminStatus = ref('')
 const adminToast = ref('')
 const loading = ref(true)
+const contentLoadError = ref('')
 const hasUnsavedChanges = ref(false)
 const leadModalOpen = ref(false)
 const testimonialModalOpen = ref(false)
@@ -112,6 +116,10 @@ const adminTestimonials = ref([])
 const adminTestimonialsPagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
 const adminTestimonialsLoading = ref(false)
 const adminTestimonialsError = ref('')
+const contentVersions = ref([])
+const contentVersionsLoading = ref(false)
+const contentVersionsError = ref('')
+const restoringRevision = ref('')
 const selectedLeadId = ref(null)
 const selectedLead = ref(null)
 const selectedLeadLoading = ref(false)
@@ -302,6 +310,7 @@ const navText = computed({
 })
 const hasAdminLeads = computed(() => adminLeads.value.length > 0)
 const hasAdminTestimonials = computed(() => adminTestimonials.value.length > 0)
+const hasContentVersions = computed(() => contentVersions.value.length > 0)
 
 function sectionId(item) {
   return item.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -582,19 +591,28 @@ function closeTestimonialModal() {
 
 async function loadContent() {
   loading.value = true
-  content.value = await fetchContent()
-  draft.value = clone(content.value)
-  hasUnsavedChanges.value = false
-  heroIndex.value = 0
-  clientIndex.value = 0
-  galleryIndex.value = 0
-  loading.value = false
+  contentLoadError.value = ''
+
+  try {
+    content.value = await fetchContent()
+    draft.value = clone(content.value)
+    hasUnsavedChanges.value = false
+    heroIndex.value = 0
+    clientIndex.value = 0
+    galleryIndex.value = 0
+  } catch (error) {
+    contentLoadError.value = error.message || 'No se pudo cargar el contenido.'
+    adminStatus.value = contentLoadError.value
+  } finally {
+    loading.value = false
+  }
 }
 
 async function refreshPublishedContent() {
   const freshContent = await fetchContent({ cache: 'no-store', headers: { 'cache-control': 'no-cache' } })
   content.value = freshContent
   draft.value = clone(freshContent)
+  contentLoadError.value = ''
   hasUnsavedChanges.value = false
 }
 
@@ -604,6 +622,31 @@ function showAdminToast(message) {
   adminToastTimer = window.setTimeout(() => {
     adminToast.value = ''
   }, 2600)
+}
+
+function isAuthError(error) {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403)
+}
+
+function redirectToLoginForExpiredSession(message = 'Tu sesión venció. Inicia sesión nuevamente.') {
+  adminJwt.value = ''
+  localStorage.removeItem('adminJwt')
+  adminStatus.value = message
+  adminView.value = 'content'
+  adminLeads.value = []
+  adminTestimonials.value = []
+  contentVersions.value = []
+  selectedLead.value = null
+  selectedLeadId.value = null
+  selectedTestimonial.value = null
+  selectedTestimonialId.value = null
+  selectedLeadError.value = ''
+  selectedTestimonialError.value = ''
+  contentVersionsError.value = ''
+  leadModalOpen.value = false
+  testimonialModalOpen.value = false
+  window.history.pushState({}, '', '/login')
+  routePath.value = '/login'
 }
 
 function switchLocale(locale) {
@@ -695,6 +738,11 @@ async function loadAdminLeads(page = adminLeadsPagination.value.page || 1) {
     adminLeads.value = sortLeadsNewestFirst(response.items || [])
     adminLeadsPagination.value = response.pagination || { page: 1, pageSize: adminLeadsPageSize, totalItems: 0, totalPages: 1 }
   } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras cargábamos las solicitudes. Inicia sesión nuevamente.')
+      return
+    }
+
     adminLeadsError.value = error.message
   } finally {
     adminLeadsLoading.value = false
@@ -713,6 +761,11 @@ async function loadAdminLeadDetailById(leadId) {
     selectedLead.value = response.item
     selectedLeadId.value = response.item?.id || leadId
   } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras cargábamos el detalle. Inicia sesión nuevamente.')
+      return
+    }
+
     selectedLeadError.value = error.message
   } finally {
     selectedLeadLoading.value = false
@@ -730,6 +783,11 @@ async function loadAdminTestimonials(page = adminTestimonialsPagination.value.pa
     adminTestimonials.value = sortLeadsNewestFirst(response.items || [])
     adminTestimonialsPagination.value = response.pagination || { page: 1, pageSize: adminTestimonialsPageSize, totalItems: 0, totalPages: 1 }
   } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras cargábamos los testimonios. Inicia sesión nuevamente.')
+      return
+    }
+
     adminTestimonialsError.value = error.message
   } finally {
     adminTestimonialsLoading.value = false
@@ -749,9 +807,35 @@ async function loadAdminTestimonialDetailById(testimonialId) {
     selectedTestimonialId.value = response.item?.id || testimonialId
     testimonialReviewNotes.value = response.item?.reviewNotes || ''
   } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras cargábamos el testimonio. Inicia sesión nuevamente.')
+      return
+    }
+
     selectedTestimonialError.value = error.message
   } finally {
     selectedTestimonialLoading.value = false
+  }
+}
+
+async function loadContentVersions(limit = 20) {
+  if (!adminJwt.value) return
+
+  contentVersionsLoading.value = true
+  contentVersionsError.value = ''
+
+  try {
+    const response = await fetchContentVersions(adminJwt.value, limit)
+    contentVersions.value = response.items || []
+  } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras cargábamos el historial. Inicia sesión nuevamente.')
+      return
+    }
+
+    contentVersionsError.value = error.message
+  } finally {
+    contentVersionsLoading.value = false
   }
 }
 
@@ -781,6 +865,9 @@ async function setAdminView(view) {
   if (view === 'testimonials') {
     await loadAdminTestimonials(1)
   }
+  if (view === 'history') {
+    await loadContentVersions(20)
+  }
 }
 
 async function login() {
@@ -799,18 +886,7 @@ async function login() {
 }
 
 function logout() {
-  adminJwt.value = ''
-  localStorage.removeItem('adminJwt')
-  adminStatus.value = 'Sesión cerrada.'
-  adminView.value = 'content'
-  adminLeads.value = []
-  adminTestimonials.value = []
-  selectedLead.value = null
-  selectedLeadId.value = null
-  selectedTestimonial.value = null
-  selectedTestimonialId.value = null
-  window.history.pushState({}, '', '/login')
-  routePath.value = '/login'
+  redirectToLoginForExpiredSession('Sesión cerrada.')
 }
 
 async function reviewTestimonial(reviewStatus) {
@@ -831,6 +907,11 @@ async function reviewTestimonial(reviewStatus) {
     await loadAdminTestimonials(adminTestimonialsPagination.value.page || 1)
     await refreshPublishedContent()
   } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras revisabas testimonios. Inicia sesión nuevamente.')
+      return
+    }
+
     adminStatus.value = error.message
   } finally {
     testimonialReviewSubmitting.value = false
@@ -838,6 +919,16 @@ async function reviewTestimonial(reviewStatus) {
 }
 
 async function persistContent() {
+  if (contentLoadError.value) {
+    adminStatus.value = 'No se puede guardar mientras el contenido publicado no se haya cargado correctamente.'
+    return
+  }
+
+  if (!draft.value?.contentMeta?.revision) {
+    adminStatus.value = 'Falta la revisión actual del contenido. Recarga la página antes de guardar.'
+    return
+  }
+
   adminStatus.value = 'Guardando...'
   try {
     const cleanDraft = stripTransientGalleryState(draft.value)
@@ -848,7 +939,55 @@ async function persistContent() {
     adminStatus.value = 'Cambios guardados.'
     showAdminToast('Guardado correctamente.')
   } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras guardabas cambios. Inicia sesión nuevamente.')
+      return
+    }
+
+    if (error instanceof ApiError && error.status === 409) {
+      await refreshPublishedContent().catch(() => {})
+      adminStatus.value = 'Otro cambio fue publicado antes que el tuyo. Recargamos la última versión para evitar sobrescrituras.'
+      showAdminToast('Se bloqueó un guardado con contenido desactualizado.')
+      return
+    }
+
     adminStatus.value = error.message
+  }
+}
+
+async function restoreVersion(revision) {
+  if (!adminJwt.value) return
+  if (!content.value?.contentMeta?.revision) {
+    adminStatus.value = 'Falta la revisión actual del contenido. Recarga la página antes de restaurar.'
+    return
+  }
+
+  restoringRevision.value = revision
+  adminStatus.value = `Restaurando versión ${revision}...`
+
+  try {
+    const response = await restoreContentVersion(adminJwt.value, revision, content.value.contentMeta.revision)
+    await refreshPublishedContent()
+    await loadContentVersions(20)
+    adminStatus.value = `Versión ${response.restoredFromRevision} restaurada.`
+    showAdminToast(`Versión ${response.restoredFromRevision} restaurada.`)
+  } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras restaurabas una versión. Inicia sesión nuevamente.')
+      return
+    }
+
+    if (error instanceof ApiError && error.status === 409) {
+      await refreshPublishedContent().catch(() => {})
+      await loadContentVersions(20).catch(() => {})
+      adminStatus.value = 'El contenido cambió antes de restaurar. Recargamos la última versión para evitar conflictos.'
+      showAdminToast('Se bloqueó una restauración sobre contenido desactualizado.')
+      return
+    }
+
+    adminStatus.value = error.message
+  } finally {
+    restoringRevision.value = ''
   }
 }
 
@@ -914,6 +1053,11 @@ async function handleGalleryImageUpload(event, item) {
     item.imageStatus = `Imagen subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
     if (!item.alt) item.alt = item.title || 'Imagen del sitio web'
   } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras subías la imagen. Inicia sesión nuevamente.')
+      return
+    }
+
     item.imageStatus = error.message
   }
 }
@@ -933,6 +1077,11 @@ async function handleClientImageUpload(event, item) {
     item.imageStatus = `Imagen subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
     if (!item.alt) item.alt = item.name || 'Imagen de la fundación'
   } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras subías la imagen. Inicia sesión nuevamente.')
+      return
+    }
+
     item.imageStatus = error.message
   }
 }
@@ -951,6 +1100,11 @@ async function handleHeroImageUpload(event, item) {
     item.imageKey = uploaded.key
     item.imageStatus = `Imagen del carrusel subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
   } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras subías la imagen. Inicia sesión nuevamente.')
+      return
+    }
+
     item.imageStatus = error.message
   }
 }
@@ -969,6 +1123,11 @@ async function handleFooterLogoUpload(event) {
     draftLocale.value.footer.logoKey = uploaded.key
     draftLocale.value.footer.logoStatus = `Logo subido y optimizado: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarlo.`
   } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras subías el logo. Inicia sesión nuevamente.')
+      return
+    }
+
     draftLocale.value.footer.logoStatus = error.message
   }
 }
@@ -1113,6 +1272,7 @@ watch(allTestimonials, (items) => {
         <p>Actualiza los textos, enlaces e información que aparecen en el sitio web.</p>
         <div class="admin-nav">
           <button type="button" class="admin-link" :class="{ active: adminView === 'content' }" @click="setAdminView('content')">Contenido</button>
+          <button type="button" class="admin-link" :class="{ active: adminView === 'history' }" @click="setAdminView('history')">Historial</button>
           <button type="button" class="admin-link" :class="{ active: adminView === 'leads' }" @click="setAdminView('leads')">Solicitudes</button>
           <button type="button" class="admin-link" :class="{ active: adminView === 'testimonials' }" @click="setAdminView('testimonials')">Testimonios</button>
         </div>
@@ -1132,6 +1292,9 @@ watch(allTestimonials, (items) => {
           <h2>Idioma del contenido</h2>
           <p class="admin-note" :class="{ active: hasUnsavedChanges }">
             {{ hasUnsavedChanges ? 'Tienes cambios sin guardar. Presiona "Guardar cambios" para publicarlos en el sitio web.' : 'Cuando realices cualquier cambio, presiona "Guardar cambios" para publicarlo en el sitio web.' }}
+          </p>
+          <p class="admin-note">
+            Revisión publicada actual: <strong>{{ content.contentMeta?.revision || 'sin versión' }}</strong>
           </p>
           <div class="language-tabs">
             <button type="button" :class="{ active: adminLocale === 'es' }" @click="adminLocale = 'es'">Contenido en español</button>
@@ -1340,6 +1503,9 @@ watch(allTestimonials, (items) => {
           <label>Dirección <input v-model="draftLocale.contact.address" /></label>
           <label>Teléfono <input v-model="draftLocale.contact.phone" /></label>
           <label>Email <input v-model="draftLocale.contact.email" /></label>
+          <p class="admin-note">
+            Este email es el destino de las notificaciones de cotizaciones y testimonios para este idioma. El remitente del correo se configura aparte con <code>RESEND_FROM_EMAIL</code>.
+          </p>
           <article class="admin-card gallery-admin-card">
             <div class="image-preview footer-logo-preview">
               <img v-if="draftLocale.footer.logo || logoUrl" :src="draftLocale.footer.logo || logoUrl" alt="Vista previa del logo del footer" />
@@ -1384,6 +1550,62 @@ watch(allTestimonials, (items) => {
             <Plus :size="16" /> Agregar red social
           </button>
         </div>
+        </template>
+
+        <template v-else-if="adminView === 'history'">
+          <div class="admin-section">
+            <div class="admin-section-header">
+              <div>
+                <h2>Historial de versiones</h2>
+                <p class="admin-note">Cada guardado y restauración crea una nueva versión. Puedes revisar el historial y restaurar una versión anterior sin perder trazabilidad.</p>
+              </div>
+              <button type="button" class="admin-link" @click="loadContentVersions(20)">Actualizar</button>
+            </div>
+
+            <div v-if="contentVersionsError" class="admin-inline-error">{{ contentVersionsError }}</div>
+            <div v-if="contentVersionsLoading" class="lead-empty-state">Cargando historial...</div>
+            <div v-else-if="!hasContentVersions" class="lead-empty-state">Aún no hay versiones registradas.</div>
+            <div v-else class="version-history-list">
+              <article v-for="item in contentVersions" :key="item.revision" class="version-history-item">
+                <div class="version-history-top">
+                  <div>
+                    <strong>Versión {{ item.revision }}</strong>
+                    <small>{{ formatAdminLeadDate(item.updatedAt) }}</small>
+                  </div>
+                  <span v-if="content.contentMeta?.revision === item.revision" class="lead-status-pill approved">Actual</span>
+                </div>
+                <div class="version-history-grid">
+                  <div>
+                    <span>Actor</span>
+                    <strong>{{ item.createdBy || 'Desconocido' }}</strong>
+                  </div>
+                  <div>
+                    <span>Origen</span>
+                    <strong>{{ item.source || 'system' }}</strong>
+                  </div>
+                  <div>
+                    <span>Base</span>
+                    <strong>{{ item.baseRevision || 'Sin base' }}</strong>
+                  </div>
+                  <div>
+                    <span>Request</span>
+                    <strong>{{ item.requestId || 'Sin request id' }}</strong>
+                  </div>
+                </div>
+                <div class="version-history-actions">
+                  <button
+                    type="button"
+                    class="admin-save"
+                    :disabled="restoringRevision === item.revision || content.contentMeta?.revision === item.revision"
+                    @click="restoreVersion(item.revision)"
+                  >
+                    <Save :size="16" />
+                    {{ restoringRevision === item.revision ? 'Restaurando...' : 'Restaurar esta versión' }}
+                  </button>
+                </div>
+              </article>
+            </div>
+          </div>
         </template>
 
         <template v-else-if="adminView === 'leads'">

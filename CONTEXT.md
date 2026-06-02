@@ -145,6 +145,11 @@ Correos actuales:
 
 Ambos se envían al correo de contacto configurado en el contenido del sitio para el idioma correspondiente.
 
+Regla operativa:
+
+- `contact.email`: correo destino configurable desde el admin.
+- `RESEND_FROM_EMAIL`: remitente técnico usado por Resend, configurable por variables de entorno.
+
 ## Imágenes
 
 Las imágenes se optimizan en cliente antes de subirlas:
