@@ -145,7 +145,11 @@ export default {
 
 async function getCachedLandingContent(request, env) {
   const ttl = getContentCacheTtl(env)
-  if (ttl <= 0) {
+  const cacheControl = request.headers.get('cache-control') || ''
+  const pragma = request.headers.get('pragma') || ''
+  const bypassCache = ttl <= 0 || cacheControl.includes('no-cache') || cacheControl.includes('no-store') || pragma.includes('no-cache')
+
+  if (bypassCache) {
     await ensureSchema(env)
     const { content, meta } = await getLandingContent(env)
     return json({

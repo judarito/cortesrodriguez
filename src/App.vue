@@ -261,6 +261,7 @@ const site = computed(() => content.value.locales?.[activeLocale.value] || conte
 const draftLocale = computed(() => draft.value.locales?.[adminLocale.value] || draft.value.locales.es)
 const navItems = computed(() => site.value.navItems || [])
 const services = computed(() => site.value.services || [])
+const team = computed(() => site.value.team || [])
 const clients = computed(() => site.value.clients || [])
 const galleryItems = computed(() => {
   const items = site.value.galleryItems || []
@@ -278,12 +279,19 @@ const footerLogoUrl = computed(() => site.value.footer?.logo || logoUrl)
 const leadCopy = computed(() => quoteFormCopy[activeLocale.value] || quoteFormCopy.es)
 const testimonialCopy = computed(() => testimonialFormCopy[activeLocale.value] || testimonialFormCopy.es)
 const testimonialIndex = ref(0)
+const teamIndex = ref(0)
 const heroSlides = computed(() => normalizeHeroSlides(site.value.hero))
 const draftHeroSlides = computed(() => normalizeHeroSlides(draftLocale.value.hero))
 const activeHeroIndex = computed(() => heroSlides.value.length ? heroIndex.value % heroSlides.value.length : 0)
 const activeHeroSlide = computed(() => heroSlides.value[activeHeroIndex.value] || null)
 const activeClientIndex = computed(() => clients.value.length ? clientIndex.value % clients.value.length : 0)
 const activeGalleryIndex = computed(() => galleryItems.value.length ? galleryIndex.value % galleryItems.value.length : 0)
+const activeTeamIndex = computed(() => team.value.length ? teamIndex.value % team.value.length : 0)
+const visibleTeam = computed(() => {
+  const items = team.value
+  if (!items.length) return []
+  return [0, 1].map((offset) => items[(activeTeamIndex.value + offset) % items.length]).slice(0, Math.min(2, items.length))
+})
 const visibleClients = computed(() => {
   const items = clients.value
   if (!items.length) return []
@@ -317,7 +325,7 @@ function sectionId(item) {
 }
 
 function navHref(index, item) {
-  const ids = ['inicio', 'servicios', 'nosotros', 'clientes', 'eventos', 'recursos', 'contacto']
+  const ids = ['inicio', 'servicios', 'nosotros', 'clientes', 'eventos', 'testimonios', 'recursos', 'contacto']
   return `#${ids[index] || sectionId(item)}`
 }
 
@@ -400,6 +408,17 @@ function validateLocaleContent(locale, localeKey) {
     assertFilled(service?.title, `Servicios (${localeLabel}) - servicio ${index + 1} título`)
     assertFilled(service?.text, `Servicios (${localeLabel}) - servicio ${index + 1} descripción`)
     assertFilled(service?.icon, `Servicios (${localeLabel}) - servicio ${index + 1} icono`)
+  })
+
+  assertFilled(locale.teamHeading?.kicker, `Nosotros/Equipo (${localeLabel}) - etiqueta`)
+  assertFilled(locale.teamHeading?.title, `Nosotros/Equipo (${localeLabel}) - título`)
+  assertItems(locale.team, `Nosotros/Equipo (${localeLabel})`)
+  locale.team.forEach((member, index) => {
+    assertFilled(member?.name, `Nosotros/Equipo (${localeLabel}) - miembro ${index + 1} nombre`)
+    assertFilled(member?.role, `Nosotros/Equipo (${localeLabel}) - miembro ${index + 1} cargo`)
+    assertFilled(member?.image, `Nosotros/Equipo (${localeLabel}) - miembro ${index + 1} imagen`)
+    assertFilled(member?.alt, `Nosotros/Equipo (${localeLabel}) - miembro ${index + 1} texto alternativo`)
+    assertFilled(member?.bio, `Nosotros/Equipo (${localeLabel}) - miembro ${index + 1} biografía`)
   })
 
   assertFilled(locale.clientsHeading?.kicker, `Clientes (${localeLabel}) - etiqueta`)
@@ -563,6 +582,20 @@ function goToTestimonial(index) {
   testimonialIndex.value = index
 }
 
+function nextTeamMember() {
+  if (!team.value.length) return
+  teamIndex.value = (teamIndex.value + 1) % team.value.length
+}
+
+function previousTeamMember() {
+  if (!team.value.length) return
+  teamIndex.value = (teamIndex.value - 1 + team.value.length) % team.value.length
+}
+
+function goToTeamMember(index) {
+  teamIndex.value = index
+}
+
 function openLeadModal() {
   leadModalOpen.value = true
   menuOpen.value = false
@@ -600,6 +633,7 @@ async function loadContent() {
     heroIndex.value = 0
     clientIndex.value = 0
     galleryIndex.value = 0
+    teamIndex.value = 0
   } catch (error) {
     contentLoadError.value = error.message || 'No se pudo cargar el contenido.'
     adminStatus.value = contentLoadError.value
@@ -1004,6 +1038,7 @@ function stripTransientGalleryState(value) {
       delete locale.footer.logoKey
     }
     locale.clients = (locale.clients || []).map(({ imageStatus, imageKey, ...item }) => item)
+    locale.team = (locale.team || []).map(({ imageStatus, imageKey, ...item }) => item)
     locale.galleryItems = (locale.galleryItems || []).map(({ imageStatus, ...item }) => item)
   })
   return cleanValue
@@ -1024,6 +1059,12 @@ function validateOptimizedImages(value) {
       if (!item.image) return
       if (item.image.startsWith('data:')) {
         throw new Error('Hay una imagen de la fundación pendiente de subir. Vuelve a seleccionarla para enviarla al almacenamiento.')
+      }
+    })
+    ;(locale.team || []).forEach((item) => {
+      if (!item.image) return
+      if (item.image.startsWith('data:')) {
+        throw new Error('Hay una imagen del equipo pendiente de subir. Vuelve a seleccionarla para enviarla al almacenamiento.')
       }
     })
     ;(locale.galleryItems || []).forEach((item) => {
@@ -1076,6 +1117,30 @@ async function handleClientImageUpload(event, item) {
     item.imageKey = uploaded.key
     item.imageStatus = `Imagen subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
     if (!item.alt) item.alt = item.name || 'Imagen de la fundación'
+  } catch (error) {
+    if (isAuthError(error)) {
+      redirectToLoginForExpiredSession('Tu sesión venció mientras subías la imagen. Inicia sesión nuevamente.')
+      return
+    }
+
+    item.imageStatus = error.message
+  }
+}
+
+async function handleTeamImageUpload(event, item) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+
+  try {
+    item.imageStatus = 'Optimizando imagen...'
+    const optimized = await optimizeImage(file)
+    item.imageStatus = `Subiendo imagen optimizada: ${formatBytes(optimized.blob.size)}.`
+    const uploaded = await uploadImage(optimized.blob, adminJwt.value, file.name)
+    item.image = uploaded.url
+    item.imageKey = uploaded.key
+    item.imageStatus = `Imagen subida y optimizada: ${formatBytes(optimized.blob.size)}. Presiona "Guardar cambios" para publicarla.`
+    if (!item.alt) item.alt = item.name || 'Miembro del equipo'
   } catch (error) {
     if (isAuthError(error)) {
       redirectToLoginForExpiredSession('Tu sesión venció mientras subías la imagen. Inicia sesión nuevamente.')
@@ -1233,6 +1298,35 @@ watch(allTestimonials, (items) => {
 
   testimonialIndex.value %= items.length
 }, { immediate: true })
+
+watch(team, (items) => {
+  if (!items.length) {
+    teamIndex.value = 0
+    return
+  }
+
+  teamIndex.value %= items.length
+}, { immediate: true })
+
+watch(site, (newSite) => {
+  if (!newSite) return
+  const brandName = `${newSite.brand?.name || 'Cortes Rodriguez'} ${newSite.brand?.suffix || 'Asesores'}`
+  const kicker = newSite.hero?.kicker || 'Comercio Exterior y Aduanas'
+  document.title = `${brandName} | ${kicker}`
+
+  let metaDesc = document.querySelector('meta[name="description"]')
+  if (!metaDesc) {
+    metaDesc = document.createElement('meta')
+    metaDesc.setAttribute('name', 'description')
+    document.head.appendChild(metaDesc)
+  }
+  metaDesc.setAttribute('content', newSite.footer?.description || 'Asesoría integral en comercio exterior y operaciones aduaneras.')
+
+  let ogTitle = document.querySelector('meta[property="og:title"]')
+  if (ogTitle) ogTitle.setAttribute('content', `${brandName} | ${kicker}`)
+  let ogDesc = document.querySelector('meta[property="og:description"]')
+  if (ogDesc) ogDesc.setAttribute('content', newSite.footer?.description || '')
+}, { immediate: true, deep: true })
 </script>
 
 <template>
@@ -1360,6 +1454,37 @@ watch(allTestimonials, (items) => {
           </article>
           <button type="button" class="admin-add" @click="addItem(draftLocale.services, { title: 'Nuevo servicio', text: '', icon: 'Globe2' })">
             <Plus :size="16" /> Agregar servicio
+          </button>
+        </div>
+
+        <div class="admin-section">
+          <h2>Nosotros (Equipo)</h2>
+          <label>Etiqueta <input v-model="draftLocale.teamHeading.kicker" /></label>
+          <label>Título <input v-model="draftLocale.teamHeading.title" /></label>
+          <article v-for="(item, index) in draftLocale.team" :key="index" class="admin-card gallery-admin-card">
+            <div class="image-preview">
+              <img v-if="item.image" :src="item.image" :alt="item.alt || item.name" />
+              <ImagePlus v-else :size="34" />
+            </div>
+            <div class="gallery-admin-fields">
+              <input v-model="item.name" placeholder="Nombre del miembro" />
+              <input v-model="item.role" placeholder="Cargo o función" />
+              <textarea v-model="item.bio" rows="2" placeholder="Biografía breve"></textarea>
+              <input v-model="item.alt" placeholder="Texto alternativo de la imagen" />
+              <label class="file-field">
+                Subir foto del miembro
+                <input type="file" accept="image/png,image/jpeg,image/webp" @change="handleTeamImageUpload($event, item)" />
+              </label>
+              <small>{{ item.imageStatus || `Máximo ${formatBytes(maxUploadBytes)}. Se guarda optimizada hasta ${formatBytes(maxOptimizedImageBytes)}.` }}</small>
+            </div>
+            <button type="button" class="danger" @click="removeItem(draftLocale.team, index)"><Trash2 :size="16" /> Eliminar</button>
+          </article>
+          <button
+            type="button"
+            class="admin-add"
+            @click="addItem(draftLocale.team, { name: 'Nuevo miembro', role: '', bio: '', image: '', alt: 'Miembro del equipo' })"
+          >
+            <Plus :size="16" /> Agregar miembro
           </button>
         </div>
 
@@ -1929,6 +2054,43 @@ watch(allTestimonials, (items) => {
           </div>
         </section>
 
+        <section id="nosotros" class="section team-section" :class="{ 'has-two-or-less': team.length <= 2 }">
+          <div class="section-heading-row">
+            <div>
+              <p class="section-kicker">{{ site.teamHeading?.kicker }}</p>
+              <h2>{{ site.teamHeading?.title }}</h2>
+            </div>
+            <div v-if="team.length > 1" class="slider-controls team-slider-controls" aria-label="Controles del equipo">
+              <button type="button" aria-label="Miembro anterior" @click="previousTeamMember"><ChevronLeft :size="20" /></button>
+              <button type="button" aria-label="Miembro siguiente" @click="nextTeamMember"><ChevronRight :size="20" /></button>
+            </div>
+          </div>
+          <div class="team-carousel">
+            <div class="team-carousel-grid">
+              <article v-for="member in visibleTeam" :key="member.name" class="team-carousel-card">
+                <div class="team-image-container">
+                  <img :src="member.image" :alt="member.alt || member.name" />
+                </div>
+                <div class="team-info">
+                  <h3>{{ member.name }}</h3>
+                  <span class="team-role">{{ member.role }}</span>
+                  <p class="team-bio">{{ member.bio }}</p>
+                </div>
+              </article>
+            </div>
+          </div>
+          <div v-if="team.length > 1" class="slider-dots team-slider-dots" aria-label="Seleccionar miembro del equipo">
+            <button
+              v-for="(_, index) in team"
+              :key="index"
+              type="button"
+              :class="{ active: index === activeTeamIndex }"
+              :aria-label="`Ver miembro ${index + 1}`"
+              @click="goToTeamMember(index)"
+            ></button>
+          </div>
+        </section>
+
         <section id="clientes" class="section client-section">
           <div class="section-heading-row">
             <div>
@@ -1994,7 +2156,7 @@ watch(allTestimonials, (items) => {
           </div>
         </section>
 
-        <section id="nosotros" class="section testimonials-section">
+        <section id="testimonios" class="section testimonials-section">
           <div class="split-heading">
             <div>
               <p class="section-kicker">{{ site.testimonialsHeading.kicker }}</p>

@@ -194,8 +194,8 @@ async function writeLandingContent({ content, previousRecord, actorType, actorId
   }
 }
 
-async function getLandingContent() {
-  if (contentCacheTtlMs > 0 && contentCache && contentCache.expiresAt > Date.now()) {
+async function getLandingContent(bypassCache = false) {
+  if (!bypassCache && contentCacheTtlMs > 0 && contentCache && contentCache.expiresAt > Date.now()) {
     return contentCache.value
   }
 
@@ -466,10 +466,14 @@ function requireAdmin(req, res, next) {
   next()
 }
 
-app.get('/api/content', async (_req, res) => {
+app.get('/api/content', async (req, res) => {
   try {
-    const { content: landingContent, meta } = await getLandingContent()
-    res.set('Cache-Control', contentCacheTtlMs > 0
+    const cacheControl = req.header('cache-control') || ''
+    const pragma = req.header('pragma') || ''
+    const bypassCache = cacheControl.includes('no-cache') || cacheControl.includes('no-store') || pragma.includes('no-cache')
+
+    const { content: landingContent, meta } = await getLandingContent(bypassCache)
+    res.set('Cache-Control', (contentCacheTtlMs > 0 && !bypassCache)
       ? `public, max-age=${Math.floor(contentCacheTtlMs / 1000)}`
       : 'no-store')
     res.json({

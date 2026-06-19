@@ -1,5 +1,5 @@
 const es = {
-  navItems: ['Inicio', 'Servicios', 'Nosotros', 'Clientes', 'Eventos', 'Recursos', 'Contacto'],
+  navItems: ['Inicio', 'Servicios', 'Nosotros', 'Clientes', 'Eventos', 'Testimonios', 'Recursos', 'Contacto'],
   brand: {
     name: 'Cortes Rodriguez\nAsesores S.A.S.',
     subtitle: 'Asesores de aduana',
@@ -31,6 +31,26 @@ const es = {
     { title: 'Asesoría en comercio exterior', text: 'Estrategias especializadas para fortalecer su competitividad internacional.', icon: 'Globe2' },
     { title: 'Clasificación arancelaria', text: 'Determinación correcta de partidas arancelarias para evitar riesgos y sanciones.', icon: 'FileCheck2' },
     { title: 'Gestión documental', text: 'Administración y revisión de documentos para procesos sin contratiempos.', icon: 'FolderKanban' },
+  ],
+  teamHeading: {
+    kicker: 'Nuestro equipo',
+    title: 'Profesionales comprometidos con su éxito',
+  },
+  team: [
+    {
+      name: 'Fernando Cortés',
+      role: 'Socio Fundador / Gerente General',
+      image: '/hero-carousel-1.png',
+      alt: 'Fernando Cortés - Gerente General',
+      bio: 'Especialista en legislación aduanera y comercio exterior con más de 20 años de trayectoria liderando operaciones logísticas.',
+    },
+    {
+      name: 'Diana Rodríguez',
+      role: 'Directora de Operaciones',
+      image: '/hero-carousel-2.png',
+      alt: 'Diana Rodríguez - Directora de Operaciones',
+      bio: 'Experta en gestión documental y coordinación portuaria con enfoque en importación y exportación de vehículos.',
+    },
   ],
   clientsHeading: {
     kicker: 'Nuestra fundación',
@@ -146,7 +166,7 @@ const es = {
 }
 
 const en = {
-  navItems: ['Home', 'Services', 'About', 'Clients', 'Events', 'Resources', 'Contact'],
+  navItems: ['Home', 'Services', 'About Us', 'Clients', 'Events', 'Testimonials', 'Resources', 'Contact'],
   brand: {
     name: 'Cortes Rodriguez\nAsesores S.A.S.',
     subtitle: 'Customs advisors',
@@ -178,6 +198,26 @@ const en = {
     { title: 'Foreign trade advisory', text: 'Specialized strategies to strengthen your international competitiveness.', icon: 'Globe2' },
     { title: 'Tariff classification', text: 'Correct tariff code determination to avoid risks and penalties.', icon: 'FileCheck2' },
     { title: 'Document management', text: 'Administration and review of documents for smooth customs processes.', icon: 'FolderKanban' },
+  ],
+  teamHeading: {
+    kicker: 'Our team',
+    title: 'Professionals committed to your success',
+  },
+  team: [
+    {
+      name: 'Fernando Cortés',
+      role: 'Founding Partner / General Manager',
+      image: '/hero-carousel-1.png',
+      alt: 'Fernando Cortés - General Manager',
+      bio: 'Specialist in customs legislation and foreign trade with over 20 years of experience leading logistical operations.',
+    },
+    {
+      name: 'Diana Rodríguez',
+      role: 'Operations Director',
+      image: '/hero-carousel-2.png',
+      alt: 'Diana Rodríguez - Operations Director',
+      bio: 'Expert in document management and port coordination focusing on vehicle import and export.',
+    },
   ],
   clientsHeading: {
     kicker: 'Our foundation',
@@ -326,12 +366,16 @@ function mergeLocale(defaultLocale, locale) {
   const navItems = normalizeNavItems(defaultLocale.navItems, locale?.navItems)
   const hero = normalizeHero(defaultLocale.hero, locale?.hero)
   const clients = normalizeClients(defaultLocale.clients, locale?.clients)
+  const teamHeading = { ...defaultLocale.teamHeading, ...locale?.teamHeading }
+  const team = normalizeTeam(defaultLocale.team, locale?.team)
 
   return {
     ...defaultLocale,
     ...locale,
     navItems,
     clients,
+    teamHeading,
+    team,
     brand: { ...defaultLocale.brand, ...locale?.brand },
     hero,
     servicesHeading: { ...defaultLocale.servicesHeading, ...locale?.servicesHeading },
@@ -384,15 +428,7 @@ function normalizeHeroImages(defaultImages, hero) {
 }
 
 function normalizeNavItems(defaultItems, navItems) {
-  if (!Array.isArray(navItems) || !navItems.length) return defaultItems
-  if (navItems.length === defaultItems.length) return navItems
-
-  if (navItems.length === defaultItems.length - 1) {
-    const normalized = [...navItems]
-    normalized.splice(4, 0, defaultItems[4])
-    return normalized
-  }
-
+  if (!Array.isArray(navItems) || navItems.length !== defaultItems.length) return defaultItems
   return navItems
 }
 
@@ -415,6 +451,21 @@ function normalizeClients(defaultItems, clients) {
       image: typeof item?.image === 'string' ? item.image.trim() : fallback?.image || '',
       alt: typeof item?.alt === 'string' && item.alt.trim() ? item.alt.trim() : fallback?.alt || fallback?.name || 'Imagen',
       text: typeof item?.text === 'string' ? item.text.trim() : fallback?.text || '',
+    }
+  })
+}
+
+function normalizeTeam(defaultItems, team) {
+  if (!Array.isArray(team) || !team.length) return defaultItems
+
+  return team.map((item, index) => {
+    const fallback = defaultItems[index] || defaultItems[0]
+    return {
+      name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim() : fallback?.name || 'Miembro',
+      role: typeof item?.role === 'string' && item.role.trim() ? item.role.trim() : fallback?.role || '',
+      image: typeof item?.image === 'string' ? item.image.trim() : fallback?.image || '',
+      alt: typeof item?.alt === 'string' && item.alt.trim() ? item.alt.trim() : fallback?.alt || fallback?.name || 'Imagen del miembro',
+      bio: typeof item?.bio === 'string' ? item.bio.trim() : fallback?.bio || '',
     }
   })
 }

@@ -1,0 +1,28 @@
+{
+  "name": "cortes-rodriguez-asesores",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && wrangler dev --no-live-reload",
+    "dev:node": "node server.js",
+    "build": "vite build",
+    "preview": "npm run build && wrangler dev --no-live-reload",
+    "db:migrate": "node scripts/migrate.js",
+    "db:init": "node scripts/init-db.js",
+    "db:seed:bilingual": "node scripts/seed-bilingual-content.js",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.3",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "lucide-vue-next": "^0.556.0",
+    "vite": "^7.2.4",
+    "vue": "^3.5.25"
+  },
+  "devDependencies": {
+    "wrangler": "^4.90.1"
+  }
+}
