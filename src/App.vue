@@ -750,6 +750,10 @@ async function submitPublicTestimonial() {
   try {
     const response = await submitTestimonial({
       ...testimonialForm.value,
+      role: 'No aplica',
+      company: 'No aplica',
+      email: 'noaplica@example.com',
+      phone: 'No aplica',
       locale: activeLocale.value,
     })
     testimonialForm.value = createEmptyTestimonialForm(activeLocale.value)
@@ -2176,14 +2180,13 @@ watch(site, (newSite) => {
           </div>
           <div class="testimonials-content">
             <div class="testimonial-grid">
-              <article v-for="item in visibleTestimonials" :key="`${item.name}-${item.role}`" class="testimonial-card">
+              <article v-for="(item, idx) in visibleTestimonials" :key="`${item.name}-${idx}`" class="testimonial-card">
                 <Quote class="quote-icon" :size="30" />
                 <p>{{ item.text }}</p>
                 <div class="person">
                   <span>{{ item.name.slice(0, 1) }}</span>
                   <div>
                     <strong>{{ item.name }}</strong>
-                    <small>{{ item.role }}</small>
                   </div>
                 </div>
               </article>
@@ -2294,29 +2297,11 @@ watch(site, (newSite) => {
           <form class="lead-form" @submit.prevent="submitPublicTestimonial">
             <label>
               {{ testimonialCopy.fullNameLabel }}
-              <input v-model="testimonialForm.fullName" :placeholder="testimonialCopy.fullNamePlaceholder" />
+              <input v-model="testimonialForm.fullName" :placeholder="testimonialCopy.fullNamePlaceholder" required />
             </label>
-            <label>
-              {{ testimonialCopy.roleLabel }}
-              <input v-model="testimonialForm.role" :placeholder="testimonialCopy.rolePlaceholder" />
-            </label>
-            <label>
-              {{ testimonialCopy.companyLabel }}
-              <input v-model="testimonialForm.company" :placeholder="testimonialCopy.companyPlaceholder" />
-            </label>
-            <div class="testimonial-form-grid">
-              <label>
-                {{ testimonialCopy.emailLabel }}
-                <input v-model="testimonialForm.email" type="email" :placeholder="testimonialCopy.emailPlaceholder" />
-              </label>
-              <label>
-                {{ testimonialCopy.phoneLabel }}
-                <input v-model="testimonialForm.phone" :placeholder="testimonialCopy.phonePlaceholder" />
-              </label>
-            </div>
             <label>
               {{ testimonialCopy.messageLabel }}
-              <textarea v-model="testimonialForm.message" rows="5" :placeholder="testimonialCopy.messagePlaceholder"></textarea>
+              <textarea v-model="testimonialForm.message" rows="5" :placeholder="testimonialCopy.messagePlaceholder" required></textarea>
             </label>
             <button class="admin-save lead-submit-button" type="submit" :disabled="testimonialFormSubmitting">
               {{ testimonialFormSubmitting ? testimonialCopy.submittingLabel : testimonialCopy.submitLabel }}
