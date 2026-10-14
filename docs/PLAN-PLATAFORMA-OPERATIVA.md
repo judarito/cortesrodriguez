@@ -25,6 +25,7 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 ### Incluido
 
 - Formulario público de solicitudes en `/request`.
+- Solicitudes provenientes de múltiples fuentes: landing, panel interno, manual, API y aliados.
 - Clientes y contactos.
 - Solicitudes de importación y exportación.
 - Pagos de asesoría mediante Wompi.
@@ -37,6 +38,7 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - Documentos, tareas y comentarios internos.
 - Auditoría de acciones.
 - Base de datos Neon independiente.
+- Política de pago configurable por fuente, servicio o convenio.
 
 ### No incluido
 
@@ -59,9 +61,14 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - [ ] Proteger las rutas frontend y los endpoints aunque el usuario acceda directamente a una URL.
 - [ ] Crear el formulario `/request` para datos del cliente, operación, mercancía, origen, destino, modalidad, fechas, documentos y observaciones.
 - [ ] Crear entidades de clientes, contactos, solicitudes, documentos, tareas, comentarios, eventos y actividad.
-- [ ] Definir estados: `draft`, `awaiting_payment`, `paid`, `under_review`, `more_information_required`, `in_progress`, `completed` y `cancelled`.
+- [ ] Registrar en cada solicitud `source_type`, `source_reference`, `source_metadata` y `created_by` para identificar su origen.
+- [ ] Definir una política de pago por fuente, tipo de servicio o convenio, incluyendo solicitudes exentas.
+- [ ] Separar `payment_status` de `request_status` para que el pago no controle todo el flujo operativo.
+- [ ] Definir `payment_status`: `not_required`, `pending`, `approved`, `rejected`, `cancelled` y `refunded`.
+- [ ] Definir `request_status`: `draft`, `received`, `awaiting_payment`, `under_review`, `more_information_required`, `in_progress`, `completed` y `cancelled`.
 - [ ] Integrar Wompi con referencias únicas, firma de integridad, sandbox y configuración separada por entorno.
 - [ ] Implementar el webhook de Wompi con validación de firma, idempotencia y registro de eventos.
+- [ ] Después de un pago, limitar la automatización a actualizar el estado correspondiente, registrar el evento y enviar los correos configurados; la asignación y gestión operativa quedan para el equipo desde el panel.
 - [ ] Crear el panel administrativo con listado, filtros, búsqueda, detalle, responsables, historial, pagos y documentos.
 - [ ] Implementar configuración de correos: remitente, destinatarios, plantillas, eventos y activación por entorno.
 - [ ] Enviar notificaciones por solicitud creada, pago aprobado, pago rechazado, información adicional, cambio de estado y cierre.
@@ -91,6 +98,10 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - Los usuarios inactivos no pueden iniciar sesión.
 - Los webhooks deben ser idempotentes.
 - Los estados solo pueden cambiar mediante transiciones permitidas.
+- Una solicitud sin pago requerido puede pasar directamente a `received` y continuar a revisión.
+- Una solicitud con pago requerido debe permanecer en `awaiting_payment` hasta recibir confirmación válida de Wompi.
+- El webhook nunca debe asignar automáticamente un asesor ni avanzar por sí solo todo el proceso operativo.
+- Los cambios de estado y pago deben conservar quién, cuándo, fuente y motivo del cambio.
 
 ## Preguntas abiertas
 
