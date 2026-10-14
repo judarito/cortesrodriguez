@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cortes-rodriguez-asesores-dev",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-05-13",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "r2_buckets": [
+    {
+      "binding": "GALLERY_IMAGES",
+      "bucket_name": "cortes-rodriguez-asesores-images-dev"
+    }
+  ]
+}

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "npm run build && wrangler dev --no-live-reload",
+    "dev:cloudflare": "npm run build && wrangler dev --config wrangler.dev.jsonc --no-live-reload",
     "dev:node": "node server.js",
     "build": "vite build",
     "preview": "npm run build && wrangler dev --no-live-reload",
@@ -12,6 +13,7 @@
     "db:init": "node scripts/init-db.js",
     "db:seed:bilingual": "node scripts/seed-bilingual-content.js",
     "deploy": "npm run build && wrangler deploy"
+    ,"deploy:dev": "npm run build && wrangler deploy --config wrangler.dev.jsonc"
   },
   "dependencies": {
     "@libsql/client": "^0.17.3",
