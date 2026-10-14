@@ -12,11 +12,13 @@
     "db:migrate": "node scripts/migrate.js",
     "db:init": "node scripts/init-db.js",
     "db:seed:bilingual": "node scripts/seed-bilingual-content.js",
-    "deploy": "npm run build && wrangler deploy"
-    ,"deploy:dev": "npm run build && wrangler deploy --config wrangler.dev.jsonc"
+    "db:migrate:operations": "node scripts/migrate-operations.js",
+    "deploy": "npm run build && wrangler deploy",
+    "deploy:dev": "npm run build && wrangler deploy --config wrangler.dev.jsonc"
   },
   "dependencies": {
     "@libsql/client": "^0.17.3",
+    "@neondatabase/serverless": "^1.2.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
