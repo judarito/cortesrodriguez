@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flujo de solicitudes operativas</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="page-header">
+        <p class="eyebrow">Plataforma operativa</p>
+        <h1>Flujo de solicitudes</h1>
+        <p class="intro">Explora cómo cambia el proceso según la fuente y la política de pago.</p>
+      </header>
+
+      <section class="controls" aria-label="Controles del diagrama">
+        <div class="control-group">
+          <label for="sourceSelect">Fuente de la solicitud</label>
+          <select id="sourceSelect">
+            <option value="landing">Landing page</option>
+            <option value="internal">Panel interno</option>
+            <option value="manual">Solicitud manual</option>
+            <option value="api">API / aliado</option>
+          </select>
+        </div>
+
+        <div class="control-group">
+          <span class="control-label">Política de pago</span>
+          <div class="segmented-control" role="group" aria-label="Política de pago">
+            <button class="segment is-active" type="button" data-payment="required">Requiere pago</button>
+            <button class="segment" type="button" data-payment="exempt">Exenta de pago</button>
+          </div>
+        </div>
+
+        <div class="current-policy" aria-live="polite">
+          <span id="policyBadge" class="badge badge-payment">Pago requerido</span>
+          <span id="policyDescription">La solicitud espera confirmación válida de Wompi.</span>
+        </div>
+      </section>
+
+      <section class="diagram" aria-label="Diagrama interactivo del proceso">
+        <div class="source-row">
+          <div class="source-node" data-source="landing">Landing page</div>
+          <div class="source-node" data-source="internal">Panel interno</div>
+          <div class="source-node" data-source="manual">Solicitud manual</div>
+          <div class="source-node" data-source="api">API / aliado</div>
+        </div>
+
+        <div class="connector connector-down"></div>
+        <button class="process-node node-entry" type="button" data-detail="entry">Entrada de solicitud</button>
+        <div class="connector connector-down"></div>
+        <button class="process-node" type="button" data-detail="client">Crear cliente y solicitud</button>
+        <div class="connector connector-down"></div>
+        <div class="decision-node">¿Requiere pago?</div>
+
+        <div class="branch-grid">
+          <section class="branch branch-exempt" data-branch="exempt">
+            <h2>Ruta sin pago</h2>
+            <span class="branch-label">No</span>
+            <button class="process-node node-success" type="button" data-detail="received">Estado: received<br />Asignar asesor</button>
+            <div class="connector connector-down"></div>
+            <button class="process-node" type="button" data-detail="review">under_review<br />Revisión inicial</button>
+          </section>
+
+          <section class="branch branch-payment" data-branch="required">
+            <h2>Ruta con pago</h2>
+            <span class="branch-label">Sí</span>
+            <button class="process-node node-warning" type="button" data-detail="awaiting">Estado: awaiting_payment</button>
+            <div class="connector connector-down"></div>
+            <button class="process-node" type="button" data-detail="wompi">Crear referencia Wompi</button>
+            <div class="connector connector-down"></div>
+            <button class="process-node node-info" type="button" data-detail="checkout">Cliente realiza el pago</button>
+            <div class="connector connector-down"></div>
+            <button class="process-node" type="button" data-detail="webhook">Webhook Wompi</button>
+            <div class="connector connector-down"></div>
+            <div class="decision-node">¿Pago aprobado?</div>
+            <div class="payment-outcomes">
+              <button class="process-node node-error" type="button" data-detail="rejected">Rechazado<br />Notificar y dejar pendiente</button>
+              <button class="process-node node-success" type="button" data-detail="approved">Aprobado<br />Estado: paid</button>
+            </div>
+          </section>
+        </div>
+
+        <div class="merge-line" aria-hidden="true"></div>
+        <button class="process-node node-merge" type="button" data-detail="operations">Seguimiento operativo<br />Asignación y revisión</button>
+        <div class="connector connector-down"></div>
+        <button class="process-node" type="button" data-detail="information">¿Falta información?</button>
+        <div class="follow-up-grid">
+          <button class="process-node node-warning" type="button" data-detail="more-info">Sí: solicitar datos o documentos</button>
+          <button class="process-node node-info" type="button" data-detail="progress">No: in_progress</button>
+        </div>
+        <div class="connector connector-down"></div>
+        <button class="process-node node-success" type="button" data-detail="completed">completed<br />Notificar cierre y auditar</button>
+      </section>
+
+      <aside id="detailPanel" class="detail-panel" aria-live="polite">
+        <div>
+          <p class="eyebrow">Detalle del paso</p>
+          <h2 id="detailTitle">Entrada de solicitud</h2>
+          <p id="detailText">La solicitud conserva su fuente, referencia y metadatos de origen.</p>
+        </div>
+        <div class="detail-meta">
+          <span id="detailStatus" class="badge">source_type: landing</span>
+          <span class="muted">Haz clic en cualquier bloque para explorar.</span>
+        </div>
+      </aside>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
