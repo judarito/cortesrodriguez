@@ -951,6 +951,30 @@ h1 span {
   transform: translateY(-3px);
 }
 
+.request-floating-link {
+  position: fixed;
+  right: 24px;
+  bottom: 150px;
+  z-index: 40;
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  color: var(--white);
+  background: var(--navy);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+  box-shadow: 0 16px 34px rgba(6, 38, 83, 0.22);
+  transition:
+    transform 180ms ease,
+    background 180ms ease;
+}
+
+.request-floating-link:hover {
+  background: var(--red);
+  transform: translateY(-3px);
+}
+
 .login-page {
   display: grid;
   min-height: 100vh;
@@ -1970,6 +1994,13 @@ h1 span {
   .admin-floating-link {
     right: 16px;
     bottom: 76px;
+    width: 44px;
+    height: 44px;
+  }
+
+  .request-floating-link {
+    right: 16px;
+    bottom: 128px;
     width: 44px;
     height: 44px;
   }

@@ -1,5 +1,12 @@
 import { createClient } from '@libsql/client/web'
 import { defaultContent, normalizeContent } from '../src/contentDefaults.js'
+import { handleOperationsAuth } from './routes/operationsAuth.js'
+import { handleOperationsData } from './routes/operationsData.js'
+import { handlePublicRequests } from './routes/publicRequests.js'
+import { handleOperationsSecurity } from './routes/operationsSecurity.js'
+import { handleOperationsNotifications } from './routes/operationsNotifications.js'
+import { handleOperationsEmail } from './routes/operationsEmail.js'
+import { handleResendWebhook } from './routes/resendWebhooks.js'
 
 const jsonHeaders = {
   'content-type': 'application/json; charset=utf-8',
@@ -16,6 +23,27 @@ export default {
     }
 
     try {
+      const resendWebhookResponse = await handleResendWebhook(request, env)
+      if (resendWebhookResponse) return resendWebhookResponse
+
+      const operationsAuthResponse = await handleOperationsAuth(request, env)
+      if (operationsAuthResponse) return operationsAuthResponse
+
+      const operationsDataResponse = await handleOperationsData(request, env)
+      if (operationsDataResponse) return operationsDataResponse
+
+      const operationsSecurityResponse = await handleOperationsSecurity(request, env)
+      if (operationsSecurityResponse) return operationsSecurityResponse
+
+      const operationsNotificationsResponse = await handleOperationsNotifications(request, env)
+      if (operationsNotificationsResponse) return operationsNotificationsResponse
+
+      const operationsEmailResponse = await handleOperationsEmail(request, env)
+      if (operationsEmailResponse) return operationsEmailResponse
+
+      const publicRequestResponse = await handlePublicRequests(request, env)
+      if (publicRequestResponse) return publicRequestResponse
+
       if (url.pathname === '/api/content' && request.method === 'GET') {
         return getCachedLandingContent(request, env)
       }

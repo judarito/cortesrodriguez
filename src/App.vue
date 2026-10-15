@@ -2349,6 +2349,9 @@ watch(site, (newSite) => {
       <a class="admin-floating-link" href="/login" aria-label="Ir al administrador">
         <Settings :size="22" />
       </a>
+      <a class="request-floating-link" href="/solicitud" aria-label="Crear una solicitud de asesoría">
+        <ClipboardCheck :size="22" />
+      </a>
     </template>
   </div>
 </template>

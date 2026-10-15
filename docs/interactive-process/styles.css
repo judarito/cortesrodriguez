@@ -42,6 +42,10 @@ select, .segment { min-height: 44px; border: 1px solid var(--line); border-radiu
 .badge { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px; padding: 6px 10px; background: #edf2f8; color: var(--ink); font-size: 12px; font-weight: 800; }
 .badge-payment { background: var(--warning-bg); color: var(--warning); }
 .diagram { display: grid; justify-items: center; gap: 12px; padding: 30px 24px 36px; border: 1px solid #d8e0eb; border-radius: 24px; background: rgba(255,255,255,.82); box-shadow: 0 18px 44px rgba(29, 55, 88, .08); }
+.diagram.legacy-diagram { display: none; }
+.mermaid-shell { margin-top: 28px; padding: 30px 24px 36px; border: 1px solid #d8e0eb; border-radius: 24px; background: rgba(255,255,255,.88); box-shadow: 0 18px 44px rgba(29, 55, 88, .08); }
+.mermaid-canvas { min-height: 420px; overflow-x: auto; padding: 24px 4px 8px; }
+.mermaid-canvas svg { display: block; width: 100%; min-width: 780px; max-width: 1120px; height: auto; margin: 0 auto; }
 .diagram-heading { display: flex; width: 100%; align-items: end; justify-content: space-between; gap: 20px; padding: 0 4px 12px; border-bottom: 1px solid #e4eaf1; }
 .diagram-heading h2 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
 .diagram-heading .eyebrow { margin-bottom: 6px; }
@@ -90,4 +94,5 @@ select, .segment { min-height: 44px; border: 1px solid var(--line); border-radiu
   .merge-line { width: 50%; }
   .diagram-heading { align-items: start; flex-direction: column; }
   .legend { justify-content: start; }
+  .mermaid-canvas { margin-inline: -12px; }
 }

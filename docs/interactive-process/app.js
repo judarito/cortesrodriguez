@@ -1,3 +1,5 @@
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
 const details = {
   entry: ['Entrada de solicitud', 'Se conserva el origen de la solicitud mediante source_type, source_reference y source_metadata.'],
   client: ['Cliente y solicitud', 'Se crea o identifica el cliente y se registra la solicitud de importación o exportación.'],
@@ -28,10 +30,38 @@ const policyDescription = document.querySelector('#policyDescription');
 
 let paymentPolicy = 'required';
 
+mermaid.initialize({
+  startOnLoad: false,
+  securityLevel: 'loose',
+  theme: 'base',
+  themeVariables: {
+    primaryColor: '#e7f0f7',
+    primaryTextColor: '#16243a',
+    primaryBorderColor: '#7ba7e8',
+    lineColor: '#6b7b91',
+    secondaryColor: '#e0f5ee',
+    tertiaryColor: '#fff1d5',
+    fontFamily: 'Inter, system-ui, sans-serif',
+  },
+});
+
+async function renderMermaid() {
+  const paymentFlow = paymentPolicy === 'required'
+    ? `R --> S[Estado: awaiting_payment]\n    S --> T[Referencia Wompi]\n    T --> U[Cliente paga]\n    U --> V[Webhook Wompi]\n    V --> W{Pago aprobado?}\n    W -->|No| X[Registrar rechazo y notificar]\n    W -->|Sí| Y[Actualizar payment_status]\n    Y --> Z[Enviar correos configurados]\n    Z --> AA[Seguimiento operativo]`
+    : `R --> AA[Estado: received]\n    AA --> AB[Enviar correos configurados]\n    AB --> AC[Seguimiento operativo]`;
+
+  const source = `flowchart TD\n    A[${sourceSelect.options[sourceSelect.selectedIndex].text}] --> B[Entrada de solicitud]\n    B --> C[Crear cliente y solicitud]\n    C --> D{¿Requiere pago?}\n    D -->|Sí| R[Política de pago]\n    D -->|No| N[Solicitud exenta]\n    N --> O[Actualizar request_status]\n    O --> P[Enviar correos configurados]\n    P --> AA[Seguimiento operativo]\n    ${paymentFlow}\n    AA --> AB2{¿Falta información?}\n    AB2 -->|Sí| AC2[Solicitar datos o documentos]\n    AC2 --> AA\n    AB2 -->|No| AD[in_progress]\n    AD --> AE[completed y auditar]\n    classDef source fill:#e4f0ff,stroke:#5793df,color:#16243a,stroke-width:2px\n    classDef action fill:#ffffff,stroke:#afbdd0,color:#16243a,stroke-width:2px\n    classDef decision fill:#fff1d5,stroke:#e0a437,color:#6f4a00,stroke-width:2px\n    classDef success fill:#e0f5ee,stroke:#56b99e,color:#125d4d,stroke-width:2px\n    classDef info fill:#e4f0ff,stroke:#7ba7e8,color:#164f81,stroke-width:2px\n    class A source\n    class B,C,R,O,P,S,T,V,W,AB,AB2,AC2 action\n    class D,W,AB2 decision\n    class N,AA,AD,AE,Y,Z,AC success\n    class U,T info`;
+
+  const target = document.querySelector('#mermaidDiagram');
+  const { svg } = await mermaid.render(`requestFlow${Date.now()}`, source);
+  target.innerHTML = svg;
+}
+
 function updateSource() {
   const source = sourceSelect.value;
   sourceNodes.forEach((node) => node.classList.toggle('is-selected', node.dataset.source === source));
   detailStatus.textContent = `source_type: ${source}`;
+  renderMermaid();
 }
 
 function updatePolicy() {
@@ -43,6 +73,7 @@ function updatePolicy() {
   policyDescription.textContent = required
     ? 'La solicitud espera confirmación válida de Wompi.'
     : 'La solicitud pasa directamente a revisión operativa.';
+  renderMermaid();
 }
 
 function showDetail(key) {

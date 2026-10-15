@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "cortes-rodriguez-asesores-dev",
   "main": "worker/index.js",
+  "workers_dev": true,
   "compatibility_date": "2026-05-13",
   "assets": {
     "directory": "./dist",

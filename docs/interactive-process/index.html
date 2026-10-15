@@ -45,7 +45,7 @@
         </div>
       </section>
 
-      <section class="diagram" aria-label="Diagrama interactivo del proceso">
+      <section class="diagram legacy-diagram" aria-label="Diagrama interactivo del proceso">
         <div class="diagram-heading">
           <div>
             <p class="eyebrow">Vista de proceso</p>
@@ -111,6 +111,17 @@
         <button class="process-node node-success" type="button" data-detail="completed">completed<br />Notificar cierre y auditar</button>
       </section>
 
+      <section class="mermaid-shell" aria-label="Diagrama ejecutivo renderizado">
+        <div class="diagram-heading">
+          <div>
+            <p class="eyebrow">Diagrama ejecutivo</p>
+            <h2>Vista automática del flujo</h2>
+          </div>
+          <span class="badge">Mermaid.js</span>
+        </div>
+        <div id="mermaidDiagram" class="mermaid-canvas" role="img" aria-label="Flujo de solicitudes operativas"></div>
+      </section>
+
       <aside id="detailPanel" class="detail-panel" aria-live="polite">
         <div>
           <p class="eyebrow">Detalle del paso</p>
@@ -123,6 +134,6 @@
         </div>
       </aside>
     </main>
-    <script src="./app.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
