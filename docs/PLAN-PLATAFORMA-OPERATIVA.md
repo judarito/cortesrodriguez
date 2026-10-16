@@ -71,7 +71,9 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 
 - [x] Crear las entidades iniciales `operations.clients` y `operations.requests` en Neon dev.
 - [x] Crear el cliente únicamente con `full_name` y guardar el resto de datos en la solicitud relacionada.
-- [x] Crear el formulario público con nombre completo, constitución legal, medios de contacto, servicio, agente de carga y tipo de producto.
+- [x] Crear el formulario público con nombre completo, constitución legal, medios de contacto, tipo de servicio (`exportacion`, `importacion` o `agente_carga`) y tipo de producto.
+- [x] Modelar “Agente de carga” como un tipo de servicio, retirar el campo separado del formulario y habilitar sus reglas de notificación específicas.
+- [x] Configurar el catálogo de “Asesoría personalizada” con valor y moneda administrables, mostrando el precio vigente y conservando una copia histórica en cada solicitud.
 - [x] Registrar solicitudes de la landing con `source = landingpage` y estado inicial `pending`.
 - [x] Mostrar confirmación al usuario con referencia de solicitud, sin iniciar todavía pago ni notificaciones.
 - [x] Mostrar clientes y solicitudes reales en el panel `/app`, protegidos por sesión y permisos.

@@ -60,7 +60,7 @@ export async function handleOperationsData(request, env) {
     `,
     sql`
       SELECT r.id, r.reference, r.source, r.legal_entity_type, r.email, r.phone, r.whatsapp,
-        r.service_type, r.freight_agent, r.product_type, r.status, r.created_at, r.updated_at,
+        r.service_name, r.service_amount_cents, r.service_currency, r.service_type, r.freight_agent, r.product_type, r.status, r.created_at, r.updated_at,
         r.notification_status, r.notification_last_event_at, r.notification_last_opened_at,
         c.id AS client_id, c.full_name AS client_name
       FROM operations.requests r
@@ -108,6 +108,9 @@ async function getDashboard(sql) {
     reference: String(row.reference),
     clientName: String(row.client_name),
     status: String(row.status),
+    serviceName: String(row.service_name || 'Asesoría personalizada'),
+    serviceAmountCents: Number(row.service_amount_cents || 0),
+    serviceCurrency: String(row.service_currency || 'COP'),
     serviceType: String(row.service_type),
     productType: String(row.product_type),
     source: String(row.source),
@@ -158,7 +161,7 @@ function serializeRequest(row) {
     phone: row.phone ? String(row.phone) : '',
     whatsapp: row.whatsapp ? String(row.whatsapp) : '',
     serviceType: String(row.service_type),
-    freightAgent: String(row.freight_agent),
+    freightAgent: row.freight_agent ? String(row.freight_agent) : '',
     productType: String(row.product_type),
     status: String(row.status),
     notificationStatus: String(row.notification_status || 'not_sent'),

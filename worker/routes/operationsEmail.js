@@ -26,7 +26,7 @@ export async function handleOperationsEmail(request, env) {
 
 export async function sendRequestNotification(sql, env, requestId, eventCode, actorId = null) {
   const requests = await sql`
-    SELECT r.id, r.reference, r.email, r.service_type, r.product_type, r.status, c.full_name AS client_name
+    SELECT r.id, r.reference, r.email, r.service_name, r.service_type, r.product_type, r.status, c.full_name AS client_name
     FROM operations.requests r
     JOIN operations.clients c ON c.id = r.client_id
     WHERE r.id = ${requestId}
@@ -63,11 +63,12 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const text = [
     `${eventLabel}: ${request.reference}`,
     `Cliente: ${request.client_name}`,
-    `Servicio: ${request.service_type}`,
+    `Servicio: ${request.service_name || 'asesoria_personalizada'}`,
+    `Tipo de servicio: ${request.service_type}`,
     `Producto: ${request.product_type}`,
     `Estado: ${request.status}`,
   ].join('\n')
-  const html = `<h2>${escapeHtml(eventLabel)}</h2><p><strong>Solicitud:</strong> ${escapeHtml(request.reference)}</p><p><strong>Cliente:</strong> ${escapeHtml(request.client_name)}</p><p><strong>Servicio:</strong> ${escapeHtml(request.service_type)}</p><p><strong>Producto:</strong> ${escapeHtml(request.product_type)}</p><p><strong>Estado:</strong> ${escapeHtml(request.status)}</p>`
+  const html = `<h2>${escapeHtml(eventLabel)}</h2><p><strong>Solicitud:</strong> ${escapeHtml(request.reference)}</p><p><strong>Cliente:</strong> ${escapeHtml(request.client_name)}</p><p><strong>Servicio:</strong> Asesoría personalizada</p><p><strong>Tipo de servicio:</strong> ${escapeHtml(request.service_type)}</p><p><strong>Producto:</strong> ${escapeHtml(request.product_type)}</p><p><strong>Estado:</strong> ${escapeHtml(request.status)}</p>`
   const resendResponse = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },

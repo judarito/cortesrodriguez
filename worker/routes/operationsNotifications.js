@@ -3,9 +3,10 @@ import { requireOperationsAuth } from './operationsAuth.js'
 export async function handleOperationsNotifications(request, env) {
   const url = new URL(request.url)
   const isConfig = url.pathname === '/api/app/settings/notifications' && request.method === 'GET'
+  const isServiceConfig = url.pathname === '/api/app/settings/service' && request.method === 'PUT'
   const createRecipient = url.pathname === '/api/app/settings/notification-recipients' && request.method === 'POST'
   const createRule = url.pathname === '/api/app/settings/notification-rules' && request.method === 'POST'
-  if (!isConfig && !createRecipient && !createRule) return null
+  if (!isConfig && !isServiceConfig && !createRecipient && !createRule) return null
 
   const claims = await requireOperationsAuth(request, env)
   if (!claims) return response({ error: 'Sesión requerida.' }, 401)
@@ -16,7 +17,7 @@ export async function handleOperationsNotifications(request, env) {
   const sql = neon(env.NEON_DATABASE_URL)
 
   if (isConfig) {
-    const [recipients, rules] = await Promise.all([
+    const [recipients, rules, services] = await Promise.all([
       sql`SELECT id, name, email, recipient_type, active, created_at FROM operations.notification_recipients ORDER BY name`,
       sql`
         SELECT r.id, r.name, r.event_code, r.service_type, r.active, r.created_at,
@@ -27,17 +28,32 @@ export async function handleOperationsNotifications(request, env) {
         GROUP BY r.id
         ORDER BY r.event_code, r.service_type
       `,
+      sql`SELECT code, name, amount_cents, currency, active FROM operations.service_catalog WHERE code = 'asesoria_personalizada' LIMIT 1`,
     ])
     return response({
       recipients: recipients.map((row) => ({ id: String(row.id), name: String(row.name), email: String(row.email), recipientType: String(row.recipient_type), active: Boolean(row.active), createdAt: String(row.created_at) })),
       rules: rules.map((row) => ({ id: String(row.id), name: String(row.name), eventCode: String(row.event_code), serviceType: String(row.service_type), active: Boolean(row.active), recipients: row.recipients ? String(row.recipients).split(', ') : [] })),
+      service: services[0] ? { code: String(services[0].code), name: String(services[0].name), amountCents: Number(services[0].amount_cents), currency: String(services[0].currency), active: Boolean(services[0].active) } : null,
     })
   }
+
+  if (isServiceConfig) return updateServiceConfig(sql, await request.json().catch(() => ({})), claims.sub)
 
   const claimsUser = claims.sub
   const body = await request.json().catch(() => ({}))
   if (createRecipient) return createRecipientRecord(sql, body, claimsUser)
   return createRuleRecord(sql, body, claimsUser)
+}
+
+async function updateServiceConfig(sql, body, actorId) {
+  const amount = Number(body.amountCents)
+  const currency = text(body.currency) || 'COP'
+  if (!Number.isInteger(amount) || amount < 0) return response({ error: 'Ingresa un valor entero mayor o igual a cero.' }, 400)
+  if (!['COP', 'USD'].includes(currency)) return response({ error: 'Moneda inválida.' }, 400)
+  const rows = await sql`UPDATE operations.service_catalog SET amount_cents = ${amount}, currency = ${currency}, updated_at = NOW() WHERE code = 'asesoria_personalizada' RETURNING code, name, amount_cents, currency, active`
+  if (!rows[0]) return response({ error: 'El servicio no está configurado.' }, 404)
+  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'update', 'service_catalog', NULL, ${JSON.stringify({ code: 'asesoria_personalizada', amountCents: amount, currency })}::jsonb)`
+  return response({ ok: true, service: { code: String(rows[0].code), name: String(rows[0].name), amountCents: Number(rows[0].amount_cents), currency: String(rows[0].currency), active: Boolean(rows[0].active) } })
 }
 
 async function createRecipientRecord(sql, body, actorId) {
@@ -64,7 +80,7 @@ async function createRuleRecord(sql, body, actorId) {
   const recipientIds = Array.isArray(body.recipientIds) ? body.recipientIds.filter((value) => typeof value === 'string') : []
   if (!name || !eventCode || !serviceType || !recipientIds.length) return response({ error: 'Nombre, evento, servicio y al menos un destinatario son obligatorios.' }, 400)
   if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
-  if (!['all', 'importacion', 'exportacion'].includes(serviceType)) return response({ error: 'Tipo de servicio inválido.' }, 400)
+  if (!['all', 'importacion', 'exportacion', 'agente_carga'].includes(serviceType)) return response({ error: 'Tipo de servicio inválido.' }, 400)
   try {
     const rows = await sql`INSERT INTO operations.notification_rules (name, event_code, service_type) VALUES (${name}, ${eventCode}, ${serviceType}) RETURNING id, name, event_code, service_type, active`
     const recipients = await sql`SELECT id FROM operations.notification_recipients WHERE id = ANY(${recipientIds}) AND active = TRUE`
