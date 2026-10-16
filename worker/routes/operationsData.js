@@ -1,4 +1,5 @@
 import { requireOperationsAuth } from './operationsAuth.js'
+import { sendRequestNotification } from './operationsEmail.js'
 
 export async function handleOperationsData(request, env) {
   const url = new URL(request.url)
@@ -21,7 +22,7 @@ export async function handleOperationsData(request, env) {
   const sql = neon(env.NEON_DATABASE_URL)
   if (isDashboard) return getDashboard(sql, claims)
   if (isRequestDetail) return getRequestDetail(sql, requestDetailMatch[1], claims)
-  if (createRequest) return createAgentRequest(sql, request, claims)
+  if (createRequest) return createAgentRequest(sql, request, claims, env)
 
   const page = Math.max(Number(url.searchParams.get('page')) || 1, 1)
   const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize')) || 10, 1), 50)
@@ -90,7 +91,7 @@ export async function handleOperationsData(request, env) {
   return response({ items: requests.map(serializeRequest), pagination: pagination(page, pageSize, countRows[0]?.total) })
 }
 
-async function createAgentRequest(sql, request, claims) {
+async function createAgentRequest(sql, request, claims, env) {
   if (!claims.roles?.includes('agent') && !claims.roles?.includes('admin')) {
     return response({ error: 'Solo los agentes y administradores pueden crear solicitudes desde la app.' }, 403)
   }
@@ -127,6 +128,13 @@ async function createAgentRequest(sql, request, claims) {
       ${freightAgent || null}, ${productType}, 'pending', ${claims.sub}, FALSE
     )
   `
+  if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
+    try {
+      await sendRequestNotification(sql, env, requestId, 'request_created', claims.sub)
+    } catch (error) {
+      console.error('No se pudo enviar la notificación de solicitud del agente:', error.message)
+    }
+  }
   return response({ ok: true, reference, status: 'pending', paymentRequired: false }, 201)
 }
 
