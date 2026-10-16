@@ -27,6 +27,12 @@ export async function handleOperationsData(request, env) {
   const page = Math.max(Number(url.searchParams.get('page')) || 1, 1)
   const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize')) || 10, 1), 50)
   const search = String(url.searchParams.get('search') || '').trim()
+  const requestStatus = String(url.searchParams.get('status') || '').trim()
+  const requestServiceType = String(url.searchParams.get('serviceType') || '').trim()
+  const requestSource = String(url.searchParams.get('source') || '').trim()
+  const requestAgentId = String(url.searchParams.get('agentId') || '').trim()
+  const requestDateFrom = String(url.searchParams.get('dateFrom') || '').trim()
+  const requestDateTo = String(url.searchParams.get('dateTo') || '').trim()
   const searchPattern = `%${search}%`
   const offset = (page - 1) * pageSize
   const isAdmin = claims.roles?.includes('admin')
@@ -47,7 +53,8 @@ export async function handleOperationsData(request, env) {
     return response({ items: clients.map(serializeClient), pagination: pagination(page, pageSize, countRows[0]?.total) })
   }
 
-  const [countRows, requests] = await Promise.all([
+  const requestAccess = isAdmin ? sql`TRUE` : sql`r.created_by = ${claims.sub}`
+  const [countRows, requests, agents] = await Promise.all([
     sql`
       SELECT COUNT(*)::int AS total
       FROM operations.requests r
@@ -63,7 +70,14 @@ export async function handleOperationsData(request, env) {
         OR COALESCE(r.phone, '') ILIKE ${searchPattern}
         OR COALESCE(r.whatsapp, '') ILIKE ${searchPattern}
         OR r.notification_status ILIKE ${searchPattern}
-        OR r.source ILIKE ${searchPattern}) AND ${isAdmin ? sql`TRUE` : sql`r.created_by = ${claims.sub}`}
+        OR r.source ILIKE ${searchPattern})
+        AND ${requestAccess}
+        AND (${requestStatus ? sql`r.status = ${requestStatus}` : sql`TRUE`})
+        AND (${requestServiceType ? sql`r.service_type = ${requestServiceType}` : sql`TRUE`})
+        AND (${requestSource ? sql`r.source = ${requestSource}` : sql`TRUE`})
+        AND (${requestAgentId && isAdmin ? sql`r.created_by = ${requestAgentId}` : sql`TRUE`})
+        AND (${requestDateFrom ? sql`r.created_at >= ${requestDateFrom}::date` : sql`TRUE`})
+        AND (${requestDateTo ? sql`r.created_at < (${requestDateTo}::date + INTERVAL '1 day')` : sql`TRUE`})
     `,
     sql`
       SELECT r.id, r.reference, r.source, r.legal_entity_type, r.email, r.phone, r.whatsapp, r.payment_required,
@@ -84,12 +98,27 @@ export async function handleOperationsData(request, env) {
         OR COALESCE(r.phone, '') ILIKE ${searchPattern}
         OR COALESCE(r.whatsapp, '') ILIKE ${searchPattern}
         OR r.notification_status ILIKE ${searchPattern}
-        OR r.source ILIKE ${searchPattern}) AND ${isAdmin ? sql`TRUE` : sql`r.created_by = ${claims.sub}`}
+        OR r.source ILIKE ${searchPattern})
+        AND ${requestAccess}
+        AND (${requestStatus ? sql`r.status = ${requestStatus}` : sql`TRUE`})
+        AND (${requestServiceType ? sql`r.service_type = ${requestServiceType}` : sql`TRUE`})
+        AND (${requestSource ? sql`r.source = ${requestSource}` : sql`TRUE`})
+        AND (${requestAgentId && isAdmin ? sql`r.created_by = ${requestAgentId}` : sql`TRUE`})
+        AND (${requestDateFrom ? sql`r.created_at >= ${requestDateFrom}::date` : sql`TRUE`})
+        AND (${requestDateTo ? sql`r.created_at < (${requestDateTo}::date + INTERVAL '1 day')` : sql`TRUE`})
       ORDER BY r.created_at DESC
       LIMIT ${pageSize} OFFSET ${offset}
     `,
+    sql`
+      SELECT DISTINCT u.id, u.full_name, u.email
+      FROM operations.users u
+      JOIN operations.user_roles ur ON ur.user_id = u.id
+      JOIN operations.roles r ON r.id = ur.role_id
+      WHERE r.name = 'agent' AND u.active = TRUE
+      ORDER BY u.full_name
+    `,
   ])
-  return response({ items: requests.map(serializeRequest), pagination: pagination(page, pageSize, countRows[0]?.total) })
+  return response({ items: requests.map(serializeRequest), pagination: pagination(page, pageSize, countRows[0]?.total), filters: { agents: agents.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email) })) } })
 }
 
 async function createAgentRequest(sql, request, claims, env) {
