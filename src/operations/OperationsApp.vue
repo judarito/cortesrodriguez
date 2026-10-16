@@ -1,10 +1,11 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 const token = ref(localStorage.getItem('operationsToken') || '')
 const user = ref(JSON.parse(localStorage.getItem('operationsUser') || 'null'))
 const form = ref({ email: '', password: '' })
 const loading = ref(false)
+const sessionChecking = ref(Boolean(token.value))
 const error = ref('')
 const activeMenu = ref('Inicio')
 const moduleLoading = ref(false)
@@ -293,6 +294,10 @@ async function loadDashboard() {
   try {
     const response = await appFetch('/api/app/dashboard', { headers: { Authorization: `Bearer ${token.value}` } })
     const data = await response.json().catch(() => ({}))
+    if (response.status === 403 && data.error === 'No tienes permisos para consultar este módulo.' && user.value?.permissions?.includes('dashboard.read')) {
+      redirectToLogin()
+      return
+    }
     if (!response.ok) throw new Error(data.error || 'No se pudo cargar el dashboard.')
     const totals = data.metrics || {}
     requestCount.value = Number(totals.total || 0)
@@ -350,11 +355,35 @@ async function logout() {
   window.location.assign('/app/login')
 }
 
-if (isAuthenticated.value) loadDashboard()
+async function restoreSession() {
+  if (!token.value) {
+    sessionChecking.value = false
+    return
+  }
+
+  try {
+    const response = await fetch('/api/app/session', { headers: { Authorization: `Bearer ${token.value}` } })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      redirectToLogin()
+      return
+    }
+    user.value = data.user
+    localStorage.setItem('operationsUser', JSON.stringify(data.user))
+    await loadDashboard()
+  } catch {
+    redirectToLogin()
+  } finally {
+    sessionChecking.value = false
+  }
+}
+
+onMounted(restoreSession)
 </script>
 
 <template>
-  <main v-if="!isAuthenticated" class="operations-login">
+  <main v-if="sessionChecking" class="operations-loading" aria-live="polite">Verificando sesión…</main>
+  <main v-else-if="!isAuthenticated" class="operations-login">
     <section class="login-showcase"><div class="showcase-top"><span class="brand-mark brand-mark-light">CRA</span><span>Plataforma operativa</span></div><div class="showcase-copy"><p class="eyebrow eyebrow-light">Centro de operaciones</p><h1>Todo el control de tus operaciones, en un solo lugar.</h1><p>Gestiona clientes, solicitudes y documentos con la claridad que tu equipo necesita para avanzar.</p></div><div class="showcase-footer"><span class="status-dot"></span> Sistema operativo · Entorno dev</div></section>
     <section class="operations-login-panel"><div class="login-form-wrap"><span class="brand-mark brand-mark-dark">CRA</span><p class="eyebrow">Acceso seguro</p><h2>Bienvenido de nuevo</h2><p class="login-description">Ingresa con tus credenciales para acceder al espacio de trabajo.</p><form @submit.prevent="login"><label>Correo electrónico<input v-model="form.email" type="email" autocomplete="username" placeholder="nombre@empresa.com" required /></label><label>Contraseña<input v-model="form.password" type="password" autocomplete="current-password" placeholder="••••••••" required /></label><p v-if="error" class="operations-error" role="alert">{{ error }}</p><button class="primary-button" type="submit" :disabled="loading">{{ loading ? 'Ingresando…' : 'Ingresar al panel' }} <span>→</span></button></form><p class="login-help">Si tienes problemas para ingresar, contacta al administrador del sistema.</p></div></section>
   </main>
@@ -394,6 +423,7 @@ if (isAuthenticated.value) loadDashboard()
 </template>
 
 <style scoped>
+.operations-loading{display:grid;place-items:center;min-height:100vh;color:#31516c;background:#f7f9fc;font-size:14px;font-weight:700}
 :global(*){box-sizing:border-box}:global(body){margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f8fb;color:#1d2939}:global(button),:global(input){font:inherit}
 .operations-login{min-height:100vh;display:grid;grid-template-columns:minmax(320px,44%) 1fr;background:#f7f9fc}.login-showcase{position:relative;display:flex;flex-direction:column;justify-content:space-between;min-height:100vh;padding:46px clamp(32px,7vw,100px);overflow:hidden;color:#e8f2f9;background:radial-gradient(circle at 18% 25%,rgba(51,150,194,.32),transparent 30%),linear-gradient(145deg,#092b46,#0c4365 56%,#0f6d7d)}.login-showcase:after{content:'';position:absolute;right:-120px;bottom:-180px;width:470px;height:470px;border:1px solid rgba(255,255,255,.14);border-radius:50%;box-shadow:0 0 0 58px rgba(255,255,255,.025),0 0 0 116px rgba(255,255,255,.025)}.showcase-top,.sidebar-brand{position:relative;z-index:1;display:flex;align-items:center;gap:12px;font-size:14px;font-weight:700}.showcase-copy{position:relative;z-index:1;max-width:530px;margin:auto 0}.showcase-copy h1{max-width:530px;margin:16px 0 22px;font-size:clamp(36px,4.4vw,62px);line-height:1.02;letter-spacing:-.055em;color:#fff}.showcase-copy>p:not(.eyebrow){max-width:430px;margin:0;color:#bed4e1;font-size:17px;line-height:1.7}.showcase-footer{position:relative;z-index:1;display:flex;align-items:center;gap:9px;color:#a8c8d8;font-size:12px}.status-dot{width:8px;height:8px;border-radius:50%;background:#68d391;box-shadow:0 0 0 5px rgba(104,211,145,.13)}.operations-login-panel{display:grid;place-items:center;padding:40px;background:#fff}.login-form-wrap{width:min(430px,100%)}.brand-mark{display:inline-grid;place-items:center;width:44px;height:44px;border-radius:13px;font-size:12px;font-weight:900;letter-spacing:-.04em}.brand-mark-light{color:#0b3a58;background:#f2fbff}.brand-mark-dark{color:#fff;background:#0d4263;box-shadow:0 8px 18px rgba(13,66,99,.2)}.eyebrow{margin:0 0 9px;color:#397aa2;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase}.eyebrow-light{color:#8dd7e2}.login-form-wrap .eyebrow{margin-top:34px}.login-form-wrap h2{margin:0 0 12px;color:#15283c;font-size:32px;letter-spacing:-.04em}.login-description{margin:0;color:#718096;line-height:1.6}form{display:grid;gap:18px;margin-top:32px}label{display:grid;gap:8px;color:#344054;font-size:13px;font-weight:700}input{width:100%;min-height:49px;padding:0 14px;border:1px solid #d8e0ea;border-radius:9px;outline:0;color:#1d2939;background:#fff;transition:border .2s,box-shadow .2s}input:focus{border-color:#3c8eae;box-shadow:0 0 0 4px rgba(60,142,174,.1)}.primary-button,.secondary-button{min-height:45px;display:inline-flex;align-items:center;justify-content:center;gap:14px;border:0;border-radius:8px;padding:0 18px;color:#fff;background:#0e4567;font-weight:800;cursor:pointer;box-shadow:0 8px 16px rgba(14,69,103,.14)}.primary-button:hover{background:#0a3855}.primary-button:disabled{opacity:.6;cursor:wait}.primary-button span{font-size:19px;font-weight:400}.login-help{margin:28px 0 0;color:#98a2b3;font-size:12px;line-height:1.6}.operations-error{margin:-2px 0 0;color:#b54747;font-size:13px}
 .operations-shell{min-height:100vh;display:flex;color:#1d2939;background:#f6f8fb}.operations-sidebar{width:252px;display:flex;flex-direction:column;flex-shrink:0;padding:27px 15px 18px;color:#c8d8e4;background:#092d48}.sidebar-brand{margin:0 11px 57px;color:#fff}.sidebar-brand>span:last-child{display:grid;gap:2px;font-size:14px}.sidebar-brand small{color:#88a7ba;font-size:10px;font-weight:500}.sidebar-label{margin:0 12px 10px;color:#7597ad;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}nav,.sidebar-bottom-menu{display:grid;gap:4px}.sidebar-bottom-menu{margin-top:31px}.operations-menu-item{position:relative;display:flex;align-items:center;gap:13px;min-height:43px;padding:0 12px;border:0;border-radius:8px;color:#b8cedb;background:transparent;text-align:left;font-size:13px;cursor:pointer;transition:background .2s,color .2s}.operations-menu-item:hover,.operations-menu-item.active{color:#fff;background:rgba(103,184,203,.16)}.operations-menu-item.active:before{content:'';position:absolute;left:-15px;width:3px;height:23px;border-radius:0 3px 3px 0;background:#69c6cb}.menu-icon{display:grid;place-items:center;width:25px;height:25px;border-radius:7px;color:#8cb4c8;font-size:11px;font-weight:800}.active .menu-icon{color:#82d2d1;background:rgba(115,210,210,.14)}.menu-count{margin-left:auto;padding:3px 7px;border-radius:9px;color:#a9e2e0;background:rgba(109,203,202,.16);font-size:10px}.sidebar-profile{display:flex;align-items:center;gap:10px;margin-top:auto;padding:15px 8px 2px;border-top:1px solid rgba(255,255,255,.1)}.sidebar-profile>div:nth-child(2){display:grid;gap:3px;min-width:0;flex:1}.sidebar-profile strong{overflow:hidden;color:#fff;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.sidebar-profile span{color:#82a3b6;font-size:10px}.sidebar-profile button{border:0;color:#91afbe;background:transparent;cursor:pointer;font-size:18px}.operations-content{flex:1;min-width:0;padding:0 clamp(24px,4vw,58px) 48px}.operations-topbar{display:flex;align-items:center;justify-content:space-between;height:82px;border-bottom:1px solid #e5eaf0}.breadcrumb{display:flex;align-items:center;gap:10px;color:#98a2b3;font-size:12px}.breadcrumb b{color:#c5ccd5;font-weight:400}.breadcrumb strong{color:#344054}.topbar-actions{display:flex;align-items:center;gap:18px}.search-box{display:flex;align-items:center;gap:7px;width:205px;min-height:35px;padding:0 10px;border:1px solid #e2e8f0;border-radius:7px;background:#fff}.search-box span{color:#98a2b3;font-size:20px;transform:rotate(-20deg)}.search-box input{min-height:31px;padding:0;border:0;font-size:11px;box-shadow:none}.icon-button{position:relative;width:32px;height:32px;border:0;color:#667085;background:transparent;font-size:19px;cursor:pointer}.icon-button i{position:absolute;top:5px;right:4px;width:5px;height:5px;border-radius:50%;background:#e26868}.avatar{display:grid;place-items:center;width:36px;height:36px;border-radius:50%;color:#fff;background:linear-gradient(145deg,#347b99,#153e60);font-size:11px;font-weight:800}.avatar-small{width:30px;height:30px;flex-shrink:0;font-size:9px}.dashboard-view{padding-top:39px}.dashboard-heading{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:29px}.dashboard-heading h1{margin:0 0 9px;color:#142c43;font-size:28px;letter-spacing:-.045em}.dashboard-heading h1 span{color:#e8ae58;font-size:17px;vertical-align:4px}.dashboard-heading>div>p:last-child{margin:0;color:#7d8999;font-size:13px}.secondary-button{color:#31516c;background:#fff;border:1px solid #dce5ed;box-shadow:0 3px 8px rgba(28,53,77,.04);font-size:12px}.secondary-button:hover{background:#f7fafc}.secondary-button.compact{min-height:36px;padding:0 13px;font-size:11px}.metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px}.metric-card{padding:18px 19px 17px;border:1px solid #e5eaf0;border-radius:10px;background:#fff;box-shadow:0 4px 12px rgba(25,47,70,.025)}.metric-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.metric-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;font-size:11px;font-weight:900}.tone-blue{color:#3983b2;background:#e7f3fa}.tone-amber{color:#bd8235;background:#fff4df}.tone-violet{color:#7769bb;background:#efedff}.tone-green{color:#398d73;background:#e5f6ef}.metric-trend{padding:4px 6px;border-radius:5px;font-size:9px;font-weight:800}.trend-blue{color:#4182a6;background:#edf7fb}.trend-amber{color:#b27a30;background:#fff8ea}.trend-violet{color:#7368af;background:#f4f2ff}.trend-green{color:#348267;background:#edf9f4}.metric-card>strong{display:block;margin-bottom:5px;color:#172f47;font-size:27px;letter-spacing:-.05em}.metric-card h3{margin:0 0 5px;color:#526174;font-size:12px;font-weight:700}.metric-card p{margin:0;color:#9aa5b3;font-size:10px}
