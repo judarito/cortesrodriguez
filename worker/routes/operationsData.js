@@ -4,11 +4,13 @@ export async function handleOperationsData(request, env) {
   const url = new URL(request.url)
   const isClients = url.pathname === '/api/app/clients' && request.method === 'GET'
   const isRequests = url.pathname === '/api/app/requests' && request.method === 'GET'
+  const requestDetailMatch = url.pathname.match(/^\/api\/app\/requests\/([^/]+)$/)
+  const isRequestDetail = Boolean(requestDetailMatch) && request.method === 'GET'
   const isDashboard = url.pathname === '/api/app/dashboard' && request.method === 'GET'
-  if (!isClients && !isRequests && !isDashboard) return null
+  if (!isClients && !isRequests && !isRequestDetail && !isDashboard) return null
 
   const claims = await requireOperationsAuth(request, env)
-  const permission = isClients ? 'clients.read' : isRequests ? 'requests.read' : 'dashboard.read'
+  const permission = isClients ? 'clients.read' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
   if (!claims?.permissions?.includes(permission)) {
     return response({ error: 'No tienes permisos para consultar este módulo.' }, 403)
   }
@@ -17,6 +19,7 @@ export async function handleOperationsData(request, env) {
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   if (isDashboard) return getDashboard(sql)
+  if (isRequestDetail) return getRequestDetail(sql, requestDetailMatch[1])
 
   const page = Math.max(Number(url.searchParams.get('page')) || 1, 1)
   const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize')) || 10, 1), 50)
@@ -82,6 +85,30 @@ export async function handleOperationsData(request, env) {
     `,
   ])
   return response({ items: requests.map(serializeRequest), pagination: pagination(page, pageSize, countRows[0]?.total) })
+}
+
+async function getRequestDetail(sql, requestId) {
+  const [requestRows, historyRows] = await Promise.all([
+    sql`
+      SELECT r.id, r.reference, r.source, r.legal_entity_type, r.email, r.phone, r.whatsapp,
+        r.service_name, r.service_amount_cents, r.service_currency, r.service_type, r.freight_agent,
+        r.product_type, r.status, r.created_at, r.updated_at, r.notification_status,
+        r.notification_last_event_at, r.notification_last_opened_at,
+        c.id AS client_id, c.full_name AS client_name, c.created_at AS client_created_at
+      FROM operations.requests r
+      JOIN operations.clients c ON c.id = r.client_id
+      WHERE r.id = ${requestId}
+      LIMIT 1
+    `,
+    sql`
+      SELECT r.id, r.reference, r.service_type, r.product_type, r.status, r.created_at
+      FROM operations.requests r
+      WHERE r.client_id = (SELECT client_id FROM operations.requests WHERE id = ${requestId})
+      ORDER BY r.created_at DESC
+    `,
+  ])
+  if (!requestRows[0]) return response({ error: 'Solicitud no encontrada.' }, 404)
+  return response({ request: serializeRequestDetail(requestRows[0]), history: historyRows.map(serializeRequestHistory) })
 }
 
 async function getDashboard(sql) {
@@ -169,6 +196,27 @@ function serializeRequest(row) {
     updatedAt: String(row.updated_at),
     clientId: String(row.client_id),
     clientName: String(row.client_name),
+  }
+}
+
+function serializeRequestDetail(row) {
+  return {
+    ...serializeRequest(row),
+    serviceName: row.service_name ? String(row.service_name) : 'Asesoría personalizada',
+    serviceAmountCents: Number(row.service_amount_cents || 0),
+    serviceCurrency: String(row.service_currency || 'COP'),
+    clientCreatedAt: String(row.client_created_at),
+  }
+}
+
+function serializeRequestHistory(row) {
+  return {
+    id: String(row.id),
+    reference: String(row.reference),
+    serviceType: String(row.service_type),
+    productType: String(row.product_type),
+    status: String(row.status),
+    createdAt: String(row.created_at),
   }
 }
 
