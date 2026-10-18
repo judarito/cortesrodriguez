@@ -53,7 +53,7 @@ export async function handleOperationsData(request, env) {
     return response({ items: clients.map(serializeClient), pagination: pagination(page, pageSize, countRows[0]?.total) })
   }
 
-  const requestAccess = isAdmin ? sql`TRUE` : sql`r.created_by = ${claims.sub}`
+  const requestAccess = isAdmin ? sql`TRUE` : sql`(r.agent_id = ${claims.sub} OR (r.agent_id IS NULL AND r.created_by = ${claims.sub}))`
   const [countRows, requests, agents] = await Promise.all([
     sql`
       SELECT COUNT(*)::int AS total
@@ -74,8 +74,8 @@ export async function handleOperationsData(request, env) {
         AND ${requestAccess}
         AND (${requestStatus ? sql`r.status = ${requestStatus}` : sql`TRUE`})
         AND (${requestServiceType ? sql`r.service_type = ${requestServiceType}` : sql`TRUE`})
-        AND (${requestSource ? sql`r.source = ${requestSource}` : sql`TRUE`})
-        AND (${requestAgentId && isAdmin ? sql`r.created_by = ${requestAgentId}` : sql`TRUE`})
+        AND (${requestSource ? sql`COALESCE(r.source_channel, CASE WHEN r.source = 'agent' THEN 'agent_link' ELSE 'direct_web' END) = ${requestSource}` : sql`TRUE`})
+        AND (${requestAgentId && isAdmin ? sql`r.agent_id = ${requestAgentId}` : sql`TRUE`})
         AND (${requestDateFrom ? sql`r.created_at >= ${requestDateFrom}::date` : sql`TRUE`})
         AND (${requestDateTo ? sql`r.created_at < (${requestDateTo}::date + INTERVAL '1 day')` : sql`TRUE`})
     `,
@@ -86,7 +86,7 @@ export async function handleOperationsData(request, env) {
         c.id AS client_id, c.full_name AS client_name, u.full_name AS agent_name, u.email AS agent_email
       FROM operations.requests r
       JOIN operations.clients c ON c.id = r.client_id
-      LEFT JOIN operations.users u ON u.id = r.created_by
+      LEFT JOIN operations.users u ON u.id = COALESCE(r.agent_id, r.created_by)
       WHERE (c.full_name ILIKE ${searchPattern}
         OR r.reference ILIKE ${searchPattern}
         OR r.service_type ILIKE ${searchPattern}
@@ -102,8 +102,8 @@ export async function handleOperationsData(request, env) {
         AND ${requestAccess}
         AND (${requestStatus ? sql`r.status = ${requestStatus}` : sql`TRUE`})
         AND (${requestServiceType ? sql`r.service_type = ${requestServiceType}` : sql`TRUE`})
-        AND (${requestSource ? sql`r.source = ${requestSource}` : sql`TRUE`})
-        AND (${requestAgentId && isAdmin ? sql`r.created_by = ${requestAgentId}` : sql`TRUE`})
+        AND (${requestSource ? sql`COALESCE(r.source_channel, CASE WHEN r.source = 'agent' THEN 'agent_link' ELSE 'direct_web' END) = ${requestSource}` : sql`TRUE`})
+        AND (${requestAgentId && isAdmin ? sql`r.agent_id = ${requestAgentId}` : sql`TRUE`})
         AND (${requestDateFrom ? sql`r.created_at >= ${requestDateFrom}::date` : sql`TRUE`})
         AND (${requestDateTo ? sql`r.created_at < (${requestDateTo}::date + INTERVAL '1 day')` : sql`TRUE`})
       ORDER BY r.created_at DESC
@@ -169,7 +169,7 @@ async function createAgentRequest(sql, request, claims, env) {
 }
 
 async function getRequestDetail(sql, requestId, claims) {
-  const accessFilter = claims.roles?.includes('admin') ? sql`TRUE` : sql`r.created_by = ${claims.sub}`
+  const accessFilter = claims.roles?.includes('admin') ? sql`TRUE` : sql`(r.agent_id = ${claims.sub} OR (r.agent_id IS NULL AND r.created_by = ${claims.sub}))`
   const [requestRows, historyRows] = await Promise.all([
     sql`
       SELECT r.id, r.reference, r.source, r.legal_entity_type, r.email, r.phone, r.whatsapp, r.payment_required,
@@ -180,7 +180,7 @@ async function getRequestDetail(sql, requestId, claims) {
         u.full_name AS agent_name, u.email AS agent_email
       FROM operations.requests r
       JOIN operations.clients c ON c.id = r.client_id
-      LEFT JOIN operations.users u ON u.id = r.created_by
+      LEFT JOIN operations.users u ON u.id = COALESCE(r.agent_id, r.created_by)
       WHERE r.id = ${requestId} AND ${accessFilter}
       LIMIT 1
     `,
@@ -188,7 +188,7 @@ async function getRequestDetail(sql, requestId, claims) {
       SELECT r.id, r.reference, r.service_type, r.product_type, r.status, r.created_at
       FROM operations.requests r
       WHERE r.client_id = (SELECT client_id FROM operations.requests WHERE id = ${requestId})
-        AND ${claims.roles?.includes('admin') ? sql`TRUE` : sql`r.created_by = ${claims.sub}`}
+        AND ${claims.roles?.includes('admin') ? sql`TRUE` : sql`(r.agent_id = ${claims.sub} OR (r.agent_id IS NULL AND r.created_by = ${claims.sub}))`}
       ORDER BY r.created_at DESC
     `,
   ])
@@ -197,7 +197,7 @@ async function getRequestDetail(sql, requestId, claims) {
 }
 
 async function getDashboard(sql, claims) {
-  const accessFilter = claims.roles?.includes('admin') ? sql`TRUE` : sql`created_by = ${claims.sub}`
+  const accessFilter = claims.roles?.includes('admin') ? sql`TRUE` : sql`(agent_id = ${claims.sub} OR (agent_id IS NULL AND created_by = ${claims.sub}))`
   const [totalRows, activeRows, pendingRows, closedRows, notSentRows, openedRows, statusRows, recentRows] = await Promise.all([
     sql`SELECT COUNT(*)::int AS total FROM operations.requests WHERE ${accessFilter}`,
     sql`SELECT COUNT(*)::int AS total FROM operations.requests WHERE status NOT IN ('closed', 'cancelled') AND ${accessFilter}`,
@@ -211,7 +211,7 @@ async function getDashboard(sql, claims) {
         c.full_name AS client_name
       FROM operations.requests r
       JOIN operations.clients c ON c.id = r.client_id
-      WHERE ${claims.roles?.includes('admin') ? sql`TRUE` : sql`r.created_by = ${claims.sub}`}
+      WHERE ${claims.roles?.includes('admin') ? sql`TRUE` : sql`(r.agent_id = ${claims.sub} OR (r.agent_id IS NULL AND r.created_by = ${claims.sub}))`}
       ORDER BY r.created_at DESC
       LIMIT 5
     `,
@@ -267,10 +267,12 @@ function serializeClient(row) {
 }
 
 function serializeRequest(row) {
+  const sourceChannel = row.source_channel ? String(row.source_channel) : (row.source === 'agent' ? 'agent_link' : 'direct_web')
   return {
     id: String(row.id),
     reference: String(row.reference),
-    source: String(row.source),
+    source: sourceChannel === 'agent_link' ? 'Agente' : 'Página web',
+    sourceChannel,
     legalEntityType: String(row.legal_entity_type),
     email: row.email ? String(row.email) : '',
     phone: row.phone ? String(row.phone) : '',
