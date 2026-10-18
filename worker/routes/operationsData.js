@@ -122,8 +122,8 @@ export async function handleOperationsData(request, env) {
 }
 
 async function createAgentRequest(sql, request, claims, env) {
-  if (!claims.roles?.includes('agent') && !claims.roles?.includes('admin')) {
-    return response({ error: 'Solo los agentes y administradores pueden crear solicitudes desde la app.' }, 403)
+  if (!claims.roles?.includes('admin')) {
+    return response({ error: 'Las solicitudes deben ser creadas por el cliente desde el formulario público.' }, 403)
   }
   const input = await request.json().catch(() => ({}))
   const fullName = text(input.fullName)
