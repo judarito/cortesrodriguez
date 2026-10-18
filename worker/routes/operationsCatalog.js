@@ -6,8 +6,11 @@ export async function handleOperationsCatalog(request, env) {
   const publicAgentMatch = url.pathname.match(/^\/api\/public\/agent-links\/([^/]+)$/)
   const isPublicAgentLink = Boolean(publicAgentMatch) && request.method === 'GET'
   const isAdminCatalog = url.pathname === '/api/app/catalog' && request.method === 'GET'
+  const isConsultationCreate = url.pathname === '/api/app/catalog/consultation-types' && request.method === 'POST'
+  const consultationMatch = url.pathname.match(/^\/api\/app\/catalog\/consultation-types\/([^/]+)$/)
+  const isConsultationUpdate = Boolean(consultationMatch) && request.method === 'PUT'
   const isAgentLinks = url.pathname === '/api/app/agent-links' && ['GET', 'POST'].includes(request.method)
-  if (!isPublicCatalog && !isPublicAgentLink && !isAdminCatalog && !isAgentLinks) return null
+  if (!isPublicCatalog && !isPublicAgentLink && !isAdminCatalog && !isConsultationCreate && !isConsultationUpdate && !isAgentLinks) return null
   if (!env.NEON_DATABASE_URL) return response({ error: 'La base de datos operativa no está configurada.' }, 500)
 
   const { neon } = await import('@neondatabase/serverless')
@@ -22,6 +25,12 @@ export async function handleOperationsCatalog(request, env) {
   if (isAdminCatalog) {
     if (!claims.permissions?.includes('services.manage')) return response({ error: 'No tienes permisos para consultar el catálogo.' }, 403)
     return getAdminCatalog(sql)
+  }
+
+  if (isConsultationCreate || isConsultationUpdate) {
+    if (!claims.permissions?.includes('services.manage')) return response({ error: 'No tienes permisos para configurar consultas.' }, 403)
+    const body = await request.json().catch(() => ({}))
+    return isConsultationCreate ? createConsultationType(sql, body, claims.sub) : updateConsultationType(sql, consultationMatch[1], body, claims.sub)
   }
 
   if (!claims.permissions?.includes('agent_links.manage')) return response({ error: 'No tienes permisos para gestionar enlaces de agente.' }, 403)
@@ -44,12 +53,12 @@ async function getPublicCatalog(sql) {
 }
 
 async function getAdminCatalog(sql) {
-  const [services, specialties, assignments, agents] = await Promise.all([
+  const [services, specialties, assignments, agents, allExperts] = await Promise.all([
     sql`
       SELECT s.id, s.code, s.name, s.description, s.active, s.sort_order,
         COALESCE(json_agg(json_build_object(
           'id', sct.id, 'consultationId', c.id, 'consultationCode', c.code,
-          'consultationName', c.name, 'amountCents', sct.amount_cents,
+          'consultationName', c.name, 'consultationDescription', c.description, 'amountCents', sct.amount_cents,
           'currency', sct.currency, 'active', sct.active
         ) ORDER BY c.name) FILTER (WHERE sct.id IS NOT NULL), '[]'::json) AS consultations
       FROM operations.services s
@@ -77,13 +86,89 @@ async function getAdminCatalog(sql) {
       WHERE u.active = TRUE
       ORDER BY u.full_name
     `,
+    sql`
+      SELECT DISTINCT u.id, u.full_name, u.email
+      FROM operations.users u
+      JOIN operations.user_roles ur ON ur.user_id = u.id
+      JOIN operations.roles r ON r.id = ur.role_id AND r.name = 'expert'
+      WHERE u.active = TRUE
+      ORDER BY u.full_name
+    `,
   ])
   return response({
     services: services.map((row) => ({ id: String(row.id), code: String(row.code), name: String(row.name), description: String(row.description), active: Boolean(row.active), sortOrder: Number(row.sort_order), consultations: Array.isArray(row.consultations) ? row.consultations : [] })),
     consultationTypes: specialties.map((row) => ({ id: String(row.id), code: String(row.code), name: String(row.name), description: String(row.description), active: Boolean(row.active) })),
     experts: assignments.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email), consultationTypeId: row.consultation_type_id ? String(row.consultation_type_id) : null, consultationTypeName: row.consultation_type_name ? String(row.consultation_type_name) : null })),
     agents: agents.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email) })),
+    allExperts: allExperts.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email) })),
   })
+}
+
+async function createConsultationType(sql, body, actorId) {
+  const input = validateConsultation(body)
+  const service = await sql`SELECT id FROM operations.services WHERE code = ${input.serviceCode} AND active = TRUE LIMIT 1`
+  if (!service[0]) return response({ error: 'El servicio general no existe.' }, 400)
+  const experts = await validExperts(sql, input.expertIds)
+  if (experts.length !== input.expertIds.length) return response({ error: 'Uno o más expertos no son válidos o están inactivos.' }, 400)
+  try {
+    const created = await sql`INSERT INTO operations.consultation_types (code, name, description) VALUES (${input.code}, ${input.name}, ${input.description}) RETURNING id`
+    await sql`INSERT INTO operations.service_consultation_types (service_id, consultation_type_id, amount_cents, currency, payment_required) VALUES (${service[0].id}, ${created[0].id}, ${input.amountCents}, ${input.currency}, ${input.paymentRequired})`
+    await replaceConsultationExperts(sql, created[0].id, input.expertIds)
+    await audit(sql, actorId, 'create', created[0].id, input)
+    return response({ ok: true, id: String(created[0].id) }, 201)
+  } catch (error) {
+    if (String(error.message).includes('consultation_types_code_key') || String(error.message).includes('service_consultation_types_service_id_consultation_type_id_key')) return response({ error: 'Ya existe ese tipo de consulta para el servicio.' }, 409)
+    throw error
+  }
+}
+
+async function updateConsultationType(sql, id, body, actorId) {
+  const input = validateConsultation(body)
+  const service = await sql`SELECT id FROM operations.services WHERE code = ${input.serviceCode} AND active = TRUE LIMIT 1`
+  if (!service[0]) return response({ error: 'El servicio general no existe.' }, 400)
+  const experts = await validExperts(sql, input.expertIds)
+  if (experts.length !== input.expertIds.length) return response({ error: 'Uno o más expertos no son válidos o están inactivos.' }, 400)
+  const updated = await sql`UPDATE operations.consultation_types SET name = ${input.name}, description = ${input.description}, active = ${input.active}, updated_at = NOW() WHERE id = ${id} RETURNING id`
+  if (!updated[0]) return response({ error: 'Tipo de consulta no encontrado.' }, 404)
+  await sql`UPDATE operations.service_consultation_types SET amount_cents = ${input.amountCents}, currency = ${input.currency}, payment_required = ${input.paymentRequired}, active = ${input.active}, updated_at = NOW() WHERE service_id = ${service[0].id} AND consultation_type_id = ${id}`
+  await replaceConsultationExperts(sql, id, input.expertIds)
+  await audit(sql, actorId, 'update', id, input)
+  return response({ ok: true, id: String(id) })
+}
+
+function validateConsultation(body) {
+  const code = text(body.code).toLowerCase()
+  const name = text(body.name)
+  const serviceCode = text(body.serviceCode)
+  const description = text(body.description)
+  const amountCents = Number(body.amountCents)
+  const currency = text(body.currency) || 'USD'
+  const expertIds = Array.isArray(body.expertIds) ? body.expertIds.filter((value) => typeof value === 'string') : []
+  const active = body.active !== false
+  const paymentRequired = body.paymentRequired !== false
+  if (!/^[a-z][a-z0-9_-]{2,50}$/.test(code) || !name || !serviceCode || !description) throw new RequestError('Código, nombre, servicio y descripción son obligatorios.')
+  if (!Number.isInteger(amountCents) || amountCents < 0 || !['COP', 'USD'].includes(currency)) throw new RequestError('Precio o moneda inválidos.')
+  return { code, name, serviceCode, description, amountCents, currency, expertIds, active, paymentRequired }
+}
+
+async function validExperts(sql, ids) {
+  if (!ids.length) return []
+  return sql`
+    SELECT DISTINCT u.id
+    FROM operations.users u
+    JOIN operations.user_roles ur ON ur.user_id = u.id
+    JOIN operations.roles r ON r.id = ur.role_id AND r.name = 'expert'
+    WHERE u.active = TRUE AND u.id = ANY(${ids})
+  `
+}
+
+async function replaceConsultationExperts(sql, consultationTypeId, expertIds) {
+  await sql`DELETE FROM operations.consultation_type_experts WHERE consultation_type_id = ${consultationTypeId}`
+  for (const expertId of expertIds) await sql`INSERT INTO operations.consultation_type_experts (consultation_type_id, user_id) VALUES (${consultationTypeId}, ${expertId})`
+}
+
+async function audit(sql, actorId, action, entityId, metadata) {
+  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, ${action}, 'consultation_type', ${entityId}, ${JSON.stringify(metadata)}::jsonb)`
 }
 
 async function listAgentLinks(sql, claims) {
@@ -170,4 +255,5 @@ function base64Url(bytes) {
 }
 
 function text(value) { return typeof value === 'string' ? value.trim() : '' }
+class RequestError extends Error { constructor(message) { super(message); this.status = 400 } }
 function response(payload, status = 200) { return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json; charset=utf-8' } }) }
