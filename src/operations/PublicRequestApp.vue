@@ -13,6 +13,7 @@ const form = ref({
   whatsapp: '',
   serviceName: 'asesoria_personalizada',
   serviceType: '',
+  consultationType: '',
   productType: '',
   question: '',
 })
@@ -20,9 +21,12 @@ const loading = ref(false)
 const error = ref('')
 const submitted = ref(false)
 const reference = ref('')
-const selectedSpecialty = computed(() => catalog.value.find((item) => item.specialtyCode === form.value.serviceType) || null)
-const serviceLabel = computed(() => selectedSpecialty.value?.specialtyName || 'servicio')
-const servicePrice = computed(() => selectedSpecialty.value ? new Intl.NumberFormat('es-CO', { style: 'currency', currency: selectedSpecialty.value.currency, maximumFractionDigits: 0 }).format(selectedSpecialty.value.amountCents / 100) : 'Selecciona una especialidad')
+const serviceOptions = computed(() => [...new Map(catalog.value.map((item) => [item.serviceCode, item])).values()])
+const consultationOptions = computed(() => catalog.value.filter((item) => item.serviceCode === form.value.serviceType))
+const selectedConsultation = computed(() => consultationOptions.value.find((item) => item.consultationCode === form.value.consultationType) || null)
+const serviceLabel = computed(() => selectedConsultation.value?.consultationName || 'servicio')
+const servicePrice = computed(() => selectedConsultation.value ? new Intl.NumberFormat('es-CO', { style: 'currency', currency: selectedConsultation.value.currency, maximumFractionDigits: 0 }).format(selectedConsultation.value.amountCents / 100) : 'Selecciona un tipo de consulta')
+function formatPrice(item) { return new Intl.NumberFormat('es-CO', { style: 'currency', currency: item.currency, maximumFractionDigits: 0 }).format(item.amountCents / 100) }
 
 onMounted(async () => {
   const match = window.location.pathname.match(/^\/solicitud\/agente\/([^/]+)$/)
@@ -41,6 +45,10 @@ onMounted(async () => {
     catalog.value = data.items || []
   }
 })
+
+function changeService() {
+  form.value.consultationType = ''
+}
 
 function selectAttachments(event) {
   attachments.value = Array.from(event.target.files || [])
@@ -83,7 +91,7 @@ function goToLanding() {
         <form @submit.prevent="submitRequest">
           <fieldset><legend>Datos del cliente</legend><div class="field full-field"><label for="fullName">Nombre completo <b>*</b></label><input id="fullName" v-model="form.fullName" type="text" placeholder="Ej. Juan Pablo Gómez" required /></div><div class="field"><label for="legalEntityType">Constitución legal <b>*</b></label><select id="legalEntityType" v-model="form.legalEntityType" required><option value="" disabled>Selecciona una opción</option><option value="natural">Persona natural</option><option value="juridica">Persona jurídica</option></select></div></fieldset>
           <fieldset><legend>Medios de contacto <span>Ingresa al menos uno</span></legend><div class="field"><label for="email">Correo electrónico</label><input id="email" v-model="form.email" type="email" placeholder="nombre@empresa.com" /></div><div class="field"><label for="phone">Teléfono</label><input id="phone" v-model="form.phone" type="tel" placeholder="+57 300 000 0000" /></div><div class="field"><label for="whatsapp">WhatsApp</label><input id="whatsapp" v-model="form.whatsapp" type="tel" placeholder="+57 300 000 0000" /></div></fieldset>
-          <fieldset><legend>Detalles de la operación</legend><div class="field full-field"><label for="serviceName">Servicio y especialidad <b>*</b></label><select id="serviceName" v-model="form.serviceType" required><option value="" disabled>Selecciona una especialidad</option><option v-for="item in catalog" :key="item.specialtyCode" :value="item.specialtyCode">{{ item.specialtyName }} · {{ item.serviceName }}</option></select><small v-if="selectedSpecialty" class="field-help">{{ selectedSpecialty.specialtyDescription }}</small></div><div class="field full-field"><label>Valor de la asesoría</label><div class="static-field"><span>{{ selectedSpecialty?.serviceName || 'Asesoría personalizada' }}</span><strong>{{ servicePrice }}</strong></div></div><div class="field"><label for="productType">Tipo de producto <b>*</b></label><select id="productType" v-model="form.productType" required><option value="" disabled>Selecciona una opción</option><option value="vehiculos">Vehículos</option><option value="mercancias">Mercancías</option></select></div><div class="field full-field"><label for="question">¿Qué necesitas consultar? <b>*</b></label><textarea id="question" v-model="form.question" rows="5" maxlength="3000" placeholder="Describe tu operación o la pregunta que deseas resolver." required></textarea></div><div class="field full-field"><label for="attachments">Imágenes de apoyo</label><input id="attachments" type="file" accept="image/png,image/jpeg,image/webp" multiple @change="selectAttachments" /><small class="field-help">Puedes adjuntar hasta 5 imágenes, máximo 10 MB cada una.</small><small v-if="attachments.length" class="field-help">{{ attachments.length }} imagen(es) seleccionada(s).</small></div></fieldset>
+          <fieldset><legend>Detalles de la operación</legend><div class="field"><label for="serviceType">Servicio general <b>*</b></label><select id="serviceType" v-model="form.serviceType" required @change="changeService"><option value="" disabled>Selecciona un servicio</option><option v-for="item in serviceOptions" :key="item.serviceCode" :value="item.serviceCode">{{ item.serviceName }}</option></select></div><div class="field"><label for="consultationType">Tipo de consulta <b>*</b></label><select id="consultationType" v-model="form.consultationType" required :disabled="!form.serviceType"><option value="" disabled>Selecciona una consulta</option><option v-for="item in consultationOptions" :key="item.consultationCode" :value="item.consultationCode">{{ item.consultationName }} · {{ formatPrice(item) }}</option></select><small v-if="selectedConsultation" class="field-help">{{ selectedConsultation.consultationDescription }}</small></div><div class="field full-field"><label>Valor de la asesoría</label><div class="static-field"><span>{{ selectedConsultation?.consultationName || 'Selecciona un tipo de consulta' }}</span><strong>{{ servicePrice }}</strong></div></div><div class="field"><label for="productType">Tipo de producto <b>*</b></label><select id="productType" v-model="form.productType" required><option value="" disabled>Selecciona una opción</option><option value="vehiculos">Vehículos</option><option value="mercancias">Mercancías</option></select></div><div class="field full-field"><label for="question">¿Qué necesitas consultar? <b>*</b></label><textarea id="question" v-model="form.question" rows="5" maxlength="3000" placeholder="Describe tu operación o la pregunta que deseas resolver." required></textarea></div><div class="field full-field"><label for="attachments">Imágenes de apoyo</label><input id="attachments" type="file" accept="image/png,image/jpeg,image/webp" multiple @change="selectAttachments" /><small class="field-help">Puedes adjuntar hasta 5 imágenes, máximo 10 MB cada una.</small><small v-if="attachments.length" class="field-help">{{ attachments.length }} imagen(es) seleccionada(s).</small></div></fieldset>
           <p v-if="error" class="request-error" role="alert">{{ error }}</p><div class="form-actions"><button type="button" class="back-button" @click="goToLanding">Volver a la página principal</button><button type="submit" class="submit-request" :disabled="loading">{{ loading ? 'Registrando solicitud…' : 'Enviar solicitud' }} <span>→</span></button></div>
         </form>
       </section>

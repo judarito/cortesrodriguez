@@ -33,6 +33,31 @@ Cliente califica y deja feedback
 Admin revisa feedback y define seguimiento
 ```
 
+## Modelo de catálogo reorganizado
+
+La plataforma separará claramente el servicio general de la consulta que el cliente compra:
+
+```text
+Servicio general
+  Importación / Exportación / Agente de carga
+        |
+Tipo de consulta
+  Consulta básica · Datos legales · Importación de casa · ...
+        |
+Precio + descripción + política de pago
+        |
+Pool de expertos con esa capacidad
+        |
+Asignación aleatoria entre expertos activos
+```
+
+- **Servicio general:** clasifica la operación aduanera y sirve para filtros, reportes y reglas globales. Ejemplos: `importacion`, `exportacion` y `agente_carga`.
+- **Tipo de consulta:** define exactamente qué solicita el cliente y cuánto cuesta. Ejemplos: “Consulta básica” por USD 10, “Consulta de datos legales” por USD 15 e “Importación de casa” por USD 20.
+- **Asignación:** cada tipo de consulta puede tener uno o varios expertos. El sistema selecciona aleatoriamente uno de los expertos activos del pool y guarda el resultado para trazabilidad.
+- **Configuración:** administración podrá crear, editar, activar, desactivar y cambiar precio, moneda, descripción, servicio general, expertos elegibles y reglas de correo sin modificar código.
+- **Pantalla anterior:** el bloque único “Valor del servicio” se retira de la configuración principal; el valor histórico se conserva solo para solicitudes antiguas y compatibilidad de datos.
+- **Histórico:** cada solicitud conserva una copia del servicio general, tipo de consulta, descripción, precio y moneda vigentes al momento de crearla.
+
 ## Plan de implementación
 
 ### 1. Roles, permisos y privacidad
@@ -52,13 +77,19 @@ Admin revisa feedback y define seguimiento
 
 ### 2. Catálogo de servicios, especialidades y valores
 
-- [ ] Crear `services` con código, nombre, descripción, estado y orden.
-- [ ] Crear `specialties` con área aduanera, descripción y estado.
-- [ ] Crear `service_specialties` con servicio, especialidad, precio, moneda, vigencia y política de pago.
-- [ ] Permitir que un servicio tenga varias especialidades y que cada especialidad tenga su propio valor.
-- [ ] Mostrar en el formulario público nombre, descripción y precio antes de enviar la solicitud.
-- [ ] Guardar en la solicitud una copia histórica del servicio, especialidad, descripción, precio y moneda seleccionados.
-- [ ] Impedir publicar una especialidad sin descripción, precio o regla de asignación válida.
+- [ ] Mantener `services` como servicios generales: Importación, Exportación y Agente de carga.
+- [ ] Renombrar conceptualmente `specialties` a `consultation_types` para evitar confundir una consulta vendible con un área profesional.
+- [ ] Crear `service_consultation_types` con servicio general, tipo de consulta, descripción, precio, moneda, vigencia y política de pago.
+- [ ] Permitir que un servicio general tenga muchos tipos de consulta y que un tipo de consulta pueda reutilizarse en más de un servicio cuando aplique.
+- [ ] Crear `consultation_type_experts` para asociar uno o varios expertos activos a cada tipo de consulta.
+- [ ] En **Configuración**, permitir abrir cada tipo de consulta y seleccionar/deseleccionar uno o varios expertos activos para su pool de asignación.
+- [ ] Mostrar en la configuración los expertos asociados, sus especialidades operativas, estado activo/inactivo y fecha de última modificación.
+- [ ] Impedir asociar usuarios inactivos o usuarios que no tengan el rol `expert`.
+- [ ] Registrar en auditoría quién agregó o retiró cada experto del tipo de consulta y cuándo.
+- [ ] Mostrar primero el servicio general y después los tipos de consulta disponibles, con descripción y precio antes de enviar.
+- [ ] Guardar en la solicitud una copia histórica del servicio general, tipo de consulta, descripción, precio y moneda seleccionados.
+- [ ] Impedir publicar un tipo de consulta sin descripción, precio, servicio general y al menos un experto elegible o una cola administrativa.
+- [ ] Permitir configurar si el valor se cobra, si requiere pago y qué evento habilita el avance del caso.
 
 ### 3. Enlaces de agentes y formulario público
 
@@ -83,9 +114,10 @@ Admin revisa feedback y define seguimiento
 
 ### 4. Asignación y vista del experto
 
-- [ ] Crear relación de expertos con especialidades y estado activo.
-- [ ] Crear `request_assignments` con experto, especialidad, fecha, actor, motivo y estado.
-- [ ] Implementar asignación automática por especialidad y carga de trabajo, con cola de excepción para el administrador.
+- [ ] Asociar expertos a tipos de consulta mediante un pool configurable, con estado activo y fechas de vigencia.
+- [ ] Crear `request_assignments` con experto, tipo de consulta, fecha, actor, estrategia, motivo y estado.
+- [ ] Seleccionar aleatoriamente un experto activo del pool al crear la solicitud, usando una fuente aleatoria del servidor y registrando los candidatos considerados.
+- [ ] Definir fallback cuando no existan expertos activos: cola administrativa y alerta de asignación fallida.
 - [ ] Permitir reasignación administrativa conservando el historial.
 - [ ] Crear la bandeja del experto con solo sus asignaciones.
 - [ ] Las consultas del experto deben seleccionar únicamente pregunta, especialidad, estado de respuesta y adjuntos autorizados.
@@ -110,7 +142,10 @@ Admin revisa feedback y define seguimiento
 
 ### 6. Notificaciones y aprobación
 
-- [ ] Ampliar las reglas de correo para filtrar por evento, servicio, especialidad, fuente y estado de pago.
+- [ ] Ampliar las reglas de correo para filtrar por evento, servicio general, tipo de consulta, fuente y estado de pago.
+- [ ] Permitir destinatarios por rol, experto asignado, agente de origen, administrador y cliente.
+- [ ] Asociar cada regla a uno o varios tipos de consulta, con herencia opcional de las reglas del servicio general.
+- [ ] Evitar duplicados cuando el mismo correo aparezca por rol, regla y asignación.
 - [ ] Al crear una solicitud directa desde nuestra página (`direct_web`): notificar al experto asignado y al administrador; no notificar a ningún agente.
 - [ ] Al crear una solicitud desde enlace de agente: notificar al agente propietario, al experto asignado y al administrador.
 - [ ] Al enviar una respuesta a revisión: notificar al administrador.
@@ -144,19 +179,20 @@ Admin revisa feedback y define seguimiento
 
 ### 7. Administración y reportes
 
-- [ ] Crear pantallas para servicios, especialidades, precios, expertos por especialidad, enlaces y reglas de notificación.
+- [ ] Crear pantallas para servicios generales, tipos de consulta, precios, expertos por tipo de consulta, enlaces y reglas de notificación.
+- [ ] Incluir dentro de Configuración la edición completa del tipo de consulta: nombre, descripción, precio, moneda, servicio general, cobro, expertos asociados y reglas de correo.
 - [ ] Actualizar el dashboard: el agente ve solo sus solicitudes; el experto sus asignaciones; el admin el consolidado.
-- [ ] Crear reportes por agente, experto, cliente, servicio, especialidad, fuente, estado y rango de fechas.
+- [ ] Crear reportes por agente, experto, cliente, servicio general, tipo de consulta, fuente, estado y rango de fechas.
 - [ ] Reportar volumen, tiempos de asignación, tiempos de respuesta, aprobaciones, rechazos y cierres.
 - [ ] Reportar valores cotizados, pagos aprobados, pendientes, reembolsos y total por servicio/especialidad.
 - [ ] Reportar satisfacción promedio, distribución de calificaciones, tasa de respuesta y casos con calificación baja.
-- [ ] Relacionar feedback con servicio, especialidad, experto, agente y período respetando la privacidad del cliente.
+- [ ] Relacionar feedback con servicio general, tipo de consulta, experto, agente y período respetando la privacidad del cliente.
 - [ ] Definir el balance a partir de transacciones auditables, no solo de la suma del precio configurado.
 - [ ] Restringir exportaciones y datos personales según el rol.
 
 ### 8. Pruebas, migración y despliegue
 
-- [ ] Crear migraciones versionadas para roles, permisos, catálogo, enlaces, asignaciones, respuestas y adjuntos.
+- [ ] Crear migraciones versionadas para roles, permisos, servicios generales, tipos de consulta, precios, pools de expertos, enlaces, asignaciones, respuestas y adjuntos.
 - [ ] Incluir la migración de feedback, tokens de evaluación, alertas y auditoría de lectura/modificación.
 - [ ] Probar enlace revocado, enlace vencido, especialidad inactiva, precio cambiado y solicitud sin agente.
 - [ ] Probar que una solicitud directa desde nuestra página queda como `direct_web` sin agente y que una solicitud por enlace queda como `agent_link` con el agente correcto.
@@ -179,6 +215,6 @@ Separar el estado operativo del estado de respuesta y del pago:
 ## Decisiones pendientes
 
 - [ ] Definir si el balance incluye únicamente valores cobrados o también comisiones de agentes/expertos, costos y reembolsos.
-- [ ] Confirmar si la asignación será automática, manual por admin o híbrida con reglas de prioridad.
+- [ ] Confirmar si la selección aleatoria será completamente aleatoria o si se aplicará una variante balanceada para evitar sobrecargar a un experto.
 - [ ] Definir límite de imágenes por solicitud, tamaño máximo y política de conservación.
 - [ ] Definir escala de calificación, por ejemplo de 1 a 5, y el umbral que debe generar alerta administrativa.

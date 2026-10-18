@@ -532,4 +532,5 @@ onMounted(restoreSession)
 .security-view:has(.notification-info) .rule-form:before{content:'2  ·  Define cuándo se envía';position:absolute;top:-28px;left:0;color:#7769bb;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
 .security-view:has(.notification-info) .notification-rules{position:relative;margin-top:41px}
 .security-view:has(.notification-info) .notification-rules:before{content:'3  ·  Revisa las reglas activas';position:absolute;top:-27px;left:0;color:#398d73;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
+.service-config-form{display:none}
 </style>

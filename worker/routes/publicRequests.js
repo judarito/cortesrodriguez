@@ -22,14 +22,13 @@ export async function handlePublicRequests(request, env) {
   const sql = neon(env.NEON_DATABASE_URL)
   const serviceRows = await sql`
     SELECT s.code AS service_code, s.name AS service_name, s.description AS service_description,
-      sp.id AS specialty_id, sp.code AS specialty_code, sp.name AS specialty_name,
-      sp.description AS specialty_description, ss.amount_cents, ss.currency
-    FROM operations.service_specialties ss
-    JOIN operations.services s ON s.id = ss.service_id
-    JOIN operations.specialties sp ON sp.id = ss.specialty_id
-    WHERE s.code = 'asesoria_personalizada' AND sp.code = ${input.serviceType}
-      AND s.active = TRUE AND sp.active = TRUE AND ss.active = TRUE
-      AND (ss.valid_until IS NULL OR ss.valid_until > NOW())
+      c.id AS consultation_type_id, c.code AS consultation_code, c.name AS consultation_name,
+      c.description AS consultation_description, sct.amount_cents, sct.currency, sct.payment_required
+    FROM operations.service_consultation_types sct
+    JOIN operations.services s ON s.id = sct.service_id
+    JOIN operations.consultation_types c ON c.id = sct.consultation_type_id
+    WHERE s.code = ${input.serviceType} AND c.code = ${input.consultationType}
+      AND s.active = TRUE AND c.active = TRUE AND sct.active = TRUE
     LIMIT 1
   `
   if (!serviceRows[0]) return response({ error: 'La especialidad seleccionada no está disponible.' }, 503)
@@ -84,12 +83,14 @@ export async function handlePublicRequests(request, env) {
     INSERT INTO operations.requests (
       id, client_id, reference, source, legal_entity_type, email, phone, whatsapp,
       service_name, service_amount_cents, service_currency, service_type, freight_agent, product_type, status,
-      source_channel, agent_id, agent_link_id, specialty_id, specialty_name, specialty_description, question
+      source_channel, agent_id, agent_link_id, specialty_id, specialty_name, specialty_description, question,
+      general_service_code, general_service_name, consultation_type_id, consultation_type_code, consultation_type_name, payment_required
     ) VALUES (
       ${requestId}, ${clientId}, ${reference}, ${source}, ${input.legalEntityType},
       ${input.email || null}, ${input.phone || null}, ${input.whatsapp || null},
       ${service.service_name}, ${service.amount_cents}, ${service.currency}, ${input.serviceType}, ${input.freightAgent || null}, ${input.productType}, 'pending',
-      ${sourceChannel}, ${agentId}, ${agentLinkId}, ${service.specialty_id}, ${service.specialty_name}, ${service.specialty_description}, ${input.question || null}
+      ${sourceChannel}, ${agentId}, ${agentLinkId}, NULL, NULL, NULL, ${input.question || null},
+      ${input.serviceType}, ${service.service_name}, ${service.consultation_type_id}, ${input.consultationType}, ${service.consultation_name}, ${service.payment_required}
     )
   `
 
@@ -107,6 +108,7 @@ function validate(payload) {
   const phone = text(payload.phone)
   const whatsapp = text(payload.whatsapp)
   const serviceType = text(payload.serviceType)
+  const consultationType = text(payload.consultationType)
   const productType = text(payload.productType)
   const question = text(payload.question)
   const agentToken = text(payload.agentToken)
@@ -116,10 +118,11 @@ function validate(payload) {
   if (!email && !phone && !whatsapp) throw new RequestError('Ingresa al menos un medio de contacto.')
   if (email && !/^\S+@\S+\.\S+$/.test(email)) throw new RequestError('Ingresa un correo electrónico válido.')
   if (!['exportacion', 'importacion', 'agente_carga'].includes(serviceType)) throw new RequestError('Selecciona el tipo de servicio.')
+  if (!consultationType) throw new RequestError('Selecciona el tipo de consulta.')
   if (!['vehiculos', 'mercancias'].includes(productType)) throw new RequestError('Selecciona el tipo de producto.')
   if (!question) throw new RequestError('Cuéntanos qué necesitas consultar.')
 
-  return { fullName, legalEntityType, email, phone, whatsapp, serviceType, freightAgent: null, productType, question, agentToken }
+  return { fullName, legalEntityType, email, phone, whatsapp, serviceType, consultationType, freightAgent: null, productType, question, agentToken }
 }
 
 async function parseInput(request) {

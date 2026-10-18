@@ -32,14 +32,13 @@ export async function handleOperationsCatalog(request, env) {
 async function getPublicCatalog(sql) {
   const rows = await sql`
     SELECT s.code AS service_code, s.name AS service_name, s.description AS service_description,
-      sp.code AS specialty_code, sp.name AS specialty_name, sp.description AS specialty_description,
-      ss.amount_cents, ss.currency
-    FROM operations.service_specialties ss
-    JOIN operations.services s ON s.id = ss.service_id
-    JOIN operations.specialties sp ON sp.id = ss.specialty_id
-    WHERE s.active = TRUE AND sp.active = TRUE AND ss.active = TRUE
-      AND (ss.valid_until IS NULL OR ss.valid_until > NOW())
-    ORDER BY s.sort_order, s.name, sp.name
+      c.code AS consultation_code, c.name AS consultation_name, c.description AS consultation_description,
+      sct.amount_cents, sct.currency, sct.payment_required
+    FROM operations.service_consultation_types sct
+    JOIN operations.services s ON s.id = sct.service_id
+    JOIN operations.consultation_types c ON c.id = sct.consultation_type_id
+    WHERE s.active = TRUE AND c.active = TRUE AND sct.active = TRUE
+    ORDER BY s.sort_order, s.name, c.name
   `
   return response({ items: rows.map(serializeCatalogItem) })
 }
@@ -49,24 +48,24 @@ async function getAdminCatalog(sql) {
     sql`
       SELECT s.id, s.code, s.name, s.description, s.active, s.sort_order,
         COALESCE(json_agg(json_build_object(
-          'id', ss.id, 'specialtyId', sp.id, 'specialtyCode', sp.code,
-          'specialtyName', sp.name, 'amountCents', ss.amount_cents,
-          'currency', ss.currency, 'active', ss.active
-        ) ORDER BY sp.name) FILTER (WHERE ss.id IS NOT NULL), '[]'::json) AS specialties
+          'id', sct.id, 'consultationId', c.id, 'consultationCode', c.code,
+          'consultationName', c.name, 'amountCents', sct.amount_cents,
+          'currency', sct.currency, 'active', sct.active
+        ) ORDER BY c.name) FILTER (WHERE sct.id IS NOT NULL), '[]'::json) AS consultations
       FROM operations.services s
-      LEFT JOIN operations.service_specialties ss ON ss.service_id = s.id
-      LEFT JOIN operations.specialties sp ON sp.id = ss.specialty_id
+      LEFT JOIN operations.service_consultation_types sct ON sct.service_id = s.id
+      LEFT JOIN operations.consultation_types c ON c.id = sct.consultation_type_id
       GROUP BY s.id
       ORDER BY s.sort_order, s.name
     `,
-    sql`SELECT id, code, name, description, active FROM operations.specialties ORDER BY name`,
+    sql`SELECT id, code, name, description, active FROM operations.consultation_types ORDER BY name`,
     sql`
-      SELECT u.id, u.full_name, u.email, sp.id AS specialty_id, sp.name AS specialty_name
+      SELECT u.id, u.full_name, u.email, c.id AS consultation_type_id, c.name AS consultation_type_name
       FROM operations.users u
       JOIN operations.user_roles ur ON ur.user_id = u.id
       JOIN operations.roles r ON r.id = ur.role_id AND r.name = 'expert'
-      LEFT JOIN operations.expert_specialties es ON es.user_id = u.id AND es.active = TRUE
-      LEFT JOIN operations.specialties sp ON sp.id = es.specialty_id
+      LEFT JOIN operations.consultation_type_experts cte ON cte.user_id = u.id AND cte.active = TRUE
+      LEFT JOIN operations.consultation_types c ON c.id = cte.consultation_type_id
       WHERE u.active = TRUE
       ORDER BY u.full_name, sp.name
     `,
@@ -80,9 +79,9 @@ async function getAdminCatalog(sql) {
     `,
   ])
   return response({
-    services: services.map((row) => ({ id: String(row.id), code: String(row.code), name: String(row.name), description: String(row.description), active: Boolean(row.active), sortOrder: Number(row.sort_order), specialties: Array.isArray(row.specialties) ? row.specialties : [] })),
-    specialties: specialties.map((row) => ({ id: String(row.id), code: String(row.code), name: String(row.name), description: String(row.description), active: Boolean(row.active) })),
-    experts: assignments.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email), specialtyId: row.specialty_id ? String(row.specialty_id) : null, specialtyName: row.specialty_name ? String(row.specialty_name) : null })),
+    services: services.map((row) => ({ id: String(row.id), code: String(row.code), name: String(row.name), description: String(row.description), active: Boolean(row.active), sortOrder: Number(row.sort_order), consultations: Array.isArray(row.consultations) ? row.consultations : [] })),
+    consultationTypes: specialties.map((row) => ({ id: String(row.id), code: String(row.code), name: String(row.name), description: String(row.description), active: Boolean(row.active) })),
+    experts: assignments.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email), consultationTypeId: row.consultation_type_id ? String(row.consultation_type_id) : null, consultationTypeName: row.consultation_type_name ? String(row.consultation_type_name) : null })),
     agents: agents.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email) })),
   })
 }
@@ -149,8 +148,8 @@ async function resolveAgentLink(sql, token) {
 function serializeCatalogItem(row) {
   return {
     serviceCode: String(row.service_code), serviceName: String(row.service_name), serviceDescription: String(row.service_description),
-    specialtyCode: String(row.specialty_code), specialtyName: String(row.specialty_name), specialtyDescription: String(row.specialty_description),
-    amountCents: Number(row.amount_cents), currency: String(row.currency),
+    consultationCode: String(row.consultation_code), consultationName: String(row.consultation_name), consultationDescription: String(row.consultation_description),
+    amountCents: Number(row.amount_cents), currency: String(row.currency), paymentRequired: Boolean(row.payment_required),
   }
 }
 
