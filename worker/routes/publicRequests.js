@@ -16,7 +16,8 @@ export async function handlePublicRequests(request, env) {
     return response({ error: 'La base de datos operativa no está configurada.' }, 500)
   }
 
-  const input = validate(await request.json().catch(() => ({})))
+  const parsed = await parseInput(request)
+  const input = validate(parsed.fields)
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   const serviceRows = await sql`
@@ -54,6 +55,10 @@ export async function handlePublicRequests(request, env) {
     agentId = agentRows[0].agent_id
     agentLinkId = agentRows[0].id
   }
+  if (parsed.files.length > 5) return response({ error: 'Puedes adjuntar máximo 5 imágenes.' }, 400)
+  for (const file of parsed.files) {
+    if (!file.type.startsWith('image/') || file.size > 10 * 1024 * 1024) return response({ error: 'Cada adjunto debe ser una imagen de máximo 10 MB.' }, 400)
+  }
   const clientId = crypto.randomUUID()
   const requestId = crypto.randomUUID()
   const reference = `CRA-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`
@@ -62,6 +67,19 @@ export async function handlePublicRequests(request, env) {
     INSERT INTO operations.clients (id, full_name)
     VALUES (${clientId}, ${input.fullName})
   `
+
+  if (parsed.files.length) {
+    if (!env.GALLERY_IMAGES) return response({ error: 'El almacenamiento de imágenes no está configurado.' }, 503)
+    for (const file of parsed.files) {
+      const attachmentId = crypto.randomUUID()
+      const storageKey = `requests/${requestId}/${attachmentId}-${safeName(file.name)}`
+      await env.GALLERY_IMAGES.put(storageKey, file.stream(), { httpMetadata: { contentType: file.type } })
+      await sql`
+        INSERT INTO operations.request_attachments (id, request_id, storage_key, original_name, mime_type, size_bytes)
+        VALUES (${attachmentId}, ${requestId}, ${storageKey}, ${file.name}, ${file.type}, ${file.size})
+      `
+    }
+  }
   await sql`
     INSERT INTO operations.requests (
       id, client_id, reference, source, legal_entity_type, email, phone, whatsapp,
@@ -102,6 +120,19 @@ function validate(payload) {
   if (!question) throw new RequestError('Cuéntanos qué necesitas consultar.')
 
   return { fullName, legalEntityType, email, phone, whatsapp, serviceType, freightAgent: null, productType, question, agentToken }
+}
+
+async function parseInput(request) {
+  const contentType = request.headers.get('content-type') || ''
+  if (!contentType.includes('multipart/form-data')) return { fields: await request.json().catch(() => ({})), files: [] }
+  const formData = await request.formData()
+  const fields = Object.fromEntries([...formData.entries()].filter(([, value]) => typeof value === 'string'))
+  const files = formData.getAll('attachments').filter((value) => value && typeof value.arrayBuffer === 'function')
+  return { fields, files }
+}
+
+function safeName(name) {
+  return String(name || 'image').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 80) || 'image'
 }
 
 async function sha256(value) {

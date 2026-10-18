@@ -5,5 +5,5 @@ import PublicRequestApp from './operations/PublicRequestApp.vue'
 import './styles.css'
 
 const isOperationsRoute = window.location.pathname === '/app' || window.location.pathname.startsWith('/app/')
-const isPublicRequestRoute = window.location.pathname === '/solicitud' || window.location.pathname === '/solicitud/'
+const isPublicRequestRoute = window.location.pathname === '/solicitud' || window.location.pathname === '/solicitud/' || window.location.pathname.startsWith('/solicitud/agente/')
 createApp(isOperationsRoute ? OperationsApp : isPublicRequestRoute ? PublicRequestApp : App).mount('#app')
