@@ -45,7 +45,7 @@ async function getPublicCatalog(sql) {
 }
 
 async function getAdminCatalog(sql) {
-  const [services, specialties, assignments] = await Promise.all([
+  const [services, specialties, assignments, agents] = await Promise.all([
     sql`
       SELECT s.id, s.code, s.name, s.description, s.active, s.sort_order,
         COALESCE(json_agg(json_build_object(
@@ -70,11 +70,20 @@ async function getAdminCatalog(sql) {
       WHERE u.active = TRUE
       ORDER BY u.full_name, sp.name
     `,
+    sql`
+      SELECT DISTINCT u.id, u.full_name, u.email
+      FROM operations.users u
+      JOIN operations.user_roles ur ON ur.user_id = u.id
+      JOIN operations.roles r ON r.id = ur.role_id AND r.name = 'agent'
+      WHERE u.active = TRUE
+      ORDER BY u.full_name
+    `,
   ])
   return response({
     services: services.map((row) => ({ id: String(row.id), code: String(row.code), name: String(row.name), description: String(row.description), active: Boolean(row.active), sortOrder: Number(row.sort_order), specialties: Array.isArray(row.specialties) ? row.specialties : [] })),
     specialties: specialties.map((row) => ({ id: String(row.id), code: String(row.code), name: String(row.name), description: String(row.description), active: Boolean(row.active) })),
     experts: assignments.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email), specialtyId: row.specialty_id ? String(row.specialty_id) : null, specialtyName: row.specialty_name ? String(row.specialty_name) : null })),
+    agents: agents.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email) })),
   })
 }
 
