@@ -30,6 +30,26 @@ body {
 /* Shared operations UI primitives. These rules are global so extracted
    modules keep the same visual language as the main operations shell. */
 .operations-shell .module-heading-actions { display: flex; align-items: center; gap: 8px; }
+.operations-shell .primary-button,
+.operations-shell .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 13px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.operations-shell .primary-button { color: #fff; border: 0; background: #0e4567; box-shadow: 0 8px 18px rgba(14,69,103,.16); }
+.operations-shell .primary-button:hover { background: #0a3855; }
+.operations-shell .secondary-button { color: #315b78; border: 1px solid #d8e5ee; background: #fff; box-shadow: 0 3px 8px rgba(28,53,77,.04); }
+.operations-shell .secondary-button:hover { background: #f7fafc; }
+.operations-shell .primary-button:disabled,
+.operations-shell .secondary-button:disabled { opacity: .55; cursor: not-allowed; }
 .operations-shell .list-view { width: 100%; min-width: 0; }
 .operations-shell .list-view-table { width: 100%; overflow-x: auto; }
 .operations-shell .list-view-table table { width: 100%; min-width: 980px; border-collapse: collapse; }
