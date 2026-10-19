@@ -67,9 +67,13 @@ export async function handleOperationsReviews(request, env) {
   `
   let sent = false
   let reason = ''
+  let feedbackUrl = ''
   if (rows[0].email && (env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
     try {
-      await sendApprovedResponse(env, rows[0], adminNote)
+      const feedbackToken = randomToken()
+      await sql`INSERT INTO operations.client_feedback (request_id, response_id, token_hash) VALUES (${rows[0].request_id}, ${match[1]}, ${await sha256(feedbackToken)})`
+      feedbackUrl = `${env.PUBLIC_APP_URL || 'https://cortes-rodriguez-asesores-dev.juan-d-ricardo-t.workers.dev'}/feedback?token=${encodeURIComponent(feedbackToken)}`
+      await sendApprovedResponse(env, rows[0], adminNote, feedbackUrl)
       await sql`UPDATE operations.expert_responses SET status = 'sent', sent_at = NOW(), updated_at = NOW() WHERE id = ${match[1]}`
       sent = true
     } catch (error) { reason = error.message }
@@ -80,11 +84,12 @@ export async function handleOperationsReviews(request, env) {
   return response({ ok: true, sent, reason, response: { id: String(approved[0].id), status: sent ? 'sent' : 'approved', adminNote: approved[0].admin_note || '' } })
 }
 
-async function sendApprovedResponse(env, row, adminNote) {
+async function sendApprovedResponse(env, row, adminNote, feedbackUrl) {
   const subject = `Respuesta a tu solicitud · ${row.reference}`
   const textBody = [`Hola ${row.client_name},`, '', row.body, adminNote ? `\nNota de administración:\n${adminNote}` : '', '', 'Gracias por confiar en Cortés Rodríguez Asesores.'].join('\n')
-  const html = `<p>Hola ${escapeHtml(row.client_name)},</p><div>${escapeHtml(row.body).replaceAll('\n', '<br />')}</div>${adminNote ? `<p><strong>Nota de administración:</strong><br />${escapeHtml(adminNote).replaceAll('\n', '<br />')}</p>` : ''}<p>Gracias por confiar en Cortés Rodríguez Asesores.</p>`
-  const result = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: env.RESEND_FROM_EMAIL, to: [row.email], subject, text: textBody, html }) })
+  const feedbackText = feedbackUrl ? `\n\nEvalúa esta respuesta: ${feedbackUrl}` : ''
+  const html = `<p>Hola ${escapeHtml(row.client_name)},</p><div>${escapeHtml(row.body).replaceAll('\n', '<br />')}</div>${adminNote ? `<p><strong>Nota de administración:</strong><br />${escapeHtml(adminNote).replaceAll('\n', '<br />')}</p>` : ''}${feedbackUrl ? `<p>¿Cómo fue tu experiencia? <a href="${escapeHtml(feedbackUrl)}">Déjanos tu feedback</a>.</p>` : ''}<p>Gracias por confiar en Cortés Rodríguez Asesores.</p>`
+  const result = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: env.RESEND_FROM_EMAIL, to: [row.email], subject, text: `${textBody}${feedbackText}`, html }) })
   const body = await result.json().catch(() => ({}))
   if (!result.ok || !body.id) throw new Error(body.message || 'Resend no aceptó el envío.')
 }
@@ -93,4 +98,6 @@ function serializeReview(row) { return { id: String(row.id), requestId: String(r
 function pagination(page, pageSize, totalValue) { const totalItems = Number(totalValue || 0); return { page, pageSize, totalItems, totalPages: Math.max(Math.ceil(totalItems / pageSize), 1) } }
 function text(value) { return typeof value === 'string' ? value.trim() : '' }
 function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;') }
+function randomToken() { const bytes = new Uint8Array(32); crypto.getRandomValues(bytes); let binary = ''; bytes.forEach((byte) => { binary += String.fromCharCode(byte) }); return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '') }
+async function sha256(value) { const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))); let binary = ''; bytes.forEach((byte) => { binary += String.fromCharCode(byte) }); return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '') }
 function response(payload, status = 200) { return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json; charset=utf-8' } }) }

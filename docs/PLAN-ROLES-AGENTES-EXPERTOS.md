@@ -134,10 +134,10 @@ Asignación aleatoria entre expertos activos
 - [x] El experto puede guardar y enviar a revisión, pero no puede enviar al cliente.
 - [x] El administrador puede aprobar, rechazar para corrección o editar antes de aprobar.
 - [x] Permitir una nota administrativa opcional que se incluya en el correo al cliente.
-- [ ] Crear `client_feedback` relacionado con la solicitud y la respuesta enviada, con calificación, comentario, fecha, token de acceso y estado de revisión.
-- [ ] Permitir al cliente enviar feedback desde un enlace seguro incluido en el correo, sin exigirle crear una cuenta.
-- [ ] Limitar el feedback a una evaluación por respuesta enviada, con opción administrativa para solicitar una nueva evaluación si existe otra respuesta.
-- [ ] Crear una alerta y tarea administrativa para calificaciones bajas; el comentario no debe convertirse automáticamente en una nueva respuesta del experto.
+- [x] Crear `client_feedback` relacionado con la solicitud y la respuesta enviada, con calificación, comentario, fecha, token de acceso y estado de revisión.
+- [x] Permitir al cliente enviar feedback desde un enlace seguro incluido en el correo, sin exigirle crear una cuenta.
+- [x] Limitar el feedback a una evaluación por respuesta enviada, con opción administrativa para solicitar una nueva evaluación si existe otra respuesta.
+- [ ] Crear una alerta y tarea administrativa para calificaciones bajas; el comentario no debe convertirse automáticamente en una nueva respuesta del experto. (El feedback bajo queda marcado como `escalated` en esta primera etapa.)
 - [ ] Mostrar al experto solo el feedback que administración marque como compartible y sin datos de contacto del cliente.
 
 ### 6. Notificaciones y aprobación
