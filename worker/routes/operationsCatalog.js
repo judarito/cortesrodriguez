@@ -9,8 +9,10 @@ export async function handleOperationsCatalog(request, env) {
   const isConsultationCreate = url.pathname === '/api/app/catalog/consultation-types' && request.method === 'POST'
   const consultationMatch = url.pathname.match(/^\/api\/app\/catalog\/consultation-types\/([^/]+)$/)
   const isConsultationUpdate = Boolean(consultationMatch) && request.method === 'PUT'
+  const linkMatch = url.pathname.match(/^\/api\/app\/agent-links\/([^/]+)$/)
   const isAgentLinks = url.pathname === '/api/app/agent-links' && ['GET', 'POST'].includes(request.method)
-  if (!isPublicCatalog && !isPublicAgentLink && !isAdminCatalog && !isConsultationCreate && !isConsultationUpdate && !isAgentLinks) return null
+  const revokeAgentLink = Boolean(linkMatch) && request.method === 'DELETE'
+  if (!isPublicCatalog && !isPublicAgentLink && !isAdminCatalog && !isConsultationCreate && !isConsultationUpdate && !isAgentLinks && !revokeAgentLink) return null
   if (!env.NEON_DATABASE_URL) return response({ error: 'La base de datos operativa no está configurada.' }, 500)
 
   const { neon } = await import('@neondatabase/serverless')
@@ -34,8 +36,17 @@ export async function handleOperationsCatalog(request, env) {
   }
 
   if (!claims.permissions?.includes('agent_links.manage')) return response({ error: 'No tienes permisos para gestionar enlaces de agente.' }, 403)
-  if (request.method === 'GET') return listAgentLinks(sql, claims)
+  if (revokeAgentLink) return revokeLink(sql, linkMatch[1], claims)
+  if (request.method === 'GET') return listAgentLinks(sql, claims, url)
   return createAgentLink(sql, request, claims)
+}
+
+async function revokeLink(sql, id, claims) {
+  const isAdmin = claims.roles?.includes('admin')
+  const rows = await sql`UPDATE operations.agent_links SET active = FALSE, revoked_at = NOW() WHERE id = ${id} AND ${isAdmin ? sql`TRUE` : sql`agent_id = ${claims.sub}`} RETURNING id`
+  if (!rows[0]) return response({ error: 'Enlace no encontrado.' }, 404)
+  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id) VALUES (${claims.sub}, 'revoke', 'agent_link', ${id})`
+  return response({ ok: true })
 }
 
 async function getPublicCatalog(sql) {
@@ -76,7 +87,7 @@ async function getAdminCatalog(sql) {
       LEFT JOIN operations.consultation_type_experts cte ON cte.user_id = u.id AND cte.active = TRUE
       LEFT JOIN operations.consultation_types c ON c.id = cte.consultation_type_id
       WHERE u.active = TRUE
-      ORDER BY u.full_name, sp.name
+      ORDER BY u.full_name
     `,
     sql`
       SELECT DISTINCT u.id, u.full_name, u.email
@@ -171,21 +182,34 @@ async function audit(sql, actorId, action, entityId, metadata) {
   await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, ${action}, 'consultation_type', ${entityId}, ${JSON.stringify(metadata)}::jsonb)`
 }
 
-async function listAgentLinks(sql, claims) {
+async function listAgentLinks(sql, claims, url) {
   const isAdmin = claims.roles?.includes('admin')
-  const rows = await sql`
+  const page = Math.max(1, Number(url.searchParams.get('page') || 1))
+  const pageSize = Math.min(50, Math.max(1, Number(url.searchParams.get('pageSize') || 10)))
+  const search = text(url.searchParams.get('search'))
+  const offset = (page - 1) * pageSize
+  const filter = search ? `%${search}%` : null
+  const [countRows, rows] = await Promise.all([sql`
+    SELECT COUNT(*)::int AS total
+    FROM operations.agent_links l
+    JOIN operations.users u ON u.id = l.agent_id
+    WHERE ${isAdmin ? sql`TRUE` : sql`l.agent_id = ${claims.sub}`}
+      AND (${filter}::text IS NULL OR l.label ILIKE ${filter} OR u.full_name ILIKE ${filter} OR u.email ILIKE ${filter})
+  `, sql`
     SELECT l.id, l.agent_id, l.label, l.active, l.expires_at, l.revoked_at, l.created_at,
       u.full_name AS agent_name, u.email AS agent_email
     FROM operations.agent_links l
     JOIN operations.users u ON u.id = l.agent_id
     WHERE ${isAdmin ? sql`TRUE` : sql`l.agent_id = ${claims.sub}`}
+      AND (${filter}::text IS NULL OR l.label ILIKE ${filter} OR u.full_name ILIKE ${filter} OR u.email ILIKE ${filter})
     ORDER BY l.created_at DESC
-  `
+    LIMIT ${pageSize} OFFSET ${offset}
+  `])
   return response({ items: rows.map((row) => ({
     id: String(row.id), agentId: String(row.agent_id), agentName: String(row.agent_name), agentEmail: String(row.agent_email),
     label: String(row.label), active: Boolean(row.active), expiresAt: row.expires_at ? String(row.expires_at) : null,
     revokedAt: row.revoked_at ? String(row.revoked_at) : null, createdAt: String(row.created_at),
-  })) })
+  })), pagination: { page, pageSize, totalItems: Number(countRows[0]?.total || 0), totalPages: Math.max(1, Math.ceil(Number(countRows[0]?.total || 0) / pageSize)) } })
 }
 
 async function createAgentLink(sql, request, claims) {

@@ -218,3 +218,24 @@ Separar el estado operativo del estado de respuesta y del pago:
 - [ ] Confirmar si la selección aleatoria será completamente aleatoria o si se aplicará una variante balanceada para evitar sobrecargar a un experto.
 - [ ] Definir límite de imágenes por solicitud, tamaño máximo y política de conservación.
 - [ ] Definir escala de calificación, por ejemplo de 1 a 5, y el umbral que debe generar alerta administrativa.
+
+## Estándar transversal de interfaz
+
+Todos los listados administrativos deben usar el componente común `ListView` y respetar el mismo patrón:
+
+- encabezado con título, descripción, contador y botón de alta cuando aplique;
+- búsqueda y filtros en una barra consistente;
+- tabla/lista con columnas alineadas y estado visible;
+- paginación desde el servidor, mostrando página actual y total;
+- acciones de fila para ver, editar, activar/desactivar y eliminar según permisos;
+- confirmación explícita antes de cualquier eliminación;
+- estados homogéneos para carga, vacío, error y guardado.
+
+La configuración se divide en secciones cortas mediante pestañas o módulos independientes:
+
+1. **Servicios y consultas:** servicios generales, tipos de consulta, precios y expertos.
+2. **Enlaces de agentes:** agente propietario, estado, copiar, regenerar y revocar.
+3. **Notificaciones:** destinatarios y reglas.
+4. **Seguridad:** usuarios, roles y permisos.
+
+Los formularios de alta y edición se abrirán como panel contextual o modal; el listado permanecerá visible y las acciones quedarán asociadas a cada fila.

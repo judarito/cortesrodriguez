@@ -6,7 +6,11 @@ export async function handleOperationsNotifications(request, env) {
   const isServiceConfig = url.pathname === '/api/app/settings/service' && request.method === 'PUT'
   const createRecipient = url.pathname === '/api/app/settings/notification-recipients' && request.method === 'POST'
   const createRule = url.pathname === '/api/app/settings/notification-rules' && request.method === 'POST'
-  if (!isConfig && !isServiceConfig && !createRecipient && !createRule) return null
+  const recipientMatch = url.pathname.match(/^\/api\/app\/settings\/notification-recipients\/([^/]+)$/)
+  const ruleMatch = url.pathname.match(/^\/api\/app\/settings\/notification-rules\/([^/]+)$/)
+  const deleteRecipient = Boolean(recipientMatch) && request.method === 'DELETE'
+  const deleteRule = Boolean(ruleMatch) && request.method === 'DELETE'
+  if (!isConfig && !isServiceConfig && !createRecipient && !createRule && !deleteRecipient && !deleteRule) return null
 
   const claims = await requireOperationsAuth(request, env)
   if (!claims) return response({ error: 'Sesión requerida.' }, 401)
@@ -17,8 +21,12 @@ export async function handleOperationsNotifications(request, env) {
   const sql = neon(env.NEON_DATABASE_URL)
 
   if (isConfig) {
-    const [recipients, rules, services] = await Promise.all([
-      sql`SELECT id, name, email, recipient_type, active, created_at FROM operations.notification_recipients ORDER BY name`,
+    const recipientPage = pageParams(url.searchParams.get('recipientPage'))
+    const rulePage = pageParams(url.searchParams.get('rulePage'))
+    const [recipientCount, recipients, ruleCount, rules, services] = await Promise.all([
+      sql`SELECT COUNT(*)::int AS total FROM operations.notification_recipients`,
+      sql`SELECT id, name, email, recipient_type, active, created_at FROM operations.notification_recipients ORDER BY name LIMIT ${recipientPage.pageSize} OFFSET ${recipientPage.offset}`,
+      sql`SELECT COUNT(*)::int AS total FROM operations.notification_rules`,
       sql`
         SELECT r.id, r.name, r.event_code, r.service_type, r.active, r.created_at,
           COALESCE(string_agg(nr.name || ' <' || nr.email || '>', ', ' ORDER BY nr.name), '') AS recipients
@@ -27,22 +35,49 @@ export async function handleOperationsNotifications(request, env) {
         LEFT JOIN operations.notification_recipients nr ON nr.id = rnr.recipient_id
         GROUP BY r.id
         ORDER BY r.event_code, r.service_type
+        LIMIT ${rulePage.pageSize} OFFSET ${rulePage.offset}
       `,
       sql`SELECT code, name, amount_cents, currency, active FROM operations.service_catalog WHERE code = 'asesoria_personalizada' LIMIT 1`,
     ])
     return response({
       recipients: recipients.map((row) => ({ id: String(row.id), name: String(row.name), email: String(row.email), recipientType: String(row.recipient_type), active: Boolean(row.active), createdAt: String(row.created_at) })),
       rules: rules.map((row) => ({ id: String(row.id), name: String(row.name), eventCode: String(row.event_code), serviceType: String(row.service_type), active: Boolean(row.active), recipients: row.recipients ? String(row.recipients).split(', ') : [] })),
+      recipientPagination: pagination(recipientPage, recipientCount[0]?.total),
+      rulePagination: pagination(rulePage, ruleCount[0]?.total),
       service: services[0] ? { code: String(services[0].code), name: String(services[0].name), amountCents: Number(services[0].amount_cents), currency: String(services[0].currency), active: Boolean(services[0].active) } : null,
     })
   }
 
   if (isServiceConfig) return updateServiceConfig(sql, await request.json().catch(() => ({})), claims.sub)
+  if (deleteRecipient) return deleteRecipientRecord(sql, recipientMatch[1], claims.sub)
+  if (deleteRule) return deleteRuleRecord(sql, ruleMatch[1], claims.sub)
 
   const claimsUser = claims.sub
   const body = await request.json().catch(() => ({}))
   if (createRecipient) return createRecipientRecord(sql, body, claimsUser)
   return createRuleRecord(sql, body, claimsUser)
+}
+
+function pageParams(value) {
+  const page = Math.max(1, Number(value || 1)); const pageSize = 10
+  return { page, pageSize, offset: (page - 1) * pageSize }
+}
+function pagination(page, total) { const totalItems = Number(total || 0); return { page: page.page, pageSize: page.pageSize, totalItems, totalPages: Math.max(1, Math.ceil(totalItems / page.pageSize)) } }
+
+async function deleteRecipientRecord(sql, id, actorId) {
+  const linked = await sql`SELECT 1 FROM operations.notification_rule_recipients WHERE recipient_id = ${id} LIMIT 1`
+  if (linked.length) return response({ error: 'No puedes eliminar un destinatario usado por una regla. Desactívalo desde la configuración.' }, 409)
+  const rows = await sql`DELETE FROM operations.notification_recipients WHERE id = ${id} RETURNING id`
+  if (!rows[0]) return response({ error: 'Destinatario no encontrado.' }, 404)
+  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id) VALUES (${actorId}, 'delete', 'notification_recipient', ${id})`
+  return response({ ok: true })
+}
+
+async function deleteRuleRecord(sql, id, actorId) {
+  const rows = await sql`DELETE FROM operations.notification_rules WHERE id = ${id} RETURNING id`
+  if (!rows[0]) return response({ error: 'Regla no encontrada.' }, 404)
+  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id) VALUES (${actorId}, 'delete', 'notification_rule', ${id})`
+  return response({ ok: true })
 }
 
 async function updateServiceConfig(sql, body, actorId) {
