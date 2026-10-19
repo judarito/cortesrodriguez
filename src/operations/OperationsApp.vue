@@ -4,6 +4,7 @@ import OperationsCatalogPanel from './OperationsCatalogPanel.vue'
 import ListView from '../shared/components/ListView.vue'
 import NotificationConfigPanel from './NotificationConfigPanel.vue'
 import SecurityPanel from './SecurityPanel.vue'
+import ExpertRequestsPanel from './ExpertRequestsPanel.vue'
 
 const token = ref(localStorage.getItem('operationsToken') || '')
 const user = ref(JSON.parse(localStorage.getItem('operationsUser') || 'null'))
@@ -65,6 +66,7 @@ const menuItems = [
   { label: 'Configuración', permission: 'settings.manage', icon: '⚙' },
   { label: 'Servicios y consultas', permission: 'services.manage', icon: 'SV' },
   { label: 'Enlaces de agentes', permission: 'agent_links.manage', icon: 'AG' },
+  { label: 'Solicitudes asignadas', permission: 'expert_requests.read', icon: 'EX' },
 ]
 const visibleMenu = computed(() => menuItems.filter((item) => user.value?.permissions?.includes(item.permission)))
 const isAuthenticated = computed(() => Boolean(token.value && user.value))
@@ -492,6 +494,7 @@ onMounted(restoreSession)
         </template>
       </section>
       <OperationsCatalogPanel v-else-if="activeMenu === 'Servicios y consultas' || activeMenu === 'Enlaces de agentes'" :token="token" :user="user" :section="activeMenu === 'Servicios y consultas' ? 'catalog' : 'links'" />
+      <ExpertRequestsPanel v-else-if="activeMenu === 'Solicitudes asignadas'" :token="token" />
       <NotificationConfigPanel v-else-if="activeMenu === 'Configuración'" :token="token" />
       <section v-else-if="activeMenu === 'Configuración'" class="module-view security-view">
         <div class="module-heading"><div><p class="eyebrow">Preferencias operativas</p><h1>Configuración</h1><p>Define quién recibe las comunicaciones de cada evento.</p></div><button type="button" class="secondary-button compact" @click="loadNotifications">↻ Actualizar</button></div>

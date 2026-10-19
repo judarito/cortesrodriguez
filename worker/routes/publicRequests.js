@@ -33,6 +33,19 @@ export async function handlePublicRequests(request, env) {
   `
   if (!serviceRows[0]) return response({ error: 'La especialidad seleccionada no está disponible.' }, 503)
   const service = serviceRows[0]
+  const expertRows = await sql`
+    SELECT u.id
+    FROM operations.consultation_type_experts cte
+    JOIN operations.users u ON u.id = cte.user_id AND u.active = TRUE
+    JOIN operations.user_roles ur ON ur.user_id = u.id
+    JOIN operations.roles role ON role.id = ur.role_id AND role.name = 'expert'
+    WHERE cte.consultation_type_id = ${service.consultation_type_id}
+      AND cte.active = TRUE
+    ORDER BY u.id
+  `
+  const assignedExpertId = expertRows.length
+    ? expertRows[crypto.getRandomValues(new Uint32Array(1))[0] % expertRows.length].id
+    : null
   let source = 'landingpage'
   let sourceChannel = 'direct_web'
   let agentId = null
@@ -84,15 +97,24 @@ export async function handlePublicRequests(request, env) {
       id, client_id, reference, source, legal_entity_type, email, phone, whatsapp,
       service_name, service_amount_cents, service_currency, service_type, freight_agent, product_type, status,
       source_channel, agent_id, agent_link_id, specialty_id, specialty_name, specialty_description, question,
-      general_service_code, general_service_name, consultation_type_id, consultation_type_code, consultation_type_name, payment_required
+      general_service_code, general_service_name, consultation_type_id, consultation_type_code, consultation_type_name, consultation_type_description, payment_required,
+      assigned_expert_id
     ) VALUES (
       ${requestId}, ${clientId}, ${reference}, ${source}, ${input.legalEntityType},
       ${input.email || null}, ${input.phone || null}, ${input.whatsapp || null},
       ${service.service_name}, ${service.amount_cents}, ${service.currency}, ${input.serviceType}, ${input.freightAgent || null}, ${input.productType}, 'pending',
       ${sourceChannel}, ${agentId}, ${agentLinkId}, NULL, NULL, NULL, ${input.question || null},
-      ${input.serviceType}, ${service.service_name}, ${service.consultation_type_id}, ${input.consultationType}, ${service.consultation_name}, ${service.payment_required}
+      ${input.serviceType}, ${service.service_name}, ${service.consultation_type_id}, ${input.consultationType}, ${service.consultation_name}, ${service.consultation_description}, ${service.payment_required},
+      ${assignedExpertId}
     )
   `
+
+  if (assignedExpertId) {
+    await sql`
+      INSERT INTO operations.request_assignments (request_id, expert_id, consultation_type_id, candidate_count, strategy, status)
+      VALUES (${requestId}, ${assignedExpertId}, ${service.consultation_type_id}, ${expertRows.length}, 'random_pool', 'assigned')
+    `
+  }
 
   if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
     try { await sendRequestNotification(sql, env, requestId, 'request_created') } catch (error) { console.error('No se pudo enviar la notificación de solicitud creada:', error.message) }

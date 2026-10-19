@@ -115,13 +115,13 @@ Asignación aleatoria entre expertos activos
 ### 4. Asignación y vista del experto
 
 - [ ] Asociar expertos a tipos de consulta mediante un pool configurable, con estado activo y fechas de vigencia.
-- [ ] Crear `request_assignments` con experto, tipo de consulta, fecha, actor, estrategia, motivo y estado.
-- [ ] Seleccionar aleatoriamente un experto activo del pool al crear la solicitud, usando una fuente aleatoria del servidor y registrando los candidatos considerados.
+- [x] Crear `request_assignments` con experto, tipo de consulta, fecha, actor, estrategia, motivo y estado.
+- [x] Seleccionar aleatoriamente un experto activo del pool al crear la solicitud, usando una fuente aleatoria del servidor y registrando los candidatos considerados.
 - [ ] Definir fallback cuando no existan expertos activos: cola administrativa y alerta de asignación fallida.
 - [ ] Permitir reasignación administrativa conservando el historial.
-- [ ] Crear la bandeja del experto con solo sus asignaciones.
-- [ ] Las consultas del experto deben seleccionar únicamente pregunta, especialidad, estado de respuesta y adjuntos autorizados.
-- [ ] No incluir en respuestas API del experto nombre, correo, teléfono, WhatsApp, constitución legal, agente, fuente ni información de pago.
+- [x] Crear la bandeja del experto con solo sus asignaciones.
+- [x] Las consultas del experto deben seleccionar únicamente pregunta, especialidad, estado de respuesta y adjuntos autorizados.
+- [x] No incluir en respuestas API del experto nombre, correo, teléfono, WhatsApp, constitución legal, agente, fuente ni información de pago.
 
 ### 5. Preguntas, imágenes y respuesta experta
 
@@ -129,9 +129,9 @@ Asignación aleatoria entre expertos activos
 - [ ] Crear `request_attachments` para nombre original, MIME, tamaño, hash, clave privada, estado y auditoría.
 - [ ] Guardar imágenes en almacenamiento privado; validar MIME real, extensión, tamaño máximo y cantidad.
 - [ ] Servir imágenes mediante endpoint autorizado o URL temporal según el rol y la asignación.
-- [ ] Crear `expert_responses` con versión, texto, experto, estado, fechas y observaciones internas.
+- [x] Crear `expert_responses` con versión, texto, experto, estado, fechas y observaciones internas.
 - [ ] Usar estados de respuesta: `draft`, `pending_admin_review`, `rejected`, `approved` y `sent`.
-- [ ] El experto puede guardar y enviar a revisión, pero no puede enviar al cliente.
+- [x] El experto puede guardar y enviar a revisión, pero no puede enviar al cliente.
 - [ ] El administrador puede aprobar, rechazar para corrección o editar antes de aprobar.
 - [ ] Permitir una nota administrativa opcional que se incluya en el correo al cliente.
 - [ ] Crear `client_feedback` relacionado con la solicitud y la respuesta enviada, con calificación, comentario, fecha, token de acceso y estado de revisión.
