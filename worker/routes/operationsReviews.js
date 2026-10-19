@@ -3,9 +3,10 @@ import { requireOperationsAuth } from './operationsAuth.js'
 export async function handleOperationsReviews(request, env) {
   const url = new URL(request.url)
   const isList = url.pathname === '/api/app/reviews/responses' && request.method === 'GET'
+  const isFeedbackList = url.pathname === '/api/app/reviews/feedback' && request.method === 'GET'
   const match = url.pathname.match(/^\/api\/app\/reviews\/responses\/([^/]+)$/)
   const isUpdate = Boolean(match) && request.method === 'PUT'
-  if (!isList && !isUpdate) return null
+  if (!isList && !isFeedbackList && !isUpdate) return null
 
   const claims = await requireOperationsAuth(request, env)
   if (!claims?.permissions?.includes('responses.review')) return response({ error: 'No tienes permisos para revisar respuestas.' }, 403)
@@ -13,6 +14,25 @@ export async function handleOperationsReviews(request, env) {
 
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
+  if (isFeedbackList) {
+    const page = Math.max(Number(url.searchParams.get('page')) || 1, 1)
+    const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize')) || 10, 1), 50)
+    const offset = (page - 1) * pageSize
+    const [countRows, rows] = await Promise.all([
+      sql`SELECT COUNT(*)::int AS total FROM operations.client_feedback WHERE rating IS NOT NULL`,
+      sql`SELECT f.id, f.rating, f.comment, f.status, f.created_at, f.received_at,
+          r.reference, r.consultation_type_name, c.full_name AS client_name,
+          u.full_name AS expert_name
+        FROM operations.client_feedback f
+        JOIN operations.requests r ON r.id = f.request_id
+        JOIN operations.clients c ON c.id = r.client_id
+        LEFT JOIN operations.users u ON u.id = r.assigned_expert_id
+        WHERE f.rating IS NOT NULL
+        ORDER BY f.received_at DESC NULLS LAST
+        LIMIT ${pageSize} OFFSET ${offset}`,
+    ])
+    return response({ items: rows.map((row) => ({ id: String(row.id), reference: String(row.reference), rating: Number(row.rating), comment: row.comment ? String(row.comment) : '', status: String(row.status), consultationType: row.consultation_type_name ? String(row.consultation_type_name) : '', clientName: String(row.client_name), expertName: row.expert_name ? String(row.expert_name) : '', receivedAt: row.received_at ? String(row.received_at) : String(row.created_at) })), pagination: pagination(page, pageSize, countRows[0]?.total) })
+  }
   if (isList) {
     const page = Math.max(Number(url.searchParams.get('page')) || 1, 1)
     const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize')) || 10, 1), 50)

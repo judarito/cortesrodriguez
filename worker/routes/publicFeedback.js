@@ -1,3 +1,5 @@
+import { sendRequestNotification } from './operationsEmail.js'
+
 export async function handlePublicFeedback(request, env) {
   const url = new URL(request.url)
   const token = String(url.searchParams.get('token') || '').trim()
@@ -9,7 +11,7 @@ export async function handlePublicFeedback(request, env) {
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   const rows = await sql`
-    SELECT f.id, f.rating, f.comment, f.status, r.reference, r.consultation_type_name
+    SELECT f.id, f.request_id, f.rating, f.comment, f.status, r.reference, r.consultation_type_name
     FROM operations.client_feedback f
     JOIN operations.requests r ON r.id = f.request_id
     WHERE f.token_hash = ${await sha256(token)}
@@ -26,6 +28,9 @@ export async function handlePublicFeedback(request, env) {
   if (comment.length > 5000) return response({ error: 'El comentario no puede superar 5.000 caracteres.' }, 400)
   const status = rating <= 3 ? 'escalated' : 'received'
   await sql`UPDATE operations.client_feedback SET rating = ${rating}, comment = ${comment || null}, status = ${status}, received_at = NOW() WHERE id = ${rows[0].id}`
+  if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
+    try { await sendRequestNotification(sql, env, rows[0].request_id, status === 'escalated' ? 'feedback_low' : 'feedback_received') } catch (error) { console.error('No se pudo notificar el feedback:', error.message) }
+  }
   return response({ ok: true, status })
 }
 

@@ -58,7 +58,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const bcc = recipients.filter((item) => item.recipient_type === 'bcc').map((item) => String(item.email))
   if (!to.length) throw new Error('La regla no tiene un destinatario principal tipo Para.')
 
-  const eventLabel = { payment_approved: 'Pago aprobado', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud', status_changed: 'Solicitud actualizada' }[eventCode]
+  const eventLabel = { payment_approved: 'Pago aprobado', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
   const subject = `${eventLabel} · ${request.reference}`
   const text = [
     `${eventLabel}: ${request.reference}`,

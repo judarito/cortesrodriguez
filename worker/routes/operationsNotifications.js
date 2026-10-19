@@ -114,7 +114,7 @@ async function createRuleRecord(sql, body, actorId) {
   const serviceType = text(body.serviceType) || 'all'
   const recipientIds = Array.isArray(body.recipientIds) ? body.recipientIds.filter((value) => typeof value === 'string') : []
   if (!name || !eventCode || !serviceType || !recipientIds.length) return response({ error: 'Nombre, evento, servicio y al menos un destinatario son obligatorios.' }, 400)
-  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
+  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_response_submitted', 'feedback_received', 'feedback_low'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
   if (!['all', 'importacion', 'exportacion', 'agente_carga'].includes(serviceType)) return response({ error: 'Tipo de servicio inválido.' }, 400)
   try {
     const rows = await sql`INSERT INTO operations.notification_rules (name, event_code, service_type) VALUES (${name}, ${eventCode}, ${serviceType}) RETURNING id, name, event_code, service_type, active`
