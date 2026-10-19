@@ -19,6 +19,7 @@ const linkPagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1
 const newLink = ref({ label: 'Enlace principal' })
 const selectedAgentId = ref('')
 const editingConsultationId = ref('')
+const consultationFormOpen = ref(false)
 const consultationForm = ref({ code: '', name: '', description: '', serviceCode: '', amountCents: 0, currency: 'USD', paymentRequired: true, active: true, expertIds: [] })
 const createdLink = ref(null)
 const linkFormOpen = ref(false)
@@ -93,11 +94,19 @@ function editConsultation(item) {
   if (!source) return
   consultationForm.value = { code: source.consultationCode, name: source.consultationName, description: source.consultationDescription || '', serviceCode: source.serviceCode, amountCents: source.amountCents, currency: source.currency, paymentRequired: true, active: source.active, expertIds: catalog.value.experts.filter((expert) => expert.consultationTypeId === source.consultationId).map((expert) => expert.id) }
   editingConsultationId.value = source.consultationId
+  consultationFormOpen.value = true
 }
 
 function resetConsultation() {
   editingConsultationId.value = ''
   consultationForm.value = { code: '', name: '', description: '', serviceCode: catalog.value.services[0]?.code || '', amountCents: 0, currency: 'USD', paymentRequired: true, active: true, expertIds: [] }
+  consultationFormOpen.value = false
+}
+
+function openNewConsultation() {
+  editingConsultationId.value = ''
+  consultationForm.value = { code: '', name: '', description: '', serviceCode: catalog.value.services[0]?.code || '', amountCents: 0, currency: 'USD', paymentRequired: true, active: true, expertIds: [] }
+  consultationFormOpen.value = true
 }
 
 async function saveConsultation() {
@@ -132,7 +141,7 @@ onMounted(load)
 
 <template>
   <section class="module-view catalog-view">
-    <div class="module-heading"><div><p class="eyebrow">Configuración operativa</p><h1>{{ showCatalog ? 'Servicios y consultas' : 'Enlaces de agentes' }}</h1><p>{{ showCatalog ? 'Configura la oferta, los precios y los expertos que responden cada consulta.' : 'Crea y comparte enlaces para identificar las solicitudes de cada agente.' }}</p></div><button type="button" class="secondary-button compact" @click="load">↻ Actualizar</button></div>
+    <div class="module-heading"><div><p class="eyebrow">Configuración operativa</p><h1>{{ showCatalog ? 'Servicios y consultas' : 'Enlaces de agentes' }}</h1><p>{{ showCatalog ? 'Configura la oferta, los precios y los expertos que responden cada consulta.' : 'Crea y comparte enlaces para identificar las solicitudes de cada agente.' }}</p></div><div class="module-heading-actions"><button v-if="showCatalog" type="button" class="primary-button compact" @click="openNewConsultation">+ Nueva consulta</button><button type="button" class="secondary-button compact" @click="load">↻ Actualizar</button></div></div>
     <p v-if="notice" class="security-notice">{{ notice }}</p><p v-if="error" class="request-error">{{ error }}</p>
     <div v-if="loading" class="module-state panel">Cargando configuración…</div>
     <template v-else>
@@ -151,4 +160,6 @@ onMounted(load)
 .link-form select{min-height:39px;padding:0 10px;border:1px solid #d8e0ea;border-radius:7px;color:#344b60;background:#fff}
 .secondary-button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 13px;border:1px solid #d8e5ee;border-radius:7px;color:#315b78;background:#fff;font-size:10px;font-weight:800;cursor:pointer;white-space:nowrap}.secondary-button:hover{border-color:#9fc1d4;color:#0e4567;background:#f5fafc}.secondary-button.compact{min-height:33px;padding:0 11px}
 .consultation-editor{grid-column:1/-1}.consultation-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:18px}.consultation-form label{display:grid;gap:6px;color:#526174;font-size:10px;font-weight:700}.consultation-form input,.consultation-form select,.consultation-form textarea{min-height:38px;padding:8px 10px;border:1px solid #d8e0ea;border-radius:7px;color:#344b60;background:#fff;font-size:11px}.consultation-form textarea{resize:vertical}.full-label{grid-column:1/-1}.expert-picker{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:0;padding:10px;border:1px solid #e5eaf0;border-radius:7px}.expert-picker legend{grid-column:1/-1;padding:0 0 6px;border:0;font-size:10px}.expert-option{display:flex!important;grid-template-columns:auto 1fr!important;gap:7px!important;padding:7px;border-radius:5px;background:#f8fafc}.expert-option input{min-height:auto}.expert-option span{display:grid;gap:2px}.expert-option small{color:#98a2b3;font-size:9px;font-weight:400}.consultation-actions{display:flex;justify-content:flex-end;gap:8px;grid-column:1/-1}.catalog-specialty-button{width:100%;border:0;text-align:left;background:transparent;cursor:pointer}.catalog-specialty-button:hover{background:#eef6fa}.catalog-specialty-button>span:first-child{display:grid;gap:4px}.catalog-specialty-button small{color:#98a2b3;font-size:10px}@media(max-width:800px){.consultation-form{grid-template-columns:1fr}.expert-picker{grid-template-columns:1fr}}
+.consultation-editor{grid-row:3}
+.module-heading-actions{display:flex;align-items:center;gap:8px}
 </style>
