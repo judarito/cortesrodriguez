@@ -125,7 +125,7 @@ async function createConsultationType(sql, body, actorId) {
     const created = await sql`INSERT INTO operations.consultation_types (code, name, description) VALUES (${input.code}, ${input.name}, ${input.description}) RETURNING id`
     await sql`INSERT INTO operations.service_consultation_types (service_id, consultation_type_id, amount_cents, currency, payment_required) VALUES (${service[0].id}, ${created[0].id}, ${input.amountCents}, ${input.currency}, ${input.paymentRequired})`
     await replaceConsultationExperts(sql, created[0].id, input.expertIds)
-    if (input.expertIds.length) await ensureExpertNotificationRule(sql, service[0], input.name, actorId)
+    if (input.expertIds.length) await ensureExpertNotificationRules(sql, created[0].id, input.name, actorId)
     await audit(sql, actorId, 'create', created[0].id, input)
     return response({ ok: true, id: String(created[0].id) }, 201)
   } catch (error) {
@@ -144,7 +144,7 @@ async function updateConsultationType(sql, id, body, actorId) {
   if (!updated[0]) return response({ error: 'Tipo de consulta no encontrado.' }, 404)
   await sql`UPDATE operations.service_consultation_types SET amount_cents = ${input.amountCents}, currency = ${input.currency}, payment_required = ${input.paymentRequired}, active = ${input.active}, updated_at = NOW() WHERE service_id = ${service[0].id} AND consultation_type_id = ${id}`
   await replaceConsultationExperts(sql, id, input.expertIds)
-  if (input.expertIds.length) await ensureExpertNotificationRule(sql, service[0], input.name, actorId)
+  if (input.expertIds.length) await ensureExpertNotificationRules(sql, id, input.name, actorId)
   await audit(sql, actorId, 'update', id, input)
   return response({ ok: true, id: String(id) })
 }
@@ -178,6 +178,16 @@ async function validExperts(sql, ids) {
 async function replaceConsultationExperts(sql, consultationTypeId, expertIds) {
   await sql`DELETE FROM operations.consultation_type_experts WHERE consultation_type_id = ${consultationTypeId}`
   for (const expertId of expertIds) await sql`INSERT INTO operations.consultation_type_experts (consultation_type_id, user_id) VALUES (${consultationTypeId}, ${expertId})`
+}
+
+async function ensureExpertNotificationRules(sql, consultationTypeId, consultationName, actorId) {
+  const services = await sql`
+    SELECT DISTINCT s.code, s.name
+    FROM operations.service_consultation_types sct
+    JOIN operations.services s ON s.id = sct.service_id
+    WHERE sct.consultation_type_id = ${consultationTypeId} AND s.active = TRUE
+  `
+  for (const service of services) await ensureExpertNotificationRule(sql, service, consultationName, actorId)
 }
 
 async function ensureExpertNotificationRule(sql, service, consultationName, actorId) {
