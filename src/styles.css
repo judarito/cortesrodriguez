@@ -73,6 +73,160 @@ body {
 .operations-shell .danger-link { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 0 10px; border: 1px solid #efc7c7; border-radius: 6px; color: #b54747; background: #fff7f7; font-size: 10px; font-weight: 800; cursor: pointer; white-space: nowrap; }
 .operations-shell .danger-link:hover { color: #fff; border-color: #b54747; background: #b54747; }
 
+/* Catalog views are rendered by a child component, so these operational
+   primitives must stay global instead of relying on OperationsApp's scoped CSS. */
+.operations-shell .catalog-view { padding-top: 39px; }
+.operations-shell .catalog-view .module-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+.operations-shell .catalog-view .module-heading h1 {
+  margin: 0 0 8px;
+  color: #142c43;
+  font-size: 28px;
+  letter-spacing: -.045em;
+}
+.operations-shell .catalog-view .module-heading p:last-child {
+  margin: 0;
+  color: #7d8999;
+  font-size: 13px;
+}
+.operations-shell .catalog-view .module-heading-actions {
+  flex-shrink: 0;
+}
+.operations-shell .catalog-view .primary-button,
+.operations-shell .catalog-view .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 13px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.operations-shell .catalog-view .primary-button {
+  border: 0;
+  color: #fff;
+  background: #0e4567;
+  box-shadow: 0 8px 18px rgba(14,69,103,.16);
+}
+.operations-shell .catalog-view .primary-button:hover { background: #0a3855; }
+.operations-shell .catalog-view .secondary-button {
+  border: 1px solid #d8e5ee;
+  color: #315b78;
+  background: #fff;
+  box-shadow: 0 3px 8px rgba(28,53,77,.04);
+}
+.operations-shell .catalog-view .secondary-button:hover { background: #f7fafc; }
+.operations-shell .catalog-view .compact { min-height: 36px; }
+.operations-shell .catalog-view > .list-view {
+  margin-top: 16px;
+  padding: 20px 20px 4px;
+  border: 1px solid #e5eaf0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(25,47,70,.025);
+}
+.operations-shell .catalog-view > .list-view + .list-view { margin-top: 16px; }
+.operations-shell .catalog-view .list-view-header h2 {
+  margin: 0 0 5px;
+  color: #223b53;
+  font-size: 14px;
+}
+.operations-shell .catalog-view .list-view-header p {
+  margin: 0;
+  color: #98a2b3;
+  font-size: 10px;
+}
+.operations-shell .catalog-view .list-view-summary { margin-bottom: 6px; }
+.operations-shell .catalog-view .list-view-table { margin-top: 20px; }
+.operations-shell .catalog-view .list-view-table th { padding-bottom: 12px; }
+.operations-shell .catalog-view .list-view-table td { padding-top: 14px; padding-bottom: 14px; }
+.operations-shell .catalog-view .list-view-table td strong { color: #344b60; font-size: 11px; }
+.operations-shell .catalog-view .list-view-table .muted-cell {
+  display: inline-block;
+  margin-top: 3px;
+  color: #98a2b3;
+  font-size: 9px;
+  line-height: 1.35;
+}
+.operations-shell .catalog-view .list-view-table .secondary-button { min-height: 30px; padding: 0 10px; font-size: 10px; }
+.operations-shell .catalog-view .catalog-editor-form {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 20px;
+  border: 1px solid #dbe5ee;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(25,47,70,.05);
+}
+.operations-shell .catalog-view .catalog-editor-form .panel-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 15px;
+}
+.operations-shell .catalog-view .catalog-editor-form h2 { margin: 0 0 5px; color: #223b53; font-size: 16px; }
+.operations-shell .catalog-view .catalog-editor-form p { margin: 0; color: #98a2b3; font-size: 10px; }
+.operations-shell .catalog-view .catalog-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.operations-shell .catalog-view .catalog-form-grid label {
+  display: grid;
+  gap: 7px;
+  color: #526174;
+  font-size: 10px;
+  font-weight: 800;
+}
+.operations-shell .catalog-view .catalog-form-grid input,
+.operations-shell .catalog-view .catalog-form-grid select,
+.operations-shell .catalog-view .catalog-form-grid textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #d8e0ea;
+  border-radius: 7px;
+  outline: 0;
+  color: #344b60;
+  background: #fff;
+  font: inherit;
+  font-size: 11px;
+}
+.operations-shell .catalog-view .catalog-form-grid textarea { resize: vertical; }
+.operations-shell .catalog-view .catalog-form-grid .full-label { grid-column: 1 / -1; }
+.operations-shell .catalog-view .permission-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #e5eaf0;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+.operations-shell .catalog-view .permission-picker legend { padding: 0 6px; color: #526174; font-size: 10px; font-weight: 800; }
+.operations-shell .catalog-view .permission-option { display: flex; align-items: flex-start; gap: 8px; padding: 7px; border-radius: 6px; background: #f6f9fc; }
+.operations-shell .catalog-view .permission-option input { width: 15px; min-height: 15px; margin-top: 1px; accent-color: #0e4567; }
+.operations-shell .catalog-view .permission-option span { display: grid; gap: 2px; color: #526174; }
+.operations-shell .catalog-view .permission-option strong { font-size: 10px; }
+.operations-shell .catalog-view .permission-option small { color: #98a2b3; font-size: 9px; }
+.operations-shell .catalog-view .form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 720px) {
+  .operations-shell .catalog-view .module-heading { display: block; }
+  .operations-shell .catalog-view .module-heading-actions { margin-top: 16px; }
+  .operations-shell .catalog-view .catalog-form-grid { grid-template-columns: 1fr; }
+  .operations-shell .catalog-view .catalog-form-grid .full-label { grid-column: auto; }
+}
+
 a {
   color: inherit;
   text-decoration: none;
