@@ -239,3 +239,35 @@ La configuración se divide en secciones cortas mediante pestañas o módulos in
 4. **Seguridad:** usuarios, roles y permisos.
 
 Los formularios de alta y edición se abrirán como panel contextual o modal; el listado permanecerá visible y las acciones quedarán asociadas a cada fila.
+
+## 9. Seguridad, antiabuso y formulario público
+
+Esta fase protege el formulario público y consolida la seguridad de la plataforma antes de ampliar los cobros y el uso productivo.
+
+- [x] Validar en frontend y backend nombre, correo, teléfono, WhatsApp, pregunta, campos obligatorios, longitud y caracteres de control.
+- [x] Limitar las solicitudes públicas a 5 imágenes, 10 MB por archivo, 25 MB en total y 35 MB por petición.
+- [x] Verificar mediante firma binaria que los adjuntos sean realmente PNG, JPG o WEBP, sin confiar únicamente en la extensión o el MIME enviado por el navegador.
+- [x] Limpiar los nombres de archivos antes de guardarlos y mantener los adjuntos fuera del acceso público directo.
+- [ ] Integrar Cloudflare Turnstile en `/solicitud`, validando el token exclusivamente en el Worker y usando claves separadas para `dev` y producción.
+- [ ] Definir si Turnstile se muestra siempre o solo después de varios intentos fallidos o señales de abuso.
+- [ ] Configurar rate limiting y reglas WAF para creación de solicitudes, consulta de enlaces de agente, feedback y reenvío de correos.
+- [ ] Añadir protección contra duplicados y abuso por correo, IP, agente y ventana de tiempo, sin bloquear clientes legítimos.
+- [ ] Configurar en Cloudflare los headers `Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` y protección contra clickjacking.
+- [ ] Migrar las sesiones operativas desde `localStorage` a cookies `HttpOnly`, `Secure` y `SameSite`, con expiración, revocación y protección CSRF.
+- [ ] Mantener la autorización en backend por rol, fila y campo: agente solo ve sus solicitudes, experto solo sus asignaciones y admin toda la operación.
+- [ ] Servir imágenes mediante endpoint autorizado o URLs temporales; registrar acceso, descarga, hash, tamaño y estado del archivo.
+- [ ] Crear auditoría para accesos, cambios de permisos, configuración, asignaciones, respuestas, archivos, correos y feedback.
+- [ ] Evitar HTML dinámico no sanitizado, URLs externas no verificadas, secretos en el frontend y datos sensibles en parámetros de URL.
+- [ ] Ejecutar pruebas de seguridad para CAPTCHA inválido, rate limit, archivos falsos, payloads grandes, caracteres especiales, sesión expirada y permisos insuficientes.
+- [ ] Verificar el flujo completo en `dev`: formulario directo, enlace de agente, asignación, respuesta, aprobación, correo y feedback.
+- [ ] Publicar únicamente en `dev` hasta completar las pruebas; `main` debe mantenerse protegido mediante Pull Request aprobado.
+
+### Criterios de aceptación de seguridad
+
+- Una petición manual no puede saltarse las validaciones del formulario.
+- Un archivo renombrado con extensión de imagen no puede almacenarse si su firma real no es válida.
+- Un experto no puede obtener datos personales modificando la URL, parámetros o respuesta del frontend.
+- Un agente no puede consultar solicitudes de otro agente ni cambiar el origen de una solicitud.
+- Una sesión vencida redirige al login y no permite continuar operando mediante llamadas directas a la API.
+- El CAPTCHA y el rate limiting se validan en backend y tienen configuración independiente por entorno.
+- No se publican secretos, tokens permanentes ni credenciales en el bundle del frontend.
