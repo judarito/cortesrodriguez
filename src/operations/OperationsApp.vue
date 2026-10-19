@@ -14,6 +14,7 @@ const loading = ref(false)
 const sessionChecking = ref(Boolean(token.value))
 const error = ref('')
 const activeMenu = ref('Inicio')
+const mobileMenuOpen = ref(false)
 const moduleLoading = ref(false)
 const moduleError = ref('')
 const clients = ref([])
@@ -164,6 +165,7 @@ async function loadModule(module, page = 1) {
 
 async function selectMenu(item) {
   activeMenu.value = item.label
+  mobileMenuOpen.value = false
   if (item.label === 'Inicio') await loadDashboard()
   if (item.label === 'Clientes' || item.label === 'Solicitudes') await loadModule(item.label, 1)
   if (item.label === 'Usuarios y roles') await loadSecurity()
@@ -471,7 +473,7 @@ onMounted(restoreSession)
   </main>
 
   <main v-else class="operations-shell">
-    <aside class="operations-sidebar"><div class="sidebar-brand"><span class="brand-mark brand-mark-light">CRA</span><span><strong>CRA</strong><small>Operaciones</small></span></div><div class="sidebar-label">Menú principal</div><nav aria-label="Navegación de operaciones"><button v-for="item in visibleMenu.slice(0, 6)" :key="item.permission" type="button" :class="['operations-menu-item', { active: activeMenu === item.label }]" @click="selectMenu(item)"><span class="menu-icon">{{ item.icon }}</span><span>{{ item.label }}</span><span v-if="item.label === 'Solicitudes'" class="menu-count">{{ requestCount }}</span></button></nav><div v-if="visibleMenu.length > 6" class="sidebar-bottom-menu"><div class="sidebar-label">Administración</div><button v-for="item in visibleMenu.slice(6)" :key="item.permission" type="button" :class="['operations-menu-item', { active: activeMenu === item.label }]" @click="selectMenu(item)"><span class="menu-icon">{{ item.icon }}</span><span>{{ item.label }}</span></button></div><div class="sidebar-profile"><div class="avatar avatar-small">{{ user.name?.slice(0, 2).toUpperCase() }}</div><div><strong>{{ user.name }}</strong><span>{{ user.roles?.[0] || 'Usuario' }}</span></div><button type="button" aria-label="Cerrar sesión" @click="logout">↪</button></div></aside>
+    <aside class="operations-sidebar"><div class="sidebar-head"><div class="sidebar-brand"><span class="brand-mark brand-mark-light">CRA</span><span><strong>CRA</strong><small>Operaciones</small></span></div><button class="mobile-menu-toggle" type="button" :aria-expanded="mobileMenuOpen" aria-controls="operations-navigation" @click="mobileMenuOpen = !mobileMenuOpen"><span>☰</span><span>Menú</span></button></div><div class="sidebar-label">Menú principal</div><nav id="operations-navigation" :class="{ open: mobileMenuOpen }" aria-label="Navegación de operaciones"><button v-for="item in visibleMenu.slice(0, 6)" :key="item.permission" type="button" :class="['operations-menu-item', { active: activeMenu === item.label }]" @click="selectMenu(item)"><span class="menu-icon">{{ item.icon }}</span><span>{{ item.label }}</span><span v-if="item.label === 'Solicitudes'" class="menu-count">{{ requestCount }}</span></button></nav><div v-if="visibleMenu.length > 6" class="sidebar-bottom-menu"><div class="sidebar-label">Administración</div><button v-for="item in visibleMenu.slice(6)" :key="item.permission" type="button" :class="['operations-menu-item', { active: activeMenu === item.label }]" @click="selectMenu(item)"><span class="menu-icon">{{ item.icon }}</span><span>{{ item.label }}</span></button></div><div class="sidebar-profile"><div class="avatar avatar-small">{{ user.name?.slice(0, 2).toUpperCase() }}</div><div><strong>{{ user.name }}</strong><span>{{ user.roles?.[0] || 'Usuario' }}</span></div><button type="button" aria-label="Cerrar sesión" @click="logout">↪</button></div></aside>
     <section class="operations-content"><header class="operations-topbar"><div class="breadcrumb"><span>Operaciones</span><b>/</b><strong>{{ currentMenu?.label }}</strong></div><div class="topbar-actions"><label class="search-box"><span>⌕</span><input placeholder="Buscar en la plataforma..." /></label><button class="icon-button" type="button" aria-label="Notificaciones">♧<i></i></button><div class="avatar">{{ user.name?.slice(0, 2).toUpperCase() }}</div></div></header>
       <div v-if="activeMenu === 'Inicio'" class="dashboard-view"><div class="dashboard-heading"><div><p class="eyebrow">Miércoles, 14 de octubre de 2026</p><h1>Buenos días, {{ user.name?.split(' ')[0] }} <span>✦</span></h1><p>{{ isAgent ? 'Este es el resumen de tus solicitudes.' : 'Este es el resumen de lo que está sucediendo hoy.' }}</p></div><button type="button" class="secondary-button">⌕&nbsp; Ver actividad</button></div>
         <section class="metric-grid" aria-label="Indicadores principales"><article v-for="metric in metrics" :key="metric.label" class="metric-card"><div class="metric-top"><span :class="['metric-icon', `tone-${metric.tone}`]">{{ metric.icon }}</span><span :class="['metric-trend', `trend-${metric.tone}`]">{{ metric.trend }}</span></div><strong>{{ metric.value }}</strong><h3>{{ metric.label }}</h3><p>{{ metric.detail }}</p></article></section>
@@ -546,6 +548,8 @@ onMounted(restoreSession)
 .security-view:has(.notification-info) .notification-rules{position:relative;margin-top:41px}
 .security-view:has(.notification-info) .notification-rules:before{content:'3  ·  Revisa las reglas activas';position:absolute;top:-27px;left:0;color:#398d73;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
 .service-config-form{display:none}
+.sidebar-head{display:block}.mobile-menu-toggle{display:none}
+@media(max-width:720px){.operations-sidebar{padding:12px 14px 10px}.sidebar-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sidebar-brand{margin:0}.mobile-menu-toggle{display:inline-flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid rgba(255,255,255,.2);border-radius:7px;color:#d7e8f1;background:rgba(255,255,255,.06);font-size:11px;font-weight:800;cursor:pointer}.mobile-menu-toggle span:first-child{font-size:16px;line-height:1}.operations-sidebar nav{display:none;grid-template-columns:1fr;gap:3px;margin-top:12px}.operations-sidebar nav.open{display:grid}.operations-menu-item{min-height:39px;font-size:12px}.sidebar-profile{margin-top:12px;padding:10px 5px 0}}
 </style>
 
 <style scoped>

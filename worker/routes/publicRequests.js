@@ -16,6 +16,9 @@ export async function handlePublicRequests(request, env) {
     return response({ error: 'La base de datos operativa no está configurada.' }, 500)
   }
 
+  const contentLength = Number(request.headers.get('content-length') || 0)
+  if (contentLength > MAX_REQUEST_BODY_BYTES) return response({ error: 'La solicitud supera el tamaño máximo permitido.' }, 413)
+
   const parsed = await parseInput(request)
   const input = validate(parsed.fields)
   const { neon } = await import('@neondatabase/serverless')
@@ -68,8 +71,16 @@ export async function handlePublicRequests(request, env) {
     agentLinkId = agentRows[0].id
   }
   if (parsed.files.length > 5) return response({ error: 'Puedes adjuntar máximo 5 imágenes.' }, 400)
+  const verifiedFiles = []
+  let totalAttachmentBytes = 0
   for (const file of parsed.files) {
-    if (!file.type.startsWith('image/') || file.size > 10 * 1024 * 1024) return response({ error: 'Cada adjunto debe ser una imagen de máximo 10 MB.' }, 400)
+    if (file.size > MAX_ATTACHMENT_BYTES) return response({ error: 'Cada adjunto debe ser una imagen de máximo 10 MB.' }, 400)
+    totalAttachmentBytes += file.size
+    if (totalAttachmentBytes > MAX_TOTAL_ATTACHMENT_BYTES) return response({ error: 'El total de las imágenes no puede superar 25 MB.' }, 400)
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const detectedType = detectImageType(bytes)
+    if (!detectedType || (file.type && file.type !== detectedType)) return response({ error: 'Uno de los adjuntos no es una imagen válida.' }, 400)
+    verifiedFiles.push({ file, bytes, type: detectedType })
   }
   const clientId = crypto.randomUUID()
   const requestId = crypto.randomUUID()
@@ -82,13 +93,13 @@ export async function handlePublicRequests(request, env) {
 
   if (parsed.files.length) {
     if (!env.GALLERY_IMAGES) return response({ error: 'El almacenamiento de imágenes no está configurado.' }, 503)
-    for (const file of parsed.files) {
+    for (const { file, bytes, type } of verifiedFiles) {
       const attachmentId = crypto.randomUUID()
       const storageKey = `requests/${requestId}/${attachmentId}-${safeName(file.name)}`
-      await env.GALLERY_IMAGES.put(storageKey, file.stream(), { httpMetadata: { contentType: file.type } })
+      await env.GALLERY_IMAGES.put(storageKey, bytes, { httpMetadata: { contentType: type } })
       await sql`
         INSERT INTO operations.request_attachments (id, request_id, storage_key, original_name, mime_type, size_bytes)
-        VALUES (${attachmentId}, ${requestId}, ${storageKey}, ${file.name}, ${file.type}, ${file.size})
+        VALUES (${attachmentId}, ${requestId}, ${storageKey}, ${safeOriginalName(file.name)}, ${type}, ${file.size})
       `
     }
   }
@@ -126,9 +137,9 @@ export async function handlePublicRequests(request, env) {
 function validate(payload) {
   const fullName = text(payload.fullName)
   const legalEntityType = text(payload.legalEntityType)
-  const email = text(payload.email)
-  const phone = text(payload.phone)
-  const whatsapp = text(payload.whatsapp)
+  const email = text(payload.email).toLowerCase()
+  const phone = normalizePhone(payload.phone, 'El teléfono')
+  const whatsapp = normalizePhone(payload.whatsapp, 'El WhatsApp')
   const serviceType = text(payload.serviceType)
   const consultationType = text(payload.consultationType)
   const productType = text(payload.productType)
@@ -136,13 +147,15 @@ function validate(payload) {
   const agentToken = text(payload.agentToken)
 
   if (!fullName) throw new RequestError('El nombre completo es obligatorio.')
+  if (fullName.length < 2 || fullName.length > 120 || !/^[\p{L}\p{M}][\p{L}\p{M}\s.'’-]*$/u.test(fullName)) throw new RequestError('El nombre debe tener entre 2 y 120 caracteres y solo puede contener letras, espacios, puntos o guiones.')
   if (!['natural', 'juridica'].includes(legalEntityType)) throw new RequestError('Selecciona la constitución legal.')
   if (!email && !phone && !whatsapp) throw new RequestError('Ingresa al menos un medio de contacto.')
-  if (email && !/^\S+@\S+\.\S+$/.test(email)) throw new RequestError('Ingresa un correo electrónico válido.')
+  if (email && (email.length > 254 || /[\u0000-\u001F\u007F<>]/.test(email) || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email))) throw new RequestError('Ingresa un correo electrónico válido.')
   if (!['exportacion', 'importacion', 'agente_carga'].includes(serviceType)) throw new RequestError('Selecciona el tipo de servicio.')
   if (!consultationType) throw new RequestError('Selecciona el tipo de consulta.')
   if (!['vehiculos', 'mercancias'].includes(productType)) throw new RequestError('Selecciona el tipo de producto.')
   if (!question) throw new RequestError('Cuéntanos qué necesitas consultar.')
+  if (question.length < 20 || question.length > 3000 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(question)) throw new RequestError('La consulta debe tener entre 20 y 3000 caracteres.')
 
   return { fullName, legalEntityType, email, phone, whatsapp, serviceType, consultationType, freightAgent: null, productType, question, agentToken }
 }
@@ -150,7 +163,12 @@ function validate(payload) {
 async function parseInput(request) {
   const contentType = request.headers.get('content-type') || ''
   if (!contentType.includes('multipart/form-data')) return { fields: await request.json().catch(() => ({})), files: [] }
-  const formData = await request.formData()
+  let formData
+  try {
+    formData = await request.formData()
+  } catch {
+    throw new RequestError('No fue posible leer los datos enviados.')
+  }
   const fields = Object.fromEntries([...formData.entries()].filter(([, value]) => typeof value === 'string'))
   const files = formData.getAll('attachments').filter((value) => value && typeof value.arrayBuffer === 'function')
   return { fields, files }
@@ -158,6 +176,28 @@ async function parseInput(request) {
 
 function safeName(name) {
   return String(name || 'image').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 80) || 'image'
+}
+
+function safeOriginalName(name) {
+  return String(name || 'image').replace(/[\u0000-\u001F\u007F]/g, '').slice(0, 120) || 'image'
+}
+
+function normalizePhone(value, label) {
+  const raw = text(value)
+  if (!raw) return ''
+  const normalized = raw.replace(/[\s().-]/g, '')
+  if (!/^\+?\d{7,15}$/.test(normalized)) throw new RequestError(`${label} debe tener entre 7 y 15 dígitos y usar un formato válido.`)
+  return normalized
+}
+
+function detectImageType(bytes) {
+  const isPng = bytes.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((value, index) => bytes[index] === value)
+  if (isPng) return 'image/png'
+  const isJpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+  if (isJpeg) return 'image/jpeg'
+  const isWebp = bytes.length >= 12 && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP'
+  if (isWebp) return 'image/webp'
+  return ''
 }
 
 async function sha256(value) {
@@ -184,3 +224,7 @@ function response(payload, status = 200) {
     headers: { 'content-type': 'application/json; charset=utf-8' },
   })
 }
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+const MAX_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024
+const MAX_REQUEST_BODY_BYTES = 35 * 1024 * 1024
