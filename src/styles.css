@@ -57,6 +57,25 @@ body {
 .operations-shell .list-view-table td { padding: 13px 10px; border-top: 1px solid #f0f2f5; color: #687588; font-size: 10px; vertical-align: middle; }
 .operations-shell .list-view-table th:first-child,.operations-shell .list-view-table td:first-child { padding-left: 0; }
 .operations-shell .list-view-table .empty-row { padding: 40px 0 !important; text-align: center; }
+@media (max-width: 720px) {
+  .operations-shell .list-view-table { overflow: visible; }
+  .operations-shell .list-view-table table { display: block; min-width: 0; }
+  .operations-shell .list-view-table thead { display: none; }
+  .operations-shell .list-view-table tbody { display: grid; gap: 10px; }
+  .operations-shell .list-view-table tbody tr { display: grid; gap: 0; padding: 10px 12px; border: 1px solid #e5eaf0; border-radius: 9px; background: #fff; box-shadow: 0 3px 10px rgba(25,47,70,.035); }
+  .operations-shell .list-view-table tbody tr:has(td.empty-row) { display: block; padding: 20px 12px; border: 0; box-shadow: none; }
+  .operations-shell .list-view-table td { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; min-width: 0; padding: 8px 0; border-top: 1px solid #f0f2f5; text-align: right; white-space: normal; }
+  .operations-shell .list-view-table td:first-child { padding-left: 0; }
+  .operations-shell .list-view-table td:first-child { border-top: 0; }
+  .operations-shell .list-view-table td::before { flex: 0 0 34%; color: #98a2b3; content: attr(data-label); font-size: 9px; font-weight: 800; text-align: left; }
+  .operations-shell .list-view-table td.empty-row { display: block; padding: 20px 0 !important; border: 0; text-align: center; }
+  .operations-shell .list-view-table td.empty-row::before { display: none; }
+  .operations-shell .list-view-table td > * { max-width: 66%; }
+  .operations-shell .list-view-table td button { margin-left: auto; }
+  .operations-shell .list-view-skeleton-row { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 16px 12px; border: 1px solid #e5eaf0; border-radius: 9px; background: #fff; }
+  .operations-shell .list-view-skeleton-row .skeleton-bar { width: 100%; }
+  .operations-shell .list-view-skeleton-row .skeleton-bar:nth-child(even) { width: 68%; }
+}
 .operations-shell .security-view input,.operations-shell .security-view select,.operations-shell .security-view textarea { min-height: 40px; padding: 8px 10px; border: 1px solid #d8e0ea; border-radius: 7px; color: #344b60; background: #fff; font: inherit; font-size: 11px; }
 .operations-shell .security-view label { display: grid; gap: 7px; color: #526174; font-size: 10px; font-weight: 700; }
 .operations-shell .security-view .primary-button,.operations-shell .security-view .secondary-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 13px; border-radius: 7px; font-size: 10px; font-weight: 800; cursor: pointer; white-space: nowrap; }
