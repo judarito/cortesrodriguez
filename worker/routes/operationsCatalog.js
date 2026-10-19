@@ -117,7 +117,7 @@ async function getAdminCatalog(sql) {
 
 async function createConsultationType(sql, body, actorId) {
   const input = validateConsultation(body)
-  const service = await sql`SELECT id FROM operations.services WHERE code = ${input.serviceCode} AND active = TRUE LIMIT 1`
+  const service = await sql`SELECT id, code, name FROM operations.services WHERE code = ${input.serviceCode} AND active = TRUE LIMIT 1`
   if (!service[0]) return response({ error: 'El servicio general no existe.' }, 400)
   const experts = await validExperts(sql, input.expertIds)
   if (experts.length !== input.expertIds.length) return response({ error: 'Uno o más expertos no son válidos o están inactivos.' }, 400)
@@ -125,6 +125,7 @@ async function createConsultationType(sql, body, actorId) {
     const created = await sql`INSERT INTO operations.consultation_types (code, name, description) VALUES (${input.code}, ${input.name}, ${input.description}) RETURNING id`
     await sql`INSERT INTO operations.service_consultation_types (service_id, consultation_type_id, amount_cents, currency, payment_required) VALUES (${service[0].id}, ${created[0].id}, ${input.amountCents}, ${input.currency}, ${input.paymentRequired})`
     await replaceConsultationExperts(sql, created[0].id, input.expertIds)
+    if (input.expertIds.length) await ensureExpertNotificationRule(sql, service[0], input.name, actorId)
     await audit(sql, actorId, 'create', created[0].id, input)
     return response({ ok: true, id: String(created[0].id) }, 201)
   } catch (error) {
@@ -135,7 +136,7 @@ async function createConsultationType(sql, body, actorId) {
 
 async function updateConsultationType(sql, id, body, actorId) {
   const input = validateConsultation(body)
-  const service = await sql`SELECT id FROM operations.services WHERE code = ${input.serviceCode} AND active = TRUE LIMIT 1`
+  const service = await sql`SELECT id, code, name FROM operations.services WHERE code = ${input.serviceCode} AND active = TRUE LIMIT 1`
   if (!service[0]) return response({ error: 'El servicio general no existe.' }, 400)
   const experts = await validExperts(sql, input.expertIds)
   if (experts.length !== input.expertIds.length) return response({ error: 'Uno o más expertos no son válidos o están inactivos.' }, 400)
@@ -143,6 +144,7 @@ async function updateConsultationType(sql, id, body, actorId) {
   if (!updated[0]) return response({ error: 'Tipo de consulta no encontrado.' }, 404)
   await sql`UPDATE operations.service_consultation_types SET amount_cents = ${input.amountCents}, currency = ${input.currency}, payment_required = ${input.paymentRequired}, active = ${input.active}, updated_at = NOW() WHERE service_id = ${service[0].id} AND consultation_type_id = ${id}`
   await replaceConsultationExperts(sql, id, input.expertIds)
+  if (input.expertIds.length) await ensureExpertNotificationRule(sql, service[0], input.name, actorId)
   await audit(sql, actorId, 'update', id, input)
   return response({ ok: true, id: String(id) })
 }
@@ -176,6 +178,31 @@ async function validExperts(sql, ids) {
 async function replaceConsultationExperts(sql, consultationTypeId, expertIds) {
   await sql`DELETE FROM operations.consultation_type_experts WHERE consultation_type_id = ${consultationTypeId}`
   for (const expertId of expertIds) await sql`INSERT INTO operations.consultation_type_experts (consultation_type_id, user_id) VALUES (${consultationTypeId}, ${expertId})`
+}
+
+async function ensureExpertNotificationRule(sql, service, consultationName, actorId) {
+  const existing = await sql`
+    SELECT id, audiences
+    FROM operations.notification_rules
+    WHERE event_code = 'request_created' AND service_type = ${service.code}
+    LIMIT 1
+  `
+  if (existing[0]) {
+    const audiences = Array.isArray(existing[0].audiences) ? existing[0].audiences : ['configured']
+    if (!audiences.includes('expert')) {
+      const nextAudiences = [...audiences, 'expert']
+      await sql`UPDATE operations.notification_rules SET audiences = ${nextAudiences}, updated_at = NOW() WHERE id = ${existing[0].id}`
+      await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'update', 'notification_rule', ${existing[0].id}, ${JSON.stringify({ reason: 'expert_assigned_to_consultation', serviceCode: service.code, consultationName, audiences: nextAudiences })}::jsonb)`
+    }
+    return
+  }
+
+  const created = await sql`
+    INSERT INTO operations.notification_rules (name, event_code, service_type, audiences)
+    VALUES (${`Solicitud creada - ${service.name}`}, 'request_created', ${service.code}, ${['expert']})
+    RETURNING id
+  `
+  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'create', 'notification_rule', ${created[0].id}, ${JSON.stringify({ reason: 'expert_assigned_to_consultation', serviceCode: service.code, consultationName, audiences: ['expert'] })}::jsonb)`
 }
 
 async function audit(sql, actorId, action, entityId, metadata) {
