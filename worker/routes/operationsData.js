@@ -170,7 +170,7 @@ async function createAgentRequest(sql, request, claims, env) {
 
 async function getRequestDetail(sql, requestId, claims) {
   const accessFilter = claims.roles?.includes('admin') ? sql`TRUE` : sql`(r.agent_id = ${claims.sub} OR (r.agent_id IS NULL AND r.created_by = ${claims.sub}))`
-  const [requestRows, historyRows] = await Promise.all([
+  const [requestRows, historyRows, responseRows] = await Promise.all([
     sql`
       SELECT r.id, r.reference, r.source, r.legal_entity_type, r.email, r.phone, r.whatsapp, r.payment_required,
         r.service_name, r.service_amount_cents, r.service_currency, r.service_type, r.freight_agent,
@@ -191,9 +191,18 @@ async function getRequestDetail(sql, requestId, claims) {
         AND ${claims.roles?.includes('admin') ? sql`TRUE` : sql`(r.agent_id = ${claims.sub} OR (r.agent_id IS NULL AND r.created_by = ${claims.sub}))`}
       ORDER BY r.created_at DESC
     `,
+    sql`
+      SELECT er.id, er.version, er.body, er.status, er.admin_note, er.created_at, er.updated_at,
+        er.reviewed_at, er.sent_at, u.full_name AS expert_name
+      FROM operations.expert_responses er
+      JOIN operations.users u ON u.id = er.expert_id
+      WHERE er.request_id = ${requestId}
+      ORDER BY er.version DESC
+    `,
   ])
   if (!requestRows[0]) return response({ error: 'Solicitud no encontrada.' }, 404)
-  return response({ request: serializeRequestDetail(requestRows[0]), history: historyRows.map(serializeRequestHistory) })
+  const isAdmin = claims.roles?.includes('admin')
+  return response({ request: serializeRequestDetail(requestRows[0]), history: historyRows.map(serializeRequestHistory), responses: responseRows.map((row) => serializeRequestResponse(row, isAdmin || ['approved', 'sent'].includes(String(row.status)))) })
 }
 
 async function getDashboard(sql, claims) {
@@ -309,6 +318,22 @@ function serializeRequestHistory(row) {
     productType: String(row.product_type),
     status: String(row.status),
     createdAt: String(row.created_at),
+  }
+}
+
+function serializeRequestResponse(row, canViewBody) {
+  return {
+    id: String(row.id),
+    version: Number(row.version),
+    body: canViewBody ? String(row.body) : '',
+    status: String(row.status),
+    adminNote: canViewBody && row.admin_note ? String(row.admin_note) : '',
+    expertName: String(row.expert_name),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    reviewedAt: row.reviewed_at ? String(row.reviewed_at) : null,
+    sentAt: row.sent_at ? String(row.sent_at) : null,
+    bodyVisible: Boolean(canViewBody),
   }
 }
 

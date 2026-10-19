@@ -87,6 +87,7 @@ function labelValue(value) {
     importacion: 'Importación', exportacion: 'Exportación', agente_carga: 'Agente de carga',
     vehiculos: 'Vehículos', mercancias: 'Mercancías',
     pending: 'Pendiente', in_review: 'En revisión', in_progress: 'En gestión', closed: 'Cerrada', cancelled: 'Cancelada',
+    draft: 'Borrador', pending_admin_review: 'Pendiente de revisión', rejected: 'Devuelta al experto', approved: 'Aprobada', sent: 'Enviada al cliente',
   }
   return labels[value] || value
 }
@@ -516,6 +517,7 @@ onMounted(restoreSession)
           <span :class="['status-pill', statusClass(requestDetail.request.status)]"><i></i>{{ labelValue(requestDetail.request.status) }}</span>
           <section class="detail-section"><h3>Datos del cliente</h3><dl class="detail-grid"><div><dt>Nombre completo</dt><dd>{{ requestDetail.request.clientName }}</dd></div><div><dt>Constitución legal</dt><dd>{{ labelValue(requestDetail.request.legalEntityType) }}</dd></div><div><dt>Correo</dt><dd>{{ requestDetail.request.email || 'No registrado' }}</dd></div><div><dt>Teléfono</dt><dd>{{ requestDetail.request.phone || 'No registrado' }}</dd></div><div><dt>WhatsApp</dt><dd>{{ requestDetail.request.whatsapp || 'No registrado' }}</dd></div><div><dt>Cliente desde</dt><dd>{{ formatDate(requestDetail.request.clientCreatedAt) }}</dd></div></dl></section>
           <section class="detail-section"><h3>Datos de la operación</h3><dl class="detail-grid"><div><dt>Servicio</dt><dd>{{ requestDetail.request.serviceName }}</dd></div><div><dt>Tipo de servicio</dt><dd>{{ labelValue(requestDetail.request.serviceType) }}</dd></div><div><dt>Producto</dt><dd>{{ labelValue(requestDetail.request.productType) }}</dd></div><div><dt>Agente de carga</dt><dd>{{ requestDetail.request.freightAgent || 'No registrado' }}</dd></div><div><dt>Fuente</dt><dd>{{ requestDetail.request.source }}</dd></div><div><dt>Agente responsable</dt><dd>{{ requestDetail.request.agentName || 'Landingpage' }}</dd></div><div><dt>Creada</dt><dd>{{ formatDate(requestDetail.request.createdAt) }}</dd></div></dl></section>
+          <section class="detail-section"><h3>Respuestas del experto</h3><div v-if="!requestDetail.responses?.length" class="detail-empty">Aún no hay respuestas registradas.</div><div v-for="expertResponse in requestDetail.responses" :key="expertResponse.id" class="request-response-item"><div class="request-response-heading"><div><strong>Versión {{ expertResponse.version }}</strong><span>{{ expertResponse.expertName }} · {{ formatDate(expertResponse.createdAt) }}</span></div><span :class="['status-pill', statusClass(expertResponse.status)]"><i></i>{{ labelValue(expertResponse.status) }}</span></div><p v-if="expertResponse.bodyVisible" class="request-response-body">{{ expertResponse.body }}</p><p v-else class="request-response-pending">La respuesta está pendiente de aprobación administrativa.</p><p v-if="expertResponse.adminNote" class="request-response-note"><strong>Nota administrativa:</strong> {{ expertResponse.adminNote }}</p></div></section>
           <section class="detail-section"><h3>Historial del cliente</h3><div class="request-history"><div v-for="historyItem in requestDetail.history" :key="historyItem.id" class="request-history-item"><div><strong>{{ historyItem.reference }}</strong><span>{{ labelValue(historyItem.serviceType) }} · {{ labelValue(historyItem.productType) }}</span></div><span :class="['status-pill', statusClass(historyItem.status)]"><i></i>{{ labelValue(historyItem.status) }}</span></div></div></section>
         </template>
       </section>
@@ -544,4 +546,8 @@ onMounted(restoreSession)
 .security-view:has(.notification-info) .notification-rules{position:relative;margin-top:41px}
 .security-view:has(.notification-info) .notification-rules:before{content:'3  ·  Revisa las reglas activas';position:absolute;top:-27px;left:0;color:#398d73;font-size:10px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
 .service-config-form{display:none}
+</style>
+
+<style scoped>
+.detail-empty{padding:14px;border:1px dashed #dce5ed;border-radius:8px;color:#98a2b3;font-size:10px}.request-response-item{display:grid;gap:10px;padding:14px;border:1px solid #e5eaf0;border-radius:8px;background:#fbfcfe}.request-response-item+.request-response-item{margin-top:10px}.request-response-heading{display:flex;align-items:start;justify-content:space-between;gap:10px}.request-response-heading>div{display:grid;gap:4px}.request-response-heading strong{color:#344b60;font-size:11px}.request-response-heading span:not(.status-pill){color:#7d8999;font-size:10px}.request-response-body{margin:0;padding:12px;border-radius:7px;color:#344b60;background:#fff;font-size:11px;line-height:1.6;white-space:pre-wrap}.request-response-pending{margin:0;color:#98a2b3;font-size:10px}.request-response-note{margin:0;padding-top:10px;border-top:1px solid #e5eaf0;color:#526174;font-size:10px;line-height:1.5}.request-response-note strong{color:#344b60}
 </style>
