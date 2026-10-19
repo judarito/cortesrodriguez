@@ -132,8 +132,8 @@ Asignación aleatoria entre expertos activos
 - [x] Crear `expert_responses` con versión, texto, experto, estado, fechas y observaciones internas.
 - [ ] Usar estados de respuesta: `draft`, `pending_admin_review`, `rejected`, `approved` y `sent`.
 - [x] El experto puede guardar y enviar a revisión, pero no puede enviar al cliente.
-- [ ] El administrador puede aprobar, rechazar para corrección o editar antes de aprobar.
-- [ ] Permitir una nota administrativa opcional que se incluya en el correo al cliente.
+- [x] El administrador puede aprobar, rechazar para corrección o editar antes de aprobar.
+- [x] Permitir una nota administrativa opcional que se incluya en el correo al cliente.
 - [ ] Crear `client_feedback` relacionado con la solicitud y la respuesta enviada, con calificación, comentario, fecha, token de acceso y estado de revisión.
 - [ ] Permitir al cliente enviar feedback desde un enlace seguro incluido en el correo, sin exigirle crear una cuenta.
 - [ ] Limitar el feedback a una evaluación por respuesta enviada, con opción administrativa para solicitar una nueva evaluación si existe otra respuesta.

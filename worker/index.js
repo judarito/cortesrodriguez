@@ -8,6 +8,7 @@ import { handleOperationsNotifications } from './routes/operationsNotifications.
 import { handleOperationsEmail } from './routes/operationsEmail.js'
 import { handleOperationsCatalog } from './routes/operationsCatalog.js'
 import { handleOperationsExpert } from './routes/operationsExpert.js'
+import { handleOperationsReviews } from './routes/operationsReviews.js'
 import { handleResendWebhook } from './routes/resendWebhooks.js'
 
 const jsonHeaders = {
@@ -36,6 +37,9 @@ export default {
 
       const operationsExpertResponse = await handleOperationsExpert(request, env)
       if (operationsExpertResponse) return operationsExpertResponse
+
+      const operationsReviewsResponse = await handleOperationsReviews(request, env)
+      if (operationsReviewsResponse) return operationsReviewsResponse
 
       const operationsSecurityResponse = await handleOperationsSecurity(request, env)
       if (operationsSecurityResponse) return operationsSecurityResponse
