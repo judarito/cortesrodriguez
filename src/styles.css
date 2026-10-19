@@ -52,6 +52,26 @@ body {
 .operations-shell .security-view .security-list-item > div:nth-child(2) { display: grid; gap: 3px; min-width: 0; flex: 1; }
 .operations-shell .security-view .security-list-item strong { color: #344b60; font-size: 11px; }
 .operations-shell .security-view .security-list-item span { color: #98a2b3; font-size: 10px; }
+.operations-shell .security-view .security-form { display: grid; align-content: start; gap: 14px; padding: 20px; border: 1px solid #e5eaf0; border-radius: 10px; background: #fff; box-shadow: 0 4px 12px rgba(25,47,70,.025); }
+.operations-shell .security-view .security-form h2,.operations-shell .security-view .security-list h2 { margin: 0 0 5px; color: #223b53; font-size: 14px; }
+.operations-shell .security-view .security-form p,.operations-shell .security-view .security-list p { margin: 0; color: #98a2b3; font-size: 10px; }
+.operations-shell .security-view fieldset.permission-picker { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; margin: 0; padding: 12px; border: 1px solid #e5eaf0; border-radius: 8px; background: #fbfcfe; }
+.operations-shell .security-view fieldset.permission-picker legend { padding: 0 6px; color: #526174; font-size: 10px; font-weight: 800; }
+.operations-shell .security-view .permission-option { display: flex; align-items: flex-start; gap: 8px; padding: 7px; border-radius: 6px; background: #f6f9fc; font-size: 9px; }
+.operations-shell .security-view .permission-option input { width: 15px; min-height: 15px; margin-top: 1px; padding: 0; accent-color: #0e4567; }
+.operations-shell .security-view .permission-option span { display: grid; gap: 2px; color: #526174; }
+.operations-shell .security-view .permission-option strong { color: #526174; font-size: 9px; }
+.operations-shell .security-view .permission-option small { color: #98a2b3; font-size: 8px; }
+.operations-shell .security-view .security-item-meta { display: grid; justify-items: end; gap: 5px; }
+.operations-shell .security-view .security-status { display: inline-flex; padding: 4px 7px; border-radius: 5px; color: #348267; background: #e9f7f0; font-size: 9px; font-weight: 800; }
+.operations-shell .security-view .security-status.inactive { color: #b54747; background: #fff0f1; }
+.operations-shell .notification-rules-layout { display: grid; grid-template-columns: minmax(280px,.7fr) minmax(0,1.3fr); gap: 16px; }
+.operations-shell .notification-rules-layout .security-list { min-height: 330px; padding: 20px; border: 1px solid #e5eaf0; border-radius: 10px; background: #fff; box-shadow: 0 4px 12px rgba(25,47,70,.025); }
+.operations-shell .notification-rules-layout .security-form { min-width: 0; }
+@media (max-width: 980px) { .operations-shell .notification-rules-layout { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .operations-shell .security-view fieldset.permission-picker { grid-template-columns: 1fr; } }
+.operations-shell .danger-link { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 0 10px; border: 1px solid #efc7c7; border-radius: 6px; color: #b54747; background: #fff7f7; font-size: 10px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.operations-shell .danger-link:hover { color: #fff; border-color: #b54747; background: #b54747; }
 
 a {
   color: inherit;
