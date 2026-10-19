@@ -143,9 +143,9 @@ Asignación aleatoria entre expertos activos
 ### 6. Notificaciones y aprobación
 
 - [ ] Ampliar las reglas de correo para filtrar por evento, servicio general, tipo de consulta, fuente y estado de pago.
-- [ ] Permitir destinatarios por rol, experto asignado, agente de origen, administrador y cliente.
+- [x] Permitir destinatarios por rol, experto asignado, agente de origen, administrador y cliente. Las reglas ya admiten audiencias dinámicas y destinatarios administrativos configurables.
 - [ ] Asociar cada regla a uno o varios tipos de consulta, con herencia opcional de las reglas del servicio general.
-- [ ] Evitar duplicados cuando el mismo correo aparezca por rol, regla y asignación.
+- [x] Evitar duplicados cuando el mismo correo aparezca por rol, regla y asignación.
 - [ ] Al crear una solicitud directa desde nuestra página (`direct_web`): notificar al experto asignado y al administrador; no notificar a ningún agente.
 - [ ] Al crear una solicitud desde enlace de agente: notificar al agente propietario, al experto asignado y al administrador.
 - [ ] Al enviar una respuesta a revisión: notificar al administrador.

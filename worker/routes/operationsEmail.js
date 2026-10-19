@@ -26,9 +26,13 @@ export async function handleOperationsEmail(request, env) {
 
 export async function sendRequestNotification(sql, env, requestId, eventCode, actorId = null) {
   const requests = await sql`
-    SELECT r.id, r.reference, r.email, r.service_name, r.service_type, r.product_type, r.status, c.full_name AS client_name
+    SELECT r.id, r.reference, r.email, r.service_name, r.service_type, r.product_type, r.status,
+      r.agent_id, r.assigned_expert_id, c.full_name AS client_name,
+      agent.email AS agent_email, expert.email AS expert_email
     FROM operations.requests r
     JOIN operations.clients c ON c.id = r.client_id
+    LEFT JOIN operations.users agent ON agent.id = r.agent_id
+    LEFT JOIN operations.users expert ON expert.id = r.assigned_expert_id
     WHERE r.id = ${requestId}
     LIMIT 1
   `
@@ -36,7 +40,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   if (!request) throw new Error('Solicitud no encontrada.')
 
   const rules = await sql`
-    SELECT id, name
+    SELECT id, name, audiences
     FROM operations.notification_rules
     WHERE event_code = ${eventCode}
       AND service_type IN ('all', ${request.service_type})
@@ -53,9 +57,16 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     WHERE rnr.rule_id = ${rules[0].id} AND nr.active = TRUE
     ORDER BY nr.name
   `
-  const to = recipients.filter((item) => item.recipient_type === 'to').map((item) => String(item.email))
-  const cc = recipients.filter((item) => item.recipient_type === 'cc').map((item) => String(item.email))
-  const bcc = recipients.filter((item) => item.recipient_type === 'bcc').map((item) => String(item.email))
+  const audiences = rules[0].audiences || ['configured']
+  const dynamic = []
+  if (audiences.includes('client') || audiences.includes('all_involved')) dynamic.push(request.email)
+  if (audiences.includes('agent') || audiences.includes('all_involved')) dynamic.push(request.agent_email)
+  if (audiences.includes('expert') || audiences.includes('all_involved')) dynamic.push(request.expert_email)
+  const configured = audiences.includes('configured') || audiences.includes('admin') || audiences.includes('all_involved') ? recipients : []
+  const unique = (values) => [...new Set(values.filter((value) => value && /^\S+@\S+\.\S+$/.test(String(value))).map(String))]
+  const to = unique([...configured.filter((item) => item.recipient_type === 'to').map((item) => item.email), ...dynamic])
+  const cc = unique(configured.filter((item) => item.recipient_type === 'cc').map((item) => item.email)).filter((email) => !to.includes(email))
+  const bcc = unique(configured.filter((item) => item.recipient_type === 'bcc').map((item) => item.email)).filter((email) => !to.includes(email) && !cc.includes(email))
   if (!to.length) throw new Error('La regla no tiene un destinatario principal tipo Para.')
 
   const eventLabel = { payment_approved: 'Pago aprobado', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
