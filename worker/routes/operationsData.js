@@ -16,6 +16,9 @@ export async function handleOperationsData(request, env) {
   if (!claims?.permissions?.includes(permission)) {
     return response({ error: 'No tienes permisos para consultar este módulo.' }, 403)
   }
+  if (createRequest && claims.roles?.includes('agent') && !claims.roles?.includes('admin')) {
+    return response({ error: 'Los agentes deben compartir su enlace para que el cliente cree la solicitud.' }, 403)
+  }
   if (!env.NEON_DATABASE_URL) return response({ error: 'La base de datos operativa no está configurada.' }, 500)
 
   const { neon } = await import('@neondatabase/serverless')
@@ -206,6 +209,9 @@ async function getRequestDetail(sql, requestId, claims) {
 }
 
 async function getDashboard(sql, claims) {
+  // Experts get an operational summary of their assigned cases only. Never
+  // join clients or expose customer-identifying fields in their dashboard.
+  if (claims.roles?.includes('expert') && !claims.roles?.includes('admin')) return getExpertDashboard(sql, claims)
   const accessFilter = claims.roles?.includes('admin') ? sql`TRUE` : sql`(agent_id = ${claims.sub} OR (agent_id IS NULL AND created_by = ${claims.sub}))`
   const [totalRows, activeRows, pendingRows, closedRows, notSentRows, openedRows, statusRows, recentRows] = await Promise.all([
     sql`SELECT COUNT(*)::int AS total FROM operations.requests WHERE ${accessFilter}`,
@@ -258,6 +264,54 @@ async function getDashboard(sql, claims) {
       { label: 'Cerradas', value: Number(byStatus.closed || 0), color: 'green' },
     ],
     recent,
+  })
+}
+
+async function getExpertDashboard(sql, claims) {
+  const assigned = sql`assigned_expert_id = ${claims.sub}`
+  const [totalRows, activeRows, pendingRows, statusRows, recentRows] = await Promise.all([
+    sql`SELECT COUNT(*)::int AS total FROM operations.requests WHERE ${assigned}`,
+    sql`SELECT COUNT(*)::int AS total FROM operations.requests WHERE status NOT IN ('closed', 'cancelled') AND ${assigned}`,
+    sql`SELECT COUNT(*)::int AS total FROM operations.expert_responses er JOIN operations.requests r ON r.id = er.request_id WHERE er.expert_id = ${claims.sub} AND er.status = 'pending_admin_review'`,
+    sql`SELECT r.status, COUNT(*)::int AS total FROM operations.requests r WHERE ${assigned} GROUP BY r.status`,
+    sql`SELECT r.reference, r.status, r.service_type, r.consultation_type_name, r.created_at,
+          COALESCE(latest.status, 'none') AS response_status
+        FROM operations.requests r
+        LEFT JOIN LATERAL (
+          SELECT er.status FROM operations.expert_responses er
+          WHERE er.request_id = r.id AND er.expert_id = ${claims.sub}
+          ORDER BY er.version DESC LIMIT 1
+        ) latest ON TRUE
+        WHERE r.assigned_expert_id = ${claims.sub}
+        ORDER BY r.created_at DESC LIMIT 5`,
+  ])
+  const byStatus = Object.fromEntries(statusRows.map((row) => [String(row.status), Number(row.total || 0)]))
+  const total = Number(totalRows[0]?.total || 0)
+  return response({
+    metrics: {
+      total,
+      active: Number(activeRows[0]?.total || 0),
+      pending: Number(pendingRows[0]?.total || 0),
+      inProgress: Number(byStatus.in_review || 0),
+      closedThisMonth: Number(byStatus.closed || 0),
+      emailsPending: 0,
+      emailsOpened: 0,
+    },
+    pipeline: [
+      { label: 'Pendientes', value: Number(byStatus.pending || 0), color: 'amber' },
+      { label: 'En revisión', value: Number(byStatus.in_review || 0), color: 'violet' },
+      { label: 'En gestión', value: Number(byStatus.in_progress || 0), color: 'blue' },
+      { label: 'Cerradas', value: Number(byStatus.closed || 0), color: 'green' },
+    ],
+    recent: recentRows.map((row) => ({
+      reference: String(row.reference),
+      clientName: '',
+      status: String(row.status),
+      serviceType: String(row.consultation_type_name || row.service_type),
+      productType: '',
+      createdAt: String(row.created_at),
+      source: '',
+    })),
   })
 }
 

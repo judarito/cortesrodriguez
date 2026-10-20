@@ -71,15 +71,22 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
 
   const eventLabel = { payment_approved: 'Pago aprobado', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
   const subject = `${eventLabel} · ${request.reference}`
+  // Notification rules may include the assigned expert. Keep shared mail
+  // content free of client identity and operation details; authorized users
+  // can consult their role-scoped inbox for the information they need.
+  const description = notificationDescription(eventCode)
   const text = [
-    `${eventLabel}: ${request.reference}`,
-    `Cliente: ${request.client_name}`,
-    `Servicio: ${request.service_name || 'asesoria_personalizada'}`,
-    `Tipo de servicio: ${request.service_type}`,
-    `Producto: ${request.product_type}`,
-    `Estado: ${request.status}`,
+    'CORTÉS RODRÍGUEZ ASESORES',
+    '',
+    eventLabel,
+    description,
+    `Solicitud: ${request.reference}`,
+    '',
+    'Ingresa al panel operativo para consultar las novedades de forma segura.',
+    '',
+    'Este mensaje fue enviado automáticamente. Por favor, no compartas este correo.',
   ].join('\n')
-  const html = `<h2>${escapeHtml(eventLabel)}</h2><p><strong>Solicitud:</strong> ${escapeHtml(request.reference)}</p><p><strong>Cliente:</strong> ${escapeHtml(request.client_name)}</p><p><strong>Servicio:</strong> Asesoría personalizada</p><p><strong>Tipo de servicio:</strong> ${escapeHtml(request.service_type)}</p><p><strong>Producto:</strong> ${escapeHtml(request.product_type)}</p><p><strong>Estado:</strong> ${escapeHtml(request.status)}</p>`
+  const html = notificationTemplate(eventLabel, request.reference, description)
   const resendResponse = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
@@ -95,6 +102,38 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   await sql`UPDATE operations.requests SET notification_status = 'accepted', notification_last_event_at = NOW(), notification_last_error = NULL, updated_at = NOW() WHERE id = ${request.id}`
   if (actorId) await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'send', 'notification', ${request.id}, ${JSON.stringify({ eventCode, resendEmailId: resendBody.id })}::jsonb)`
   return { sent: true, emailId: String(resendBody.id) }
+}
+
+function notificationDescription(eventCode) {
+  const descriptions = {
+    payment_approved: 'El pago asociado a esta solicitud fue aprobado.',
+    payment_rejected: 'El pago asociado a esta solicitud no fue aprobado. Revisa el caso en el panel.',
+    request_created: 'Se recibió una nueva solicitud y quedó registrada en la plataforma.',
+    status_changed: 'El estado de esta solicitud fue actualizado.',
+    expert_response_submitted: 'Un experto envió su respuesta y está pendiente de revisión administrativa.',
+    feedback_received: 'El cliente compartió su opinión sobre la respuesta recibida.',
+    feedback_low: 'Se recibió una calificación baja que requiere seguimiento administrativo.',
+  }
+  return descriptions[eventCode] || 'Hay una novedad relacionada con esta solicitud.'
+}
+
+function notificationTemplate(title, reference, description) {
+  const safeTitle = escapeHtml(title)
+  const safeReference = escapeHtml(reference)
+  const safeDescription = escapeHtml(description)
+  return `<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="color-scheme" content="light"></head>
+<body style="margin:0;padding:0;background:#f3f6f9;font-family:Arial,Helvetica,sans-serif;color:#243b53">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0">${safeTitle} · Solicitud ${safeReference}</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f6f9;padding:32px 12px"><tr><td align="center">
+    <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #e1e8ef;border-radius:12px;overflow:hidden">
+      <tr><td style="padding:22px 28px;background:#0b3553;color:#fff;font-size:14px;font-weight:700;letter-spacing:.04em">CORTÉS RODRÍGUEZ <span style="color:#9dd6d7">ASESORES</span></td></tr>
+      <tr><td style="padding:32px 28px 12px"><p style="margin:0 0 10px;color:#54829a;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase">Aviso de operación</p><h1 style="margin:0;color:#173b58;font-size:24px;line-height:1.3">${safeTitle}</h1></td></tr>
+      <tr><td style="padding:12px 28px 28px"><p style="margin:0 0 22px;color:#63788b;font-size:14px;line-height:1.6">${safeDescription}</p><p style="margin:0 0 8px;color:#63788b;font-size:12px">Referencia de solicitud</p><div style="padding:15px 17px;border:1px solid #dce7ef;border-radius:8px;background:#f7fafc;color:#174b6b;font-size:16px;font-weight:700">${safeReference}</div><p style="margin:20px 0 0;color:#63788b;font-size:14px;line-height:1.6">Ingresa al panel operativo para consultar las novedades de forma segura.</p></td></tr>
+      <tr><td style="padding:18px 28px;border-top:1px solid #e8edf2;color:#8796a5;font-size:11px;line-height:1.6">Mensaje automático de Cortés Rodríguez Asesores. Por seguridad, no compartas este correo.</td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`
 }
 
 function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;') }
