@@ -10,6 +10,7 @@ import { handleOperationsCatalog } from './routes/operationsCatalog.js'
 import { handleOperationsExpert } from './routes/operationsExpert.js'
 import { handleOperationsReviews } from './routes/operationsReviews.js'
 import { handlePublicFeedback } from './routes/publicFeedback.js'
+import { handleClientPortal } from './routes/clientPortal.js'
 import { handleResendWebhook } from './routes/resendWebhooks.js'
 
 const jsonHeaders = {
@@ -44,6 +45,9 @@ export default {
 
       const publicFeedbackResponse = await handlePublicFeedback(request, env)
       if (publicFeedbackResponse) return publicFeedbackResponse
+
+      const clientPortalResponse = await handleClientPortal(request, env)
+      if (clientPortalResponse) return clientPortalResponse
 
       const operationsSecurityResponse = await handleOperationsSecurity(request, env)
       if (operationsSecurityResponse) return operationsSecurityResponse

@@ -204,9 +204,9 @@ async function getRequestDetail(sql, requestId, claims) {
     `,
     sql`
       SELECT er.id, er.version, er.body, er.status, er.admin_note, er.created_at, er.updated_at,
-        er.reviewed_at, er.sent_at, u.full_name AS expert_name
+        er.reviewed_at, er.sent_at, er.response_origin, COALESCE(u.full_name, 'Administración') AS expert_name
       FROM operations.expert_responses er
-      JOIN operations.users u ON u.id = er.expert_id
+      LEFT JOIN operations.users u ON u.id = er.expert_id
       WHERE er.request_id = ${requestId}
       ORDER BY er.version DESC
     `,
@@ -440,7 +440,7 @@ function serializeRequestResponse(row, canViewBody) {
     body: canViewBody ? String(row.body) : '',
     status: String(row.status),
     adminNote: canViewBody && row.admin_note ? String(row.admin_note) : '',
-    expertName: String(row.expert_name),
+    expertName: row.response_origin === 'reused_answer' ? 'Administración (respuesta reutilizada)' : String(row.expert_name),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     reviewedAt: row.reviewed_at ? String(row.reviewed_at) : null,

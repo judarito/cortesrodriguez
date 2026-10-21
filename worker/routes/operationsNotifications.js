@@ -123,7 +123,7 @@ async function createRuleRecord(sql, body, actorId) {
   const recipientIds = Array.isArray(body.recipientIds) ? body.recipientIds.filter((value) => typeof value === 'string') : []
   const requiresConfiguredRecipient = audiences.includes('configured')
   if (!name || !eventCode || !serviceType || (requiresConfiguredRecipient && !recipientIds.length)) return response({ error: requiresConfiguredRecipient ? 'Nombre, evento, servicio y al menos un destinatario configurado son obligatorios.' : 'Nombre, evento y servicio son obligatorios.' }, 400)
-  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_response_submitted', 'feedback_received', 'feedback_low', 'expert_assigned', 'assignment_failed'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
+  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_response_submitted', 'feedback_received', 'feedback_low', 'expert_assigned', 'assignment_failed', 'similar_question_review'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
   if (!['all', 'importacion', 'exportacion', 'agente_carga'].includes(serviceType)) return response({ error: 'Tipo de servicio inválido.' }, 400)
   if (sourceChannel && !['direct_web', 'agent_link'].includes(sourceChannel)) return response({ error: 'Origen de solicitud inválido.' }, 400)
   if (!audiences.length || audiences.some((value) => !['configured', 'client', 'agent', 'expert', 'admin', 'all_involved'].includes(value))) return response({ error: 'Audiencia de notificación inválida.' }, 400)

@@ -6,6 +6,7 @@ import NotificationConfigPanel from './NotificationConfigPanel.vue'
 import SecurityPanel from './SecurityPanel.vue'
 import ExpertRequestsPanel from './ExpertRequestsPanel.vue'
 import ResponseReviewPanel from './ResponseReviewPanel.vue'
+import SimilarQuestionPanel from './SimilarQuestionPanel.vue'
 
 const token = ref(localStorage.getItem('operationsToken') || '')
 const user = ref(JSON.parse(localStorage.getItem('operationsUser') || 'null'))
@@ -72,8 +73,9 @@ const menuItems = [
   { label: 'Enlaces de agentes', permission: 'agent_links.manage', icon: 'AG' },
   { label: 'Solicitudes asignadas', permission: 'expert_requests.read', icon: 'EX' },
   { label: 'Revisión de respuestas', permission: 'responses.review', icon: 'RV' },
+  { label: 'Preguntas similares', permission: 'responses.similarity.review', icon: 'QS' },
 ]
-const visibleMenu = computed(() => menuItems.filter((item) => user.value?.permissions?.includes(item.permission)))
+const visibleMenu = computed(() => menuItems.filter((item) => user.value?.permissions?.includes(item.permission) || (item.label === 'Preguntas similares' && user.value?.roles?.includes('admin'))))
 const isAuthenticated = computed(() => Boolean(token.value && user.value))
 const isAgent = computed(() => user.value?.roles?.includes('agent'))
 const isAdmin = computed(() => user.value?.roles?.includes('admin'))
@@ -525,6 +527,7 @@ onMounted(restoreSession)
       <OperationsCatalogPanel v-else-if="activeMenu === 'Servicios y consultas' || activeMenu === 'Enlaces de agentes'" :token="token" :user="user" :section="activeMenu === 'Servicios y consultas' ? 'catalog' : 'links'" />
       <ExpertRequestsPanel v-else-if="activeMenu === 'Solicitudes asignadas'" :token="token" />
       <ResponseReviewPanel v-else-if="activeMenu === 'Revisión de respuestas'" :token="token" />
+      <SimilarQuestionPanel v-else-if="activeMenu === 'Preguntas similares'" :token="token" />
       <NotificationConfigPanel v-else-if="activeMenu === 'Configuración'" :token="token" />
       <section v-else-if="activeMenu === 'Configuración'" class="module-view security-view">
         <div class="module-heading"><div><p class="eyebrow">Preferencias operativas</p><h1>Configuración</h1><p>Define quién recibe las comunicaciones de cada evento.</p></div><button type="button" class="secondary-button compact" @click="loadNotifications">↻ Actualizar</button></div>

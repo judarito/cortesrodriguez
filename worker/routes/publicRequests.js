@@ -1,4 +1,5 @@
 import { sendRequestNotification } from './operationsEmail.js'
+import { rankSimilarQuestions } from '../lib/questionSimilarity.js'
 
 export async function handlePublicRequests(request, env) {
   const url = new URL(request.url)
@@ -50,7 +51,30 @@ export async function handlePublicRequests(request, env) {
       AND cte.active = TRUE
     ORDER BY u.id
   `
-  const assignedExpertId = expertRows.length
+  const historicalResponses = input.question ? await sql`
+    SELECT * FROM (
+      SELECT DISTINCT ON (r.id) er.id AS response_id, er.body AS response_body,
+        r.id AS source_request_id, r.reference, r.question, er.sent_at
+      FROM operations.expert_responses er
+      JOIN operations.requests r ON r.id = er.request_id
+      WHERE er.status = 'sent'
+        AND r.question IS NOT NULL AND r.question <> ''
+        AND r.consultation_type_id = ${service.consultation_type_id}
+        AND r.service_type = ${input.serviceType}
+      ORDER BY r.id, er.version DESC
+    ) history
+    ORDER BY sent_at DESC NULLS LAST
+    LIMIT 500
+  ` : []
+  const similarCandidates = rankSimilarQuestions(input.question, historicalResponses.map((row) => ({
+    responseId: String(row.response_id),
+    sourceRequestId: String(row.source_request_id),
+    reference: String(row.reference),
+    question: String(row.question),
+    responseBody: String(row.response_body),
+    createdAt: row.sent_at ? String(row.sent_at) : '',
+  })))
+  const assignedExpertId = !similarCandidates.length && expertRows.length
     ? expertRows[crypto.getRandomValues(new Uint32Array(1))[0] % expertRows.length].id
     : null
   let source = 'landingpage'
@@ -126,12 +150,24 @@ export async function handlePublicRequests(request, env) {
 
   await sql`
     INSERT INTO operations.request_assignments (request_id, expert_id, consultation_type_id, candidate_count, strategy, status, reason)
-    VALUES (${requestId}, ${assignedExpertId}, ${service.consultation_type_id}, ${expertRows.length}, 'random_pool', ${assignedExpertId ? 'assigned' : 'failed'}, ${assignedExpertId ? null : 'no_active_expert'})
+    VALUES (${requestId}, ${assignedExpertId}, ${service.consultation_type_id}, ${expertRows.length}, ${similarCandidates.length ? 'lexical_similarity' : 'random_pool'}, ${similarCandidates.length ? 'similarity_review' : assignedExpertId ? 'assigned' : 'failed'}, ${similarCandidates.length ? 'possible_similar_question' : assignedExpertId ? null : 'no_active_expert'})
   `
+
+  if (similarCandidates.length) {
+    await sql`INSERT INTO operations.request_similarity_reviews (request_id) VALUES (${requestId})`
+    for (const candidate of similarCandidates) {
+      await sql`
+        INSERT INTO operations.request_similarity_candidates (request_id, response_id, similarity_score, shared_terms)
+        VALUES (${requestId}, ${candidate.responseId}, ${candidate.score}, ${candidate.sharedTerms})
+      `
+    }
+  }
 
   if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
     try { await sendRequestNotification(sql, env, requestId, 'request_created') } catch (error) { console.error('No se pudo enviar la notificación de solicitud creada:', error.message) }
-    if (!assignedExpertId) {
+    if (similarCandidates.length) {
+      try { await sendRequestNotification(sql, env, requestId, 'similar_question_review') } catch (error) { console.error('No se pudo notificar la pregunta posiblemente similar:', error.message) }
+    } else if (!assignedExpertId) {
       try { await sendRequestNotification(sql, env, requestId, 'assignment_failed') } catch (error) { console.error('No se pudo notificar la asignación fallida:', error.message) }
     }
   }

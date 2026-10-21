@@ -1,12 +1,16 @@
 import { requireOperationsAuth } from './operationsAuth.js'
+import { sendRequestNotification } from './operationsEmail.js'
 
 export async function handleOperationsReviews(request, env) {
   const url = new URL(request.url)
   const isList = url.pathname === '/api/app/reviews/responses' && request.method === 'GET'
   const isFeedbackList = url.pathname === '/api/app/reviews/feedback' && request.method === 'GET'
+  const isSimilarityList = url.pathname === '/api/app/reviews/similar-questions' && request.method === 'GET'
+  const similarityMatch = url.pathname.match(/^\/api\/app\/reviews\/similar-questions\/([^/]+)$/)
+  const isSimilarityAction = Boolean(similarityMatch) && request.method === 'PUT'
   const match = url.pathname.match(/^\/api\/app\/reviews\/responses\/([^/]+)$/)
   const isUpdate = Boolean(match) && request.method === 'PUT'
-  if (!isList && !isFeedbackList && !isUpdate) return null
+  if (!isList && !isFeedbackList && !isSimilarityList && !isSimilarityAction && !isUpdate) return null
 
   const claims = await requireOperationsAuth(request, env)
   if (!claims?.permissions?.includes('responses.review')) return response({ error: 'No tienes permisos para revisar respuestas.' }, 403)
@@ -14,6 +18,11 @@ export async function handleOperationsReviews(request, env) {
 
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
+  if (isSimilarityList || isSimilarityAction) {
+    if (!claims.roles?.includes('admin')) return response({ error: 'Solo administración puede validar preguntas similares.' }, 403)
+    if (isSimilarityList) return listSimilarQuestions(sql, url)
+    return resolveSimilarQuestion(sql, request, similarityMatch[1], claims, env)
+  }
   if (isFeedbackList) {
     const page = Math.max(Number(url.searchParams.get('page')) || 1, 1)
     const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize')) || 10, 1), 50)
@@ -104,11 +113,172 @@ export async function handleOperationsReviews(request, env) {
   return response({ ok: true, sent, reason, response: { id: String(approved[0].id), status: sent ? 'sent' : 'approved', adminNote: approved[0].admin_note || '' } })
 }
 
+async function listSimilarQuestions(sql, url) {
+  const page = Math.max(Number(url.searchParams.get('page')) || 1, 1)
+  const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize')) || 10, 1), 50)
+  const offset = (page - 1) * pageSize
+  const [counts, rows] = await Promise.all([
+    sql`SELECT COUNT(*)::int AS total FROM operations.request_similarity_reviews WHERE status = 'pending'`,
+    sql`
+      SELECT sr.request_id, sr.created_at, r.reference, r.question, r.service_type,
+        r.consultation_type_name, COALESCE(r.source_channel, CASE WHEN r.source = 'agent' THEN 'agent_link' ELSE 'direct_web' END) AS source_channel,
+        r.agent_id, agent.full_name AS agent_name
+      FROM operations.request_similarity_reviews sr
+      JOIN operations.requests r ON r.id = sr.request_id
+      LEFT JOIN operations.users agent ON agent.id = r.agent_id
+      WHERE sr.status = 'pending'
+      ORDER BY sr.created_at ASC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `,
+  ])
+  const ids = rows.map((row) => String(row.request_id))
+  const candidates = ids.length ? await sql`
+    SELECT sc.request_id, sc.response_id, sc.similarity_score, sc.shared_terms,
+      er.body AS response_body, er.version, er.sent_at,
+      source_request.reference AS source_reference, source_request.question AS source_question,
+      source_request.consultation_type_name
+    FROM operations.request_similarity_candidates sc
+    JOIN operations.expert_responses er ON er.id = sc.response_id AND er.status = 'sent'
+    JOIN operations.requests source_request ON source_request.id = er.request_id
+    WHERE sc.request_id = ANY(${ids})
+    ORDER BY sc.request_id, sc.similarity_score DESC
+  ` : []
+  const byRequest = new Map(ids.map((id) => [id, []]))
+  for (const row of candidates) byRequest.get(String(row.request_id))?.push({
+    responseId: String(row.response_id),
+    score: Number(row.similarity_score),
+    sharedTerms: row.shared_terms || [],
+    responseBody: String(row.response_body),
+    version: Number(row.version),
+    sentAt: row.sent_at ? String(row.sent_at) : '',
+    sourceReference: String(row.source_reference),
+    sourceQuestion: String(row.source_question),
+    consultationType: row.consultation_type_name ? String(row.consultation_type_name) : '',
+  })
+  const totalItems = Number(counts[0]?.total || 0)
+  return response({
+    items: rows.map((row) => ({
+      requestId: String(row.request_id), reference: String(row.reference), question: String(row.question || ''),
+      serviceType: String(row.service_type), consultationType: row.consultation_type_name ? String(row.consultation_type_name) : '',
+      sourceChannel: String(row.source_channel), agentName: row.agent_name ? String(row.agent_name) : '',
+      createdAt: String(row.created_at), candidates: byRequest.get(String(row.request_id)) || [],
+    })),
+    pagination: { page, pageSize, totalItems, totalPages: Math.max(Math.ceil(totalItems / pageSize), 1) },
+  })
+}
+
+async function resolveSimilarQuestion(sql, request, requestId, claims, env) {
+  const input = await request.json().catch(() => ({}))
+  const action = text(input.action)
+  const reviews = await sql`
+    SELECT sr.status, r.consultation_type_id, r.assigned_expert_id, r.status AS request_status,
+      r.reference, r.email, r.question, c.full_name AS client_name
+    FROM operations.request_similarity_reviews sr
+    JOIN operations.requests r ON r.id = sr.request_id
+    JOIN operations.clients c ON c.id = r.client_id
+    WHERE sr.request_id = ${requestId}
+    LIMIT 1
+  `
+  const review = reviews[0]
+  if (!review) return response({ error: 'La revisión de similitud no existe.' }, 404)
+  if (review.status !== 'pending') return response({ error: 'Esta pregunta ya fue resuelta.' }, 409)
+
+  if (action === 'forward') {
+    const experts = await sql`
+      SELECT DISTINCT u.id, u.full_name
+      FROM operations.users u
+      JOIN operations.user_roles ur ON ur.user_id = u.id
+      JOIN operations.roles role ON role.id = ur.role_id AND role.name = 'expert'
+      JOIN operations.consultation_type_experts cte ON cte.user_id = u.id AND cte.active = TRUE
+      WHERE u.active = TRUE AND cte.consultation_type_id = ${review.consultation_type_id}
+      ORDER BY u.id
+    `
+    if (!experts.length) return response({ error: 'No hay expertos activos asociados a esta consulta.' }, 409)
+    const expert = experts[crypto.getRandomValues(new Uint32Array(1))[0] % experts.length]
+    await sql`
+      INSERT INTO operations.request_assignments (request_id, expert_id, consultation_type_id, candidate_count, strategy, status, reason, assigned_by)
+      VALUES (${requestId}, ${expert.id}, ${review.consultation_type_id}, ${experts.length}, 'admin_similarity_review', 'assigned', 'Administración descartó la coincidencia sugerida', ${claims.sub})
+    `
+    await sql`UPDATE operations.requests SET assigned_expert_id = ${expert.id}, status = 'in_progress', updated_at = NOW() WHERE id = ${requestId}`
+    await sql`UPDATE operations.request_similarity_reviews SET status = 'forwarded_to_expert', resolved_by = ${claims.sub}, resolved_at = NOW() WHERE request_id = ${requestId}`
+    await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${claims.sub}, 'similarity_forward', 'request', ${requestId}, ${JSON.stringify({ expertId: String(expert.id) })}::jsonb)`
+    if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
+      try { await sendRequestNotification(sql, env, requestId, 'expert_assigned', claims.sub) } catch (error) { console.error('No se pudo notificar la asignación del experto:', error.message) }
+    }
+    return response({ ok: true, action, expertName: String(expert.full_name) })
+  }
+
+  if (action !== 'reuse') return response({ error: 'Selecciona reutilizar una respuesta o derivar a experto.' }, 400)
+  const responseId = text(input.responseId)
+  const answer = text(input.answer)
+  const adminNote = text(input.adminNote)
+  if (!responseId) return response({ error: 'Selecciona una respuesta candidata.' }, 400)
+  if (answer.length > 15000 || adminNote.length > 5000) return response({ error: 'El texto supera la longitud permitida.' }, 400)
+  const candidates = await sql`
+    SELECT er.id, er.body
+    FROM operations.request_similarity_candidates sc
+    JOIN operations.expert_responses er ON er.id = sc.response_id AND er.status = 'sent'
+    WHERE sc.request_id = ${requestId} AND sc.response_id = ${responseId}
+    LIMIT 1
+  `
+  if (!candidates[0]) return response({ error: 'La respuesta elegida no es una coincidencia candidata válida.' }, 400)
+  if (!review.email || !(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.RESEND_FROM_EMAIL) {
+    return response({ error: review.email ? 'Falta configurar el correo de operaciones.' : 'El cliente no tiene un correo registrado.' }, 409)
+  }
+  const body = answer || String(candidates[0].body)
+  const existing = await sql`
+    SELECT id, version, body, status
+    FROM operations.expert_responses
+    WHERE request_id = ${requestId} AND response_origin = 'reused_answer' AND source_response_id = ${responseId}
+      AND status IN ('approved', 'sent')
+    ORDER BY version DESC LIMIT 1
+  `
+  if (existing[0]?.status === 'sent') return response({ error: 'La respuesta ya fue reutilizada y enviada.' }, 409)
+  let responseRecord = existing[0]
+  if (responseRecord) {
+    const updated = await sql`
+      UPDATE operations.expert_responses
+      SET body = ${body}, admin_note = ${adminNote || null}, updated_at = NOW()
+      WHERE id = ${responseRecord.id}
+      RETURNING id, version, body, status
+    `
+    responseRecord = updated[0]
+  } else {
+    const versions = await sql`SELECT COALESCE(MAX(version), 0)::int AS version FROM operations.expert_responses WHERE request_id = ${requestId}`
+    const inserted = await sql`
+      INSERT INTO operations.expert_responses (request_id, expert_id, version, body, status, admin_note, reviewed_by, reviewed_at, response_origin, source_response_id, authored_by)
+      VALUES (${requestId}, NULL, ${Number(versions[0]?.version || 0) + 1}, ${body}, 'approved', ${adminNote || null}, ${claims.sub}, NOW(), 'reused_answer', ${responseId}, ${claims.sub})
+      RETURNING id, version, body, status
+    `
+    responseRecord = inserted[0]
+  }
+  try {
+    const existingFeedback = await sql`SELECT id FROM operations.client_feedback WHERE response_id = ${responseRecord.id} LIMIT 1`
+    let feedbackUrl = ''
+    if (!existingFeedback.length) {
+      const feedbackToken = randomToken()
+      await sql`INSERT INTO operations.client_feedback (request_id, response_id, token_hash) VALUES (${requestId}, ${responseRecord.id}, ${await sha256(feedbackToken)})`
+      feedbackUrl = `${env.PUBLIC_APP_URL || 'https://cortes-rodriguez-asesores-dev.juan-d-ricardo-t.workers.dev'}/feedback?token=${encodeURIComponent(feedbackToken)}`
+    }
+    await sendApprovedResponse(env, { reference: review.reference, email: review.email, client_name: review.client_name, body: String(responseRecord.body) }, adminNote, feedbackUrl)
+    await sql`UPDATE operations.expert_responses SET status = 'sent', sent_at = NOW(), updated_at = NOW() WHERE id = ${responseRecord.id}`
+    await sql`UPDATE operations.requests SET status = 'closed', updated_at = NOW() WHERE id = ${requestId}`
+    await sql`UPDATE operations.request_assignments SET status = 'completed' WHERE request_id = ${requestId} AND status = 'similarity_review'`
+    await sql`UPDATE operations.request_similarity_reviews SET status = 'answer_reused', selected_response_id = ${responseId}, resolved_by = ${claims.sub}, resolved_at = NOW() WHERE request_id = ${requestId}`
+    await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${claims.sub}, 'similarity_reuse', 'request', ${requestId}, ${JSON.stringify({ sourceResponseId: responseId, responseId: String(responseRecord.id) })}::jsonb)`
+  } catch (error) {
+    console.error('No se pudo enviar la respuesta reutilizada:', error.message)
+    return response({ error: 'No se pudo enviar la respuesta reutilizada. Puedes reintentar la validación.' }, 502)
+  }
+  return response({ ok: true, action, sent: true })
+}
+
 async function sendApprovedResponse(env, row, adminNote, feedbackUrl) {
   const subject = `Respuesta a tu solicitud · ${row.reference}`
-  const textBody = [`Hola ${row.client_name},`, '', row.body, adminNote ? `\nNota de administración:\n${adminNote}` : '', '', 'Gracias por confiar en Cortés Rodríguez Asesores.'].join('\n')
+  const portalUrl = `${env.PUBLIC_APP_URL || 'https://cortes-rodriguez-asesores-dev.juan-d-ricardo-t.workers.dev'}/portal-cliente`
+  const textBody = [`Hola ${row.client_name},`, '', row.body, adminNote ? `\nNota de administración:\n${adminNote}` : '', '', `¿Quieres continuar el proceso con nosotros? Accede al portal de clientes: ${portalUrl}`, '', 'Gracias por confiar en Cortés Rodríguez Asesores.'].join('\n')
   const feedbackText = feedbackUrl ? `\n\nEvalúa esta respuesta: ${feedbackUrl}` : ''
-  const html = `<p>Hola ${escapeHtml(row.client_name)},</p><div>${escapeHtml(row.body).replaceAll('\n', '<br />')}</div>${adminNote ? `<p><strong>Nota de administración:</strong><br />${escapeHtml(adminNote).replaceAll('\n', '<br />')}</p>` : ''}${feedbackUrl ? `<p>¿Cómo fue tu experiencia? <a href="${escapeHtml(feedbackUrl)}">Déjanos tu feedback</a>.</p>` : ''}<p>Gracias por confiar en Cortés Rodríguez Asesores.</p>`
+  const html = `<p>Hola ${escapeHtml(row.client_name)},</p><div>${escapeHtml(row.body).replaceAll('\n', '<br />')}</div>${adminNote ? `<p><strong>Nota de administración:</strong><br />${escapeHtml(adminNote).replaceAll('\n', '<br />')}</p>` : ''}${feedbackUrl ? `<p>¿Cómo fue tu experiencia? <a href="${escapeHtml(feedbackUrl)}">Déjanos tu feedback</a>.</p>` : ''}<p>¿Quieres continuar el proceso con nosotros? <a href="${escapeHtml(portalUrl)}">Accede al portal de clientes</a> para consultar tus solicitudes.</p><p>Gracias por confiar en Cortés Rodríguez Asesores.</p>`
   const result = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: env.RESEND_FROM_EMAIL, to: [row.email], subject, text: `${textBody}${feedbackText}`, html }) })
   const body = await result.json().catch(() => ({}))
   if (!result.ok || !body.id) throw new Error(body.message || 'Resend no aceptó el envío.')

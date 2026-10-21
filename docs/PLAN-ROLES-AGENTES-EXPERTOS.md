@@ -72,6 +72,7 @@ Asignación aleatoria entre expertos activos
 | Admin | Toda la operación y datos del cliente | Configurar catálogo, asignar, revisar, aprobar, reportar y administrar usuarios | — |
 | Agente | Solicitudes originadas por sus enlaces y métricas propias | Crear/revocar enlaces y compartirlos | Crear solicitudes desde el panel, ver datos de otros agentes o aprobar respuestas |
 | Experto | Solo solicitudes asignadas, especialidad, pregunta y adjuntos autorizados | Redactar y enviar respuesta a revisión | Ver nombre/contacto/constitución/agente/pago del cliente o enviarle directamente |
+| Cliente | Solo sus propias solicitudes y su estado | Consultar su listado de solicitudes | Ver solicitudes de otras personas, asignarse solicitudes o acceder a funciones internas |
 
 - [ ] Probar acceso por URL y API directa, no solo mediante los menús visibles.
 
@@ -110,15 +111,15 @@ Asignación aleatoria entre expertos activos
 - [ ] Mantener los campos actuales del cliente y añadir especialidad, pregunta detallada y consentimiento de tratamiento de datos.
 - [ ] Crear el cliente con el nombre y la solicitud con el resto de la información.
 - [ ] La solicitud desde enlace debe guardar `source = agent_link` y `agent_id`; la solicitud directa desde nuestra página debe guardar `source = direct_web` y quedar sin agente.
-- [ ] El agente solo consulta solicitudes que provengan de sus enlaces; no tendrá botón ni endpoint para crear solicitudes internas.
+- [x] El agente solo consulta solicitudes que provengan de sus enlaces; no tendrá botón ni endpoint para crear solicitudes internas.
 
 ### 4. Asignación y vista del experto
 
 - [ ] Asociar expertos a tipos de consulta mediante un pool configurable, con estado activo y fechas de vigencia.
 - [x] Crear `request_assignments` con experto, tipo de consulta, fecha, actor, estrategia, motivo y estado.
 - [x] Seleccionar aleatoriamente un experto activo del pool al crear la solicitud, usando una fuente aleatoria del servidor y registrando los candidatos considerados.
-- [ ] Definir fallback cuando no existan expertos activos: cola administrativa y alerta de asignación fallida.
-- [ ] Permitir reasignación administrativa conservando el historial.
+- [x] Definir fallback cuando no existan expertos activos: la solicitud queda sin asignar en la cola administrativa y se notifica a administración.
+- [x] Permitir asignación y reasignación administrativa solo a expertos activos asociados a la consulta, conservando quién asignó, cuándo y por qué.
 - [x] Crear la bandeja del experto con solo sus asignaciones.
 - [x] Las consultas del experto deben seleccionar únicamente pregunta, especialidad, estado de respuesta y adjuntos autorizados.
 - [x] No incluir en respuestas API del experto nombre, correo, teléfono, WhatsApp, constitución legal, agente, fuente ni información de pago.
@@ -140,14 +141,49 @@ Asignación aleatoria entre expertos activos
 - [ ] Crear una alerta y tarea administrativa para calificaciones bajas; el comentario no debe convertirse automáticamente en una nueva respuesta del experto. (El feedback bajo queda marcado como `escalated` en esta primera etapa.)
 - [ ] Mostrar al experto solo el feedback que administración marque como compartible y sin datos de contacto del cliente.
 
+### 5.1. Reutilización asistida de preguntas similares
+
+El “caché” es un índice interno para encontrar precedentes y una cola de revisión; no responde al cliente ni asigna una respuesta automáticamente. La solicitud nueva conserva su propio expediente, fuente y notificaciones durante todo el proceso.
+
+- [x] Normalizar texto en español (minúsculas, tildes, puntuación y palabras vacías) y comparar términos con Jaccard. La búsqueda queda acotada al mismo servicio general y tipo de consulta; se revisan hasta 500 respuestas anteriores enviadas.
+- [x] Usar solo precedentes con respuesta aprobada y enviada. Borradores, respuestas rechazadas y solicitudes de otras especialidades no son elegibles.
+- [x] Con el umbral inicial de Jaccard ≥ 0,30 y al menos 3 términos significativos en común, pausar la asignación automática y abrir una revisión para administración. El umbral es una señal de revisión, no una decisión de equivalencia.
+- [x] Mostrar en la bandeja administrativa la pregunta actual y hasta cinco precedentes, incluyendo texto de respuesta, fecha, puntuación y términos coincidentes. Esta vista y sus endpoints son exclusivos de administración; cliente, agente y experto no reciben los candidatos.
+- [x] Dar a administración dos salidas explícitas: adaptar la respuesta anterior a la pregunta actual y aprobarla como una respuesta nueva, o descartar la coincidencia y asignar aleatoriamente a un experto elegible.
+- [x] Al reutilizar, crear una respuesta nueva asociada a la solicitud actual; nunca alterar el precedente. La revisión registra candidato, similitud, decisión, actor, fecha, respuesta derivada y nota administrativa.
+- [x] Notificar a administración cuando la solicitud quede en revisión. No avisar ni asignar a un experto hasta que administración descarte la coincidencia; al derivarla, conservar el origen directo/agente y disparar las reglas correspondientes.
+- [ ] Antes de reutilizar, advertir y revisar que la respuesta no incluya datos personales, identificadores, adjuntos, hechos únicos del expediente ni asesoría dependiente de documentos del cliente anterior. El administrador debe adaptar y aprobar el contenido para el nuevo caso.
+- [ ] Incorporar configuración para activar/desactivar, cambiar umbral y revisar decisiones. Registrar falsos positivos/negativos para calibración; nunca enviar respuesta solo por coincidencia automática.
+- [ ] Evaluar en dev precisión y falsos positivos con preguntas reales anonimizadas. La coincidencia léxica no detecta bien paráfrasis o sinónimos; IA/embeddings quedan fuera de esta etapa.
+
+### 5.2. Portal inicial para clientes y acceso passwordless
+
+Después de recibir una respuesta aprobada, el cliente puede optar por continuar con la agencia e ingresar al portal. Es opcional: la respuesta y la atención por correo no dependen de abrir una cuenta. En esta primera fase el portal solo lista solicitudes.
+
+- [x] Definir el rol `client` y permiso mínimo `client_requests.read`, sin heredar permisos de agente, experto o administrador. La sesión del portal emite únicamente el rol `client`; no se crea usuario/contraseña permanente.
+- [x] Incluir en el correo de respuesta aprobada una invitación para continuar el proceso con la agencia y acceder al portal, sin crear una cuenta automáticamente ni condicionar la entrega de la respuesta.
+- [x] El cliente ingresa su correo y recibe allí un código numérico de 6 dígitos; escribe ese código en el portal como clave temporal de acceso. No es un enlace mágico ni una contraseña permanente.
+- [x] El código vence en 10 minutos, se guarda como HMAC y se consume una vez. Solicitar otro invalida el anterior; se permiten hasta 5 intentos por código y 4 envíos por correo cada 15 minutos. Las respuestas de solicitud no confirman si el correo existe.
+- [ ] Agregar limitación complementaria por IP/dispositivo y protección contra automatización; los límites actuales son por correo y no reemplazan rate limiting/WAF de plataforma.
+- [x] Vincular la sesión solo a solicitudes cuyo correo normalizado (trim y minúsculas, sin modificar alias) coincide con el correo verificado mediante el código. Un buzón compartido verá todas las solicitudes registradas con ese mismo correo.
+- [ ] Definir un proceso administrativo auditado para corregir correos históricos incorrectos; no permitir que un usuario autenticado fusione o reclame solicitudes de otro correo.
+- [x] Listar únicamente referencia, servicio, consulta, fecha y estado. No incluir pregunta, respuestas privadas, adjuntos, teléfono, datos del agente ni acciones de crear, editar, cancelar o pagar.
+- [x] Aplicar el filtro del correo autenticado en el backend antes de paginar; no aceptar un email o clienteId arbitrario como alcance de consulta.
+- [x] Usar cookie de sesión `HttpOnly`, `Secure` y `SameSite=Lax`, con vigencia de 14 días, logout con revocación y auditoría de código solicitado, ingreso y cierre.
+- [ ] Mantener la opción de continuar la gestión por correo; el portal es opcional y la respuesta aprobada sigue disponible aunque el cliente no cree acceso.
+
+**Validación de aceptación:** un correo no registrado obtiene el mismo mensaje que uno registrado; código incorrecto, vencido, usado o con 5 intentos no inicia sesión; emitir otro código invalida el anterior; solo se muestran solicitudes del correo verificado incluso al cambiar parámetros de URL o paginación; cerrar sesión invalida la cookie en servidor.
+
 ### 6. Notificaciones y aprobación
 
-- [ ] Ampliar las reglas de correo para filtrar por evento, servicio general, tipo de consulta, fuente y estado de pago.
+- [x] Ampliar las reglas de correo para filtrar por evento, servicio general, tipo de consulta y fuente. El filtro por estado de pago sigue pendiente.
 - [x] Permitir destinatarios por rol, experto asignado, agente de origen, administrador y cliente. Las reglas ya admiten audiencias dinámicas y destinatarios administrativos configurables.
-- [ ] Asociar cada regla a uno o varios tipos de consulta, con herencia opcional de las reglas del servicio general.
+- [x] Asociar cada regla a un tipo de consulta y/o origen; las reglas genéricas del servicio general funcionan como fallback. Para varias consultas se pueden crear reglas separadas.
 - [x] Evitar duplicados cuando el mismo correo aparezca por rol, regla y asignación.
-- [ ] Al crear una solicitud directa desde nuestra página (`direct_web`): notificar al experto asignado y al administrador; no notificar a ningún agente.
-- [ ] Al crear una solicitud desde enlace de agente: notificar al agente propietario, al experto asignado y al administrador.
+- [x] Al crear una solicitud directa desde nuestra página (`direct_web`): notificar al cliente, al experto asignado y a administración; nunca notificar a un agente.
+- [x] Al crear una solicitud desde enlace de agente: notificar al cliente, al agente propietario, al experto asignado y a administración.
+- [x] Si no hay experto activo para el tipo de consulta, conservar la solicitud en la cola sin asignar, registrar el fallo de asignación y avisar a administración.
+- [x] Al asignar o reasignar manualmente, notificar al nuevo experto, a administración y al agente solo si la solicitud proviene de su enlace.
 - [ ] Al enviar una respuesta a revisión: notificar al administrador.
 - [ ] Al aprobar: enviar al cliente la respuesta y la nota, registrar el identificador de Resend y actualizar el estado de envío.
 - [ ] Notificar al cliente cuando su solicitud sea recibida, asignada, requiera información, tenga una respuesta aprobada o sea cerrada.
@@ -168,6 +204,8 @@ Asignación aleatoria entre expertos activos
 |---|---:|---:|---:|---:|
 | Solicitud directa desde nuestra página (`direct_web`) | Confirmación | — | Solicitud asignada | Sí |
 | Solicitud creada desde enlace de agente | Confirmación | Sí | Solicitud asignada | Sí |
+| Posible pregunta similar | — | Si es el origen, según la regla | No hasta validación | Tarea para validar coincidencia |
+| Solicitud derivada a experto tras validación | Según avance | Si es el origen | Nueva asignación | Sí |
 | Solicitud asignada o reasignada | Sí | Si es su origen | Sí, solo si es asignado | Sí |
 | Información adicional requerida | Sí | Si es su origen | Sí | Sí |
 | Respuesta enviada a revisión | — | — | Confirmación | Sí |
@@ -214,6 +252,10 @@ Separar el estado operativo del estado de respuesta y del pago:
 
 ## Decisiones pendientes
 
+- [ ] Calibrar en dev el umbral léxico inicial (Jaccard >= 0.30 y al menos 3 términos compartidos); solo genera sugerencias, no respuestas automáticas. La búsqueda actual se limita a texto español normalizado, sin embeddings ni costo de IA.
+- [ ] Definir si una respuesta reutilizada requiere aprobación administrativa nueva antes de enviarse (recomendación inicial: sí, validar el contexto y permitir nota de administración).
+- [x] Definido: código de 6 dígitos enviado al correo como clave temporal de un solo uso, vigencia 10 minutos, hasta 5 intentos por código, máximo 4 envíos por correo cada 15 minutos y sesión revocable de 14 días.
+- [ ] Definir cómo verificar y resolver solicitudes históricas cuando el correo del cliente haya cambiado o se haya escrito incorrectamente.
 - [ ] Definir si el balance incluye únicamente valores cobrados o también comisiones de agentes/expertos, costos y reembolsos.
 - [ ] Confirmar si la selección aleatoria será completamente aleatoria o si se aplicará una variante balanceada para evitar sobrecargar a un experto.
 - [ ] Definir límite de imágenes por solicitud, tamaño máximo y política de conservación.
@@ -248,8 +290,9 @@ Esta fase protege el formulario público y consolida la seguridad de la platafor
 - [x] Limitar las solicitudes públicas a 5 imágenes, 10 MB por archivo, 25 MB en total y 35 MB por petición.
 - [x] Verificar mediante firma binaria que los adjuntos sean realmente PNG, JPG o WEBP, sin confiar únicamente en la extensión o el MIME enviado por el navegador.
 - [x] Limpiar los nombres de archivos antes de guardarlos y mantener los adjuntos fuera del acceso público directo.
-- [ ] Integrar Cloudflare Turnstile en `/solicitud`, validando el token exclusivamente en el Worker y usando claves separadas para `dev` y producción.
-- [ ] Definir si Turnstile se muestra siempre o solo después de varios intentos fallidos o señales de abuso.
+- [x] Integrar Cloudflare Turnstile en `/solicitud`; el Worker valida el token con Siteverify, comprueba host y acción, y falla de forma cerrada cuando la protección está activada.
+- [x] Mostrar el widget en el formulario cuando Turnstile esté habilitado; dejar que el modo administrado de Cloudflare decida si requiere interacción adicional.
+- [ ] Crear los widgets Turnstile y configurar `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` de forma independiente en Cloudflare dev y producción.
 - [ ] Configurar rate limiting y reglas WAF para creación de solicitudes, consulta de enlaces de agente, feedback y reenvío de correos.
 - [ ] Añadir protección contra duplicados y abuso por correo, IP, agente y ventana de tiempo, sin bloquear clientes legítimos.
 - [ ] Configurar en Cloudflare los headers `Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` y protección contra clickjacking.

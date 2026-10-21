@@ -11,7 +11,7 @@ export async function handleOperationsEmail(request, env) {
 
   const body = await request.json().catch(() => ({}))
   const eventCode = typeof body.eventCode === 'string' ? body.eventCode.trim() : 'request_created'
-  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_assigned', 'assignment_failed'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
+  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_assigned', 'assignment_failed', 'similar_question_review'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
 
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
@@ -57,6 +57,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     request_created: ['admin', 'expert', 'agent', 'client'],
     expert_assigned: ['admin', 'expert', 'agent'],
     assignment_failed: ['admin'],
+    similar_question_review: ['admin'],
   }
   if (!rules.length && !defaultAudiences[eventCode]) return { sent: false, reason: 'no_active_rule' }
 
@@ -67,7 +68,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     WHERE rnr.rule_id = ${rules[0].id} AND nr.active = TRUE
     ORDER BY nr.name
   ` : []
-  const audiences = [...new Set([...(rules[0]?.audiences || defaultAudiences[eventCode] || ['configured']), ...(eventCode === 'assignment_failed' ? ['admin'] : [])])]
+  const audiences = [...new Set([...(rules[0]?.audiences || defaultAudiences[eventCode] || ['configured']), ...(['assignment_failed', 'similar_question_review'].includes(eventCode) ? ['admin'] : [])])]
   const dynamic = []
   if (audiences.includes('client') || audiences.includes('all_involved')) dynamic.push(request.email)
   if ((audiences.includes('agent') || audiences.includes('all_involved')) && sourceChannel === 'agent_link') dynamic.push(request.agent_email)
@@ -89,7 +90,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const bcc = unique(configured.filter((item) => item.recipient_type === 'bcc').map((item) => item.email)).filter((email) => !to.includes(email) && !cc.includes(email))
   if (!to.length) throw new Error('La regla no tiene un destinatario principal tipo Para.')
 
-  const eventLabel = { payment_approved: 'Pago aprobado', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida', expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
+  const eventLabel = { payment_approved: 'Pago aprobado', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida', expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', similar_question_review: 'Pregunta similar pendiente de validación', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
   const subject = `${eventLabel} · ${request.reference}`
   // Notification rules may include the assigned expert. Keep shared mail
   // content free of client identity and operation details; authorized users
@@ -131,6 +132,7 @@ function notificationDescription(eventCode) {
     request_created: 'Se recibió una nueva solicitud y quedó registrada en la plataforma.',
     expert_assigned: 'La solicitud fue asignada o reasignada a un experto.',
     assignment_failed: 'No hay expertos activos asociados a este tipo de consulta. La solicitud quedó en la cola administrativa y requiere asignación manual.',
+    similar_question_review: 'La solicitud tiene coincidencias con respuestas aprobadas anteriores y requiere validación administrativa antes de asignarse.',
     status_changed: 'El estado de esta solicitud fue actualizado.',
     expert_response_submitted: 'Un experto envió su respuesta y está pendiente de revisión administrativa.',
     feedback_received: 'El cliente compartió su opinión sobre la respuesta recibida.',
