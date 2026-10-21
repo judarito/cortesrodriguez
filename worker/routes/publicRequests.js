@@ -2,6 +2,10 @@ import { sendRequestNotification } from './operationsEmail.js'
 
 export async function handlePublicRequests(request, env) {
   const url = new URL(request.url)
+  if (url.pathname === '/api/public/turnstile-config' && request.method === 'GET') {
+    const enabled = Boolean(env.TURNSTILE_SECRET_KEY && env.TURNSTILE_SITE_KEY)
+    return response({ siteKey: enabled ? env.TURNSTILE_SITE_KEY : '', enabled })
+  }
   if (url.pathname === '/api/public/service' && request.method === 'GET') {
     if (!env.NEON_DATABASE_URL) return response({ error: 'La base de datos operativa no está configurada.' }, 500)
     const { neon } = await import('@neondatabase/serverless')
