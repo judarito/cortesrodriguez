@@ -187,32 +187,34 @@ async function ensureExpertNotificationRules(sql, consultationTypeId, consultati
     JOIN operations.services s ON s.id = sct.service_id
     WHERE sct.consultation_type_id = ${consultationTypeId} AND s.active = TRUE
   `
-  for (const service of services) await ensureExpertNotificationRule(sql, service, consultationName, actorId)
+  for (const service of services) await ensureExpertNotificationRule(sql, service, consultationTypeId, consultationName, actorId)
 }
 
-async function ensureExpertNotificationRule(sql, service, consultationName, actorId) {
+async function ensureExpertNotificationRule(sql, service, consultationTypeId, consultationName, actorId) {
   const existing = await sql`
     SELECT id, audiences
     FROM operations.notification_rules
     WHERE event_code = 'request_created' AND service_type = ${service.code}
+      AND consultation_type_id = ${consultationTypeId} AND source_channel IS NULL
     LIMIT 1
   `
   if (existing[0]) {
     const audiences = Array.isArray(existing[0].audiences) ? existing[0].audiences : ['configured']
-    if (!audiences.includes('expert')) {
-      const nextAudiences = [...audiences, 'expert']
+    const requiredAudiences = ['admin', 'expert', 'agent', 'client']
+    if (requiredAudiences.some((audience) => !audiences.includes(audience))) {
+      const nextAudiences = [...new Set([...audiences, ...requiredAudiences])]
       await sql`UPDATE operations.notification_rules SET audiences = ${nextAudiences}, updated_at = NOW() WHERE id = ${existing[0].id}`
-      await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'update', 'notification_rule', ${existing[0].id}, ${JSON.stringify({ reason: 'expert_assigned_to_consultation', serviceCode: service.code, consultationName, audiences: nextAudiences })}::jsonb)`
+      await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'update', 'notification_rule', ${existing[0].id}, ${JSON.stringify({ reason: 'expert_assigned_to_consultation', serviceCode: service.code, consultationTypeId, consultationName, audiences: nextAudiences })}::jsonb)`
     }
     return
   }
 
   const created = await sql`
-    INSERT INTO operations.notification_rules (name, event_code, service_type, audiences)
-    VALUES (${`Solicitud creada - ${service.name}`}, 'request_created', ${service.code}, ${['expert']})
+    INSERT INTO operations.notification_rules (name, event_code, service_type, consultation_type_id, audiences)
+    VALUES (${`Solicitud creada - ${consultationName} · ${service.name}`}, 'request_created', ${service.code}, ${consultationTypeId}, ${['admin', 'expert', 'agent', 'client']})
     RETURNING id
   `
-  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'create', 'notification_rule', ${created[0].id}, ${JSON.stringify({ reason: 'expert_assigned_to_consultation', serviceCode: service.code, consultationName, audiences: ['expert'] })}::jsonb)`
+  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'create', 'notification_rule', ${created[0].id}, ${JSON.stringify({ reason: 'expert_assigned_to_consultation', serviceCode: service.code, consultationTypeId, consultationName, audiences: ['admin', 'expert', 'agent', 'client'] })}::jsonb)`
 }
 
 async function audit(sql, actorId, action, entityId, metadata) {

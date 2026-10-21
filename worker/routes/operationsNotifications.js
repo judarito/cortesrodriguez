@@ -23,29 +23,33 @@ export async function handleOperationsNotifications(request, env) {
   if (isConfig) {
     const recipientPage = pageParams(url.searchParams.get('recipientPage'))
     const rulePage = pageParams(url.searchParams.get('rulePage'))
-    const [recipientCount, recipients, ruleCount, rules, services] = await Promise.all([
+    const [recipientCount, recipients, ruleCount, rules, services, consultationTypes] = await Promise.all([
       sql`SELECT COUNT(*)::int AS total FROM operations.notification_recipients`,
       sql`SELECT id, name, email, recipient_type, active, created_at FROM operations.notification_recipients ORDER BY name LIMIT ${recipientPage.pageSize} OFFSET ${recipientPage.offset}`,
       sql`SELECT COUNT(*)::int AS total FROM operations.notification_rules`,
       sql`
-        SELECT r.id, r.name, r.event_code, r.service_type, r.active, r.created_at,
+        SELECT r.id, r.name, r.event_code, r.service_type, r.consultation_type_id, r.source_channel,
+          c.name AS consultation_name, r.active, r.created_at,
           COALESCE(string_agg(nr.name || ' <' || nr.email || '>', ', ' ORDER BY nr.name), '') AS recipients,
           r.audiences
         FROM operations.notification_rules r
+        LEFT JOIN operations.consultation_types c ON c.id = r.consultation_type_id
         LEFT JOIN operations.notification_rule_recipients rnr ON rnr.rule_id = r.id
         LEFT JOIN operations.notification_recipients nr ON nr.id = rnr.recipient_id
-        GROUP BY r.id, r.audiences
-        ORDER BY r.event_code, r.service_type
+        GROUP BY r.id, r.audiences, c.name
+        ORDER BY r.event_code, r.service_type, c.name, r.source_channel
         LIMIT ${rulePage.pageSize} OFFSET ${rulePage.offset}
       `,
       sql`SELECT code, name, amount_cents, currency, active FROM operations.service_catalog WHERE code = 'asesoria_personalizada' LIMIT 1`,
+      sql`SELECT id, code, name FROM operations.consultation_types WHERE active = TRUE ORDER BY name`,
     ])
     return response({
       recipients: recipients.map((row) => ({ id: String(row.id), name: String(row.name), email: String(row.email), recipientType: String(row.recipient_type), active: Boolean(row.active), createdAt: String(row.created_at) })),
-      rules: rules.map((row) => ({ id: String(row.id), name: String(row.name), eventCode: String(row.event_code), serviceType: String(row.service_type), audiences: row.audiences || ['configured'], active: Boolean(row.active), recipients: row.recipients ? String(row.recipients).split(', ') : [] })),
+      rules: rules.map((row) => ({ id: String(row.id), name: String(row.name), eventCode: String(row.event_code), serviceType: String(row.service_type), consultationTypeId: row.consultation_type_id ? String(row.consultation_type_id) : null, consultationTypeName: row.consultation_name ? String(row.consultation_name) : '', sourceChannel: row.source_channel ? String(row.source_channel) : null, audiences: row.audiences || ['configured'], active: Boolean(row.active), recipients: row.recipients ? String(row.recipients).split(', ') : [] })),
       recipientPagination: pagination(recipientPage, recipientCount[0]?.total),
       rulePagination: pagination(rulePage, ruleCount[0]?.total),
       service: services[0] ? { code: String(services[0].code), name: String(services[0].name), amountCents: Number(services[0].amount_cents), currency: String(services[0].currency), active: Boolean(services[0].active) } : null,
+      consultationTypes: consultationTypes.map((row) => ({ id: String(row.id), code: String(row.code), name: String(row.name) })),
     })
   }
 
@@ -113,22 +117,29 @@ async function createRuleRecord(sql, body, actorId) {
   const name = text(body.name)
   const eventCode = text(body.eventCode)
   const serviceType = text(body.serviceType) || 'all'
+  const consultationTypeId = text(body.consultationTypeId) || null
+  const sourceChannel = text(body.sourceChannel) || null
   const audiences = Array.isArray(body.audiences) ? body.audiences.filter((value) => typeof value === 'string') : ['configured']
   const recipientIds = Array.isArray(body.recipientIds) ? body.recipientIds.filter((value) => typeof value === 'string') : []
-  const requiresConfiguredRecipient = audiences.some((value) => ['configured', 'admin', 'all_involved'].includes(value))
+  const requiresConfiguredRecipient = audiences.includes('configured')
   if (!name || !eventCode || !serviceType || (requiresConfiguredRecipient && !recipientIds.length)) return response({ error: requiresConfiguredRecipient ? 'Nombre, evento, servicio y al menos un destinatario configurado son obligatorios.' : 'Nombre, evento y servicio son obligatorios.' }, 400)
-  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_response_submitted', 'feedback_received', 'feedback_low'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
+  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_response_submitted', 'feedback_received', 'feedback_low', 'expert_assigned', 'assignment_failed'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
   if (!['all', 'importacion', 'exportacion', 'agente_carga'].includes(serviceType)) return response({ error: 'Tipo de servicio inválido.' }, 400)
+  if (sourceChannel && !['direct_web', 'agent_link'].includes(sourceChannel)) return response({ error: 'Origen de solicitud inválido.' }, 400)
   if (!audiences.length || audiences.some((value) => !['configured', 'client', 'agent', 'expert', 'admin', 'all_involved'].includes(value))) return response({ error: 'Audiencia de notificación inválida.' }, 400)
   try {
-    const rows = await sql`INSERT INTO operations.notification_rules (name, event_code, service_type, audiences) VALUES (${name}, ${eventCode}, ${serviceType}, ${audiences}) RETURNING id, name, event_code, service_type, audiences, active`
+    if (consultationTypeId) {
+      const consultation = await sql`SELECT id FROM operations.consultation_types WHERE id = ${consultationTypeId} AND active = TRUE LIMIT 1`
+      if (!consultation[0]) return response({ error: 'El tipo de consulta no existe o está inactivo.' }, 400)
+    }
     const recipients = await sql`SELECT id FROM operations.notification_recipients WHERE id = ANY(${recipientIds}) AND active = TRUE`
     if (requiresConfiguredRecipient && !recipients.length) return response({ error: 'No hay destinatarios activos válidos.' }, 400)
+    const rows = await sql`INSERT INTO operations.notification_rules (name, event_code, service_type, consultation_type_id, source_channel, audiences) VALUES (${name}, ${eventCode}, ${serviceType}, ${consultationTypeId}, ${sourceChannel}, ${audiences}) RETURNING id, name, event_code, service_type, consultation_type_id, source_channel, audiences, active`
     for (const recipient of recipients) await sql`INSERT INTO operations.notification_rule_recipients (rule_id, recipient_id) VALUES (${rows[0].id}, ${recipient.id}) ON CONFLICT DO NOTHING`
     await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'create', 'notification_rule', ${rows[0].id}, ${JSON.stringify({ eventCode, serviceType, recipientIds })}::jsonb)`
-    return response({ ok: true, rule: { id: String(rows[0].id), name: String(rows[0].name), eventCode: String(rows[0].event_code), serviceType: String(rows[0].service_type), audiences: rows[0].audiences || audiences, active: Boolean(rows[0].active) } }, 201)
+    return response({ ok: true, rule: { id: String(rows[0].id), name: String(rows[0].name), eventCode: String(rows[0].event_code), serviceType: String(rows[0].service_type), consultationTypeId: rows[0].consultation_type_id ? String(rows[0].consultation_type_id) : null, sourceChannel: rows[0].source_channel ? String(rows[0].source_channel) : null, audiences: rows[0].audiences || audiences, active: Boolean(rows[0].active) } }, 201)
   } catch (error) {
-    if (String(error.message).includes('notification_rules_event_code_service_type_key')) return response({ error: 'Ya existe una regla para ese evento y tipo de servicio.' }, 409)
+    if (String(error.message).includes('idx_notification_rules_matching')) return response({ error: 'Ya existe una regla con la misma combinación de evento, servicio, consulta y origen.' }, 409)
     throw error
   }
 }

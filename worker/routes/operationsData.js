@@ -8,11 +8,13 @@ export async function handleOperationsData(request, env) {
   const createRequest = url.pathname === '/api/app/requests' && request.method === 'POST'
   const requestDetailMatch = url.pathname.match(/^\/api\/app\/requests\/([^/]+)$/)
   const isRequestDetail = Boolean(requestDetailMatch) && request.method === 'GET'
+  const requestAssignmentMatch = url.pathname.match(/^\/api\/app\/requests\/([^/]+)\/assignment$/)
+  const isRequestAssignment = Boolean(requestAssignmentMatch) && request.method === 'POST'
   const isDashboard = url.pathname === '/api/app/dashboard' && request.method === 'GET'
-  if (!isClients && !isRequests && !createRequest && !isRequestDetail && !isDashboard) return null
+  if (!isClients && !isRequests && !createRequest && !isRequestDetail && !isRequestAssignment && !isDashboard) return null
 
   const claims = await requireOperationsAuth(request, env)
-  const permission = isClients ? 'clients.read' : createRequest ? 'requests.create' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
+  const permission = isClients ? 'clients.read' : createRequest ? 'requests.create' : isRequestAssignment ? 'requests.update' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
   if (!claims?.permissions?.includes(permission)) {
     return response({ error: 'No tienes permisos para consultar este módulo.' }, 403)
   }
@@ -24,6 +26,10 @@ export async function handleOperationsData(request, env) {
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   if (isDashboard) return getDashboard(sql, claims)
+  if (isRequestAssignment) {
+    if (!claims.roles?.includes('admin')) return response({ error: 'Solo administración puede asignar o reasignar expertos.' }, 403)
+    return assignRequestExpert(sql, request, requestAssignmentMatch[1], claims, env)
+  }
   if (isRequestDetail) return getRequestDetail(sql, requestDetailMatch[1], claims)
   if (createRequest) return createAgentRequest(sql, request, claims, env)
 
@@ -177,13 +183,15 @@ async function getRequestDetail(sql, requestId, claims) {
     sql`
       SELECT r.id, r.reference, r.source, r.legal_entity_type, r.email, r.phone, r.whatsapp, r.payment_required,
         r.service_name, r.service_amount_cents, r.service_currency, r.service_type, r.freight_agent,
-        r.product_type, r.status, r.created_at, r.updated_at, r.notification_status,
+        r.product_type, r.status, r.created_at, r.updated_at, r.notification_status, r.consultation_type_id,
+        r.consultation_type_name, r.assigned_expert_id, assigned.full_name AS assigned_expert_name,
         r.notification_last_event_at, r.notification_last_opened_at,
         c.id AS client_id, c.full_name AS client_name, c.created_at AS client_created_at,
         u.full_name AS agent_name, u.email AS agent_email
       FROM operations.requests r
       JOIN operations.clients c ON c.id = r.client_id
       LEFT JOIN operations.users u ON u.id = COALESCE(r.agent_id, r.created_by)
+      LEFT JOIN operations.users assigned ON assigned.id = r.assigned_expert_id
       WHERE r.id = ${requestId} AND ${accessFilter}
       LIMIT 1
     `,
@@ -205,7 +213,57 @@ async function getRequestDetail(sql, requestId, claims) {
   ])
   if (!requestRows[0]) return response({ error: 'Solicitud no encontrada.' }, 404)
   const isAdmin = claims.roles?.includes('admin')
-  return response({ request: serializeRequestDetail(requestRows[0]), history: historyRows.map(serializeRequestHistory), responses: responseRows.map((row) => serializeRequestResponse(row, isAdmin || ['approved', 'sent'].includes(String(row.status)))) })
+  const [assignmentHistory, eligibleExperts] = await Promise.all([
+    sql`SELECT a.id, a.expert_id, u.full_name AS expert_name, a.status, a.strategy, a.candidate_count, a.reason, a.assigned_at
+      FROM operations.request_assignments a LEFT JOIN operations.users u ON u.id = a.expert_id
+      WHERE a.request_id = ${requestId} ORDER BY a.assigned_at DESC`,
+    sql`SELECT DISTINCT u.id, u.full_name
+      FROM operations.users u
+      JOIN operations.user_roles ur ON ur.user_id = u.id
+      JOIN operations.roles role ON role.id = ur.role_id AND role.name = 'expert'
+      JOIN operations.consultation_type_experts cte ON cte.user_id = u.id AND cte.active = TRUE
+      WHERE u.active = TRUE AND cte.consultation_type_id = ${requestRows[0].consultation_type_id}
+      ORDER BY u.full_name`,
+  ])
+  return response({
+    request: serializeRequestDetail(requestRows[0]),
+    history: historyRows.map(serializeRequestHistory),
+    responses: responseRows.map((row) => serializeRequestResponse(row, isAdmin || ['approved', 'sent'].includes(String(row.status)))),
+    assignment: { expertId: requestRows[0].assigned_expert_id ? String(requestRows[0].assigned_expert_id) : null, expertName: requestRows[0].assigned_expert_name ? String(requestRows[0].assigned_expert_name) : '', history: assignmentHistory.map((row) => ({ id: String(row.id), expertId: row.expert_id ? String(row.expert_id) : null, expertName: row.expert_name ? String(row.expert_name) : '', status: String(row.status), strategy: String(row.strategy), candidateCount: Number(row.candidate_count), reason: row.reason ? String(row.reason) : '', assignedAt: String(row.assigned_at) })) },
+    eligibleExperts: eligibleExperts.map((row) => ({ id: String(row.id), name: String(row.full_name) })),
+  })
+}
+
+async function assignRequestExpert(sql, request, requestId, claims, env) {
+  const body = await request.json().catch(() => ({}))
+  const expertId = text(body.expertId)
+  if (!expertId) return response({ error: 'Selecciona un experto para asignar la solicitud.' }, 400)
+  const requests = await sql`SELECT id, consultation_type_id, assigned_expert_id, status FROM operations.requests WHERE id = ${requestId} LIMIT 1`
+  if (!requests[0]) return response({ error: 'Solicitud no encontrada.' }, 404)
+  if (['closed', 'cancelled'].includes(String(requests[0].status))) return response({ error: 'No se puede asignar una solicitud cerrada o cancelada.' }, 409)
+  const pendingResponses = await sql`SELECT 1 FROM operations.expert_responses WHERE request_id = ${requestId} AND status = 'pending_admin_review' LIMIT 1`
+  if (pendingResponses.length) return response({ error: 'Revisa la respuesta pendiente antes de reasignar el experto.' }, 409)
+  const experts = await sql`
+    SELECT DISTINCT u.id, u.full_name
+    FROM operations.users u
+    JOIN operations.user_roles ur ON ur.user_id = u.id
+    JOIN operations.roles role ON role.id = ur.role_id AND role.name = 'expert'
+    JOIN operations.consultation_type_experts cte ON cte.user_id = u.id AND cte.active = TRUE
+    WHERE u.active = TRUE AND u.id = ${expertId} AND cte.consultation_type_id = ${requests[0].consultation_type_id}
+    LIMIT 1
+  `
+  if (!experts[0]) return response({ error: 'El experto debe estar activo y asociado al tipo de consulta de esta solicitud.' }, 400)
+  await sql`UPDATE operations.request_assignments SET status = 'reassigned' WHERE request_id = ${requestId} AND status = 'assigned'`
+  await sql`
+    INSERT INTO operations.request_assignments (request_id, expert_id, consultation_type_id, candidate_count, strategy, status, reason, assigned_by)
+    VALUES (${requestId}, ${expertId}, ${requests[0].consultation_type_id}, 1, 'admin_manual', ${requests[0].assigned_expert_id ? 'reassigned' : 'assigned'}, ${text(body.reason) || (requests[0].assigned_expert_id ? 'Reasignación administrativa' : 'Asignación administrativa')}, ${claims.sub})
+  `
+  await sql`UPDATE operations.requests SET assigned_expert_id = ${expertId}, updated_at = NOW() WHERE id = ${requestId}`
+  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${claims.sub}, 'assign', 'request', ${requestId}, ${JSON.stringify({ expertId, previousExpertId: requests[0].assigned_expert_id ? String(requests[0].assigned_expert_id) : null })}::jsonb)`
+  if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
+    try { await sendRequestNotification(sql, env, requestId, 'expert_assigned', claims.sub) } catch (error) { console.error('No se pudo notificar la asignación del experto:', error.message) }
+  }
+  return response({ ok: true, expert: { id: String(experts[0].id), name: String(experts[0].full_name) } })
 }
 
 async function getDashboard(sql, claims) {

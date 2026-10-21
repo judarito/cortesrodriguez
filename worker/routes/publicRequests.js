@@ -120,15 +120,16 @@ export async function handlePublicRequests(request, env) {
     )
   `
 
-  if (assignedExpertId) {
-    await sql`
-      INSERT INTO operations.request_assignments (request_id, expert_id, consultation_type_id, candidate_count, strategy, status)
-      VALUES (${requestId}, ${assignedExpertId}, ${service.consultation_type_id}, ${expertRows.length}, 'random_pool', 'assigned')
-    `
-  }
+  await sql`
+    INSERT INTO operations.request_assignments (request_id, expert_id, consultation_type_id, candidate_count, strategy, status, reason)
+    VALUES (${requestId}, ${assignedExpertId}, ${service.consultation_type_id}, ${expertRows.length}, 'random_pool', ${assignedExpertId ? 'assigned' : 'failed'}, ${assignedExpertId ? null : 'no_active_expert'})
+  `
 
   if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
     try { await sendRequestNotification(sql, env, requestId, 'request_created') } catch (error) { console.error('No se pudo enviar la notificación de solicitud creada:', error.message) }
+    if (!assignedExpertId) {
+      try { await sendRequestNotification(sql, env, requestId, 'assignment_failed') } catch (error) { console.error('No se pudo notificar la asignación fallida:', error.message) }
+    }
   }
 
   return response({ ok: true, reference, status: 'pending' }, 201)

@@ -22,6 +22,8 @@ const requests = ref([])
 const requestDetail = ref(null)
 const requestDetailLoading = ref(false)
 const requestDetailError = ref('')
+const assignmentExpertId = ref('')
+const assignmentSaving = ref(false)
 const requestCount = ref(0)
 const clientSearch = ref('')
 const requestSearch = ref('')
@@ -248,10 +250,29 @@ async function openRequestDetail(item) {
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.error || 'No se pudo cargar el detalle de la solicitud.')
     requestDetail.value = data
+    assignmentExpertId.value = data.assignment?.expertId || ''
   } catch (detailError) {
     requestDetailError.value = detailError.message
   } finally {
     requestDetailLoading.value = false
+  }
+}
+
+async function assignRequestExpert() {
+  if (!requestDetail.value || !assignmentExpertId.value) return
+  assignmentSaving.value = true
+  requestDetailError.value = ''
+  const requestId = requestDetail.value.request.id
+  try {
+    const response = await appFetch(`/api/app/requests/${requestId}/assignment`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token.value}` }, body: JSON.stringify({ expertId: assignmentExpertId.value }) })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || 'No se pudo asignar el experto.')
+    await openRequestDetail({ id: requestId })
+    await loadModule('Solicitudes', requestPagination.value.page)
+  } catch (assignError) {
+    requestDetailError.value = assignError.message
+  } finally {
+    assignmentSaving.value = false
   }
 }
 
@@ -522,6 +543,7 @@ onMounted(restoreSession)
           <span :class="['status-pill', statusClass(requestDetail.request.status)]"><i></i>{{ labelValue(requestDetail.request.status) }}</span>
           <section class="detail-section"><h3>Datos del cliente</h3><dl class="detail-grid"><div><dt>Nombre completo</dt><dd>{{ requestDetail.request.clientName }}</dd></div><div><dt>Constitución legal</dt><dd>{{ labelValue(requestDetail.request.legalEntityType) }}</dd></div><div><dt>Correo</dt><dd>{{ requestDetail.request.email || 'No registrado' }}</dd></div><div><dt>Teléfono</dt><dd>{{ requestDetail.request.phone || 'No registrado' }}</dd></div><div><dt>WhatsApp</dt><dd>{{ requestDetail.request.whatsapp || 'No registrado' }}</dd></div><div><dt>Cliente desde</dt><dd>{{ formatDate(requestDetail.request.clientCreatedAt) }}</dd></div></dl></section>
           <section class="detail-section"><h3>Datos de la operación</h3><dl class="detail-grid"><div><dt>Servicio</dt><dd>{{ requestDetail.request.serviceName }}</dd></div><div><dt>Tipo de servicio</dt><dd>{{ labelValue(requestDetail.request.serviceType) }}</dd></div><div><dt>Producto</dt><dd>{{ labelValue(requestDetail.request.productType) }}</dd></div><div><dt>Agente de carga</dt><dd>{{ requestDetail.request.freightAgent || 'No registrado' }}</dd></div><div><dt>Fuente</dt><dd>{{ requestDetail.request.source }}</dd></div><div><dt>Agente responsable</dt><dd>{{ requestDetail.request.agentName || 'Landingpage' }}</dd></div><div><dt>Creada</dt><dd>{{ formatDate(requestDetail.request.createdAt) }}</dd></div></dl></section>
+          <section v-if="isAdmin" class="detail-section"><h3>Asignación del experto</h3><p class="assignment-current">{{ requestDetail.assignment?.expertName ? `Asignada a ${requestDetail.assignment.expertName}` : 'En cola administrativa: todavía no hay experto asignado.' }}</p><div v-if="requestDetail.eligibleExperts?.length" class="assignment-controls"><label>Experto<select v-model="assignmentExpertId"><option value="" disabled>Selecciona un experto</option><option v-for="expert in requestDetail.eligibleExperts" :key="expert.id" :value="expert.id">{{ expert.name }}</option></select></label><button type="button" class="primary-button compact" :disabled="!assignmentExpertId || assignmentSaving || assignmentExpertId === requestDetail.assignment?.expertId" @click="assignRequestExpert">{{ assignmentSaving ? 'Asignando…' : requestDetail.assignment?.expertId ? 'Reasignar' : 'Asignar experto' }}</button></div><p v-else class="detail-empty">No hay expertos activos asociados a este tipo de consulta. La solicitud queda pendiente hasta que se configure uno.</p><ul v-if="requestDetail.assignment?.history?.length" class="assignment-history"><li v-for="item in requestDetail.assignment.history" :key="item.id"><strong>{{ item.expertName || 'Sin asignar' }}</strong><span>{{ item.status === 'failed' ? 'Sin expertos disponibles' : item.status === 'reassigned' ? 'Reasignada' : 'Asignada' }} · {{ formatDate(item.assignedAt) }}</span></li></ul></section>
           <section class="detail-section"><h3>Respuestas del experto</h3><div v-if="!requestDetail.responses?.length" class="detail-empty">Aún no hay respuestas registradas.</div><div v-for="expertResponse in requestDetail.responses" :key="expertResponse.id" class="request-response-item"><div class="request-response-heading"><div><strong>Versión {{ expertResponse.version }}</strong><span>{{ expertResponse.expertName }} · {{ formatDate(expertResponse.createdAt) }}</span></div><span :class="['status-pill', statusClass(expertResponse.status)]"><i></i>{{ labelValue(expertResponse.status) }}</span></div><p v-if="expertResponse.bodyVisible" class="request-response-body">{{ expertResponse.body }}</p><p v-else class="request-response-pending">La respuesta está pendiente de aprobación administrativa.</p><p v-if="expertResponse.adminNote" class="request-response-note"><strong>Nota administrativa:</strong> {{ expertResponse.adminNote }}</p></div></section>
           <section class="detail-section"><h3>Historial del cliente</h3><div class="request-history"><div v-for="historyItem in requestDetail.history" :key="historyItem.id" class="request-history-item"><div><strong>{{ historyItem.reference }}</strong><span>{{ labelValue(historyItem.serviceType) }} · {{ labelValue(historyItem.productType) }}</span></div><span :class="['status-pill', statusClass(historyItem.status)]"><i></i>{{ labelValue(historyItem.status) }}</span></div></div></section>
         </template>
@@ -556,5 +578,5 @@ onMounted(restoreSession)
 </style>
 
 <style scoped>
-.detail-empty{padding:14px;border:1px dashed #dce5ed;border-radius:8px;color:#98a2b3;font-size:10px}.request-response-item{display:grid;gap:10px;padding:14px;border:1px solid #e5eaf0;border-radius:8px;background:#fbfcfe}.request-response-item+.request-response-item{margin-top:10px}.request-response-heading{display:flex;align-items:start;justify-content:space-between;gap:10px}.request-response-heading>div{display:grid;gap:4px}.request-response-heading strong{color:#344b60;font-size:11px}.request-response-heading span:not(.status-pill){color:#7d8999;font-size:10px}.request-response-body{margin:0;padding:12px;border-radius:7px;color:#344b60;background:#fff;font-size:11px;line-height:1.6;white-space:pre-wrap}.request-response-pending{margin:0;color:#98a2b3;font-size:10px}.request-response-note{margin:0;padding-top:10px;border-top:1px solid #e5eaf0;color:#526174;font-size:10px;line-height:1.5}.request-response-note strong{color:#344b60}
+.detail-empty{padding:14px;border:1px dashed #dce5ed;border-radius:8px;color:#98a2b3;font-size:10px}.request-response-item{display:grid;gap:10px;padding:14px;border:1px solid #e5eaf0;border-radius:8px;background:#fbfcfe}.request-response-item+.request-response-item{margin-top:10px}.request-response-heading{display:flex;align-items:start;justify-content:space-between;gap:10px}.request-response-heading>div{display:grid;gap:4px}.request-response-heading strong{color:#344b60;font-size:11px}.request-response-heading span:not(.status-pill){color:#7d8999;font-size:10px}.request-response-body{margin:0;padding:12px;border-radius:7px;color:#344b60;background:#fff;font-size:11px;line-height:1.6;white-space:pre-wrap}.request-response-pending{margin:0;color:#98a2b3;font-size:10px}.request-response-note{margin:0;padding-top:10px;border-top:1px solid #e5eaf0;color:#526174;font-size:10px;line-height:1.5}.request-response-note strong{color:#344b60}.assignment-controls{display:flex;align-items:end;gap:10px;max-width:520px}.assignment-controls label{display:grid;flex:1;gap:6px;color:#526174;font-size:10px;font-weight:700}.assignment-controls select{min-height:38px;padding:0 10px;border:1px solid #d8e0ea;border-radius:6px;color:#344b60;background:#fff;font-size:11px}.assignment-current{margin:0 0 12px;color:#526174;font-size:11px}.assignment-history{display:grid;gap:8px;margin:14px 0 0;padding:0;list-style:none}.assignment-history li{display:grid;gap:3px;padding:9px 11px;border:1px solid #edf1f5;border-radius:7px}.assignment-history strong{color:#344b60;font-size:10px}.assignment-history span{color:#98a2b3;font-size:9px}@media(max-width:520px){.assignment-controls{align-items:stretch;flex-direction:column}}
 </style>

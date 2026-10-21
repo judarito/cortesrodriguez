@@ -11,7 +11,7 @@ export async function handleOperationsEmail(request, env) {
 
   const body = await request.json().catch(() => ({}))
   const eventCode = typeof body.eventCode === 'string' ? body.eventCode.trim() : 'request_created'
-  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
+  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_assigned', 'assignment_failed'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
 
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
@@ -26,8 +26,8 @@ export async function handleOperationsEmail(request, env) {
 
 export async function sendRequestNotification(sql, env, requestId, eventCode, actorId = null) {
   const requests = await sql`
-    SELECT r.id, r.reference, r.email, r.service_name, r.service_type, r.product_type, r.status,
-      r.agent_id, r.assigned_expert_id, c.full_name AS client_name,
+    SELECT r.id, r.reference, r.email, r.service_name, r.service_type, r.product_type, r.status, r.source,
+      r.agent_id, r.assigned_expert_id, r.consultation_type_id, r.source_channel, c.full_name AS client_name,
       agent.email AS agent_email, expert.email AS expert_email
     FROM operations.requests r
     JOIN operations.clients c ON c.id = r.client_id
@@ -38,30 +38,50 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   `
   const request = requests[0]
   if (!request) throw new Error('Solicitud no encontrada.')
+  const sourceChannel = request.source_channel || (request.source === 'agent' ? 'agent_link' : 'direct_web')
 
   const rules = await sql`
     SELECT id, name, audiences
     FROM operations.notification_rules
     WHERE event_code = ${eventCode}
       AND service_type IN ('all', ${request.service_type})
+      AND (consultation_type_id IS NULL OR consultation_type_id = ${request.consultation_type_id})
+      AND (source_channel IS NULL OR source_channel = ${sourceChannel})
       AND active = TRUE
-    ORDER BY CASE WHEN service_type = ${request.service_type} THEN 0 ELSE 1 END
+    ORDER BY (consultation_type_id IS NOT NULL) DESC,
+      (source_channel IS NOT NULL) DESC,
+      (service_type <> 'all') DESC
     LIMIT 1
   `
-  if (!rules.length) return { sent: false, reason: 'no_active_rule' }
+  const defaultAudiences = {
+    request_created: ['admin', 'expert', 'agent', 'client'],
+    expert_assigned: ['admin', 'expert', 'agent'],
+    assignment_failed: ['admin'],
+  }
+  if (!rules.length && !defaultAudiences[eventCode]) return { sent: false, reason: 'no_active_rule' }
 
-  const recipients = await sql`
+  const recipients = rules[0] ? await sql`
     SELECT nr.email, nr.recipient_type
     FROM operations.notification_rule_recipients rnr
     JOIN operations.notification_recipients nr ON nr.id = rnr.recipient_id
     WHERE rnr.rule_id = ${rules[0].id} AND nr.active = TRUE
     ORDER BY nr.name
-  `
-  const audiences = rules[0].audiences || ['configured']
+  ` : []
+  const audiences = [...new Set([...(rules[0]?.audiences || defaultAudiences[eventCode] || ['configured']), ...(eventCode === 'assignment_failed' ? ['admin'] : [])])]
   const dynamic = []
   if (audiences.includes('client') || audiences.includes('all_involved')) dynamic.push(request.email)
-  if (audiences.includes('agent') || audiences.includes('all_involved')) dynamic.push(request.agent_email)
+  if ((audiences.includes('agent') || audiences.includes('all_involved')) && sourceChannel === 'agent_link') dynamic.push(request.agent_email)
   if (audiences.includes('expert') || audiences.includes('all_involved')) dynamic.push(request.expert_email)
+  if (audiences.includes('admin') || audiences.includes('all_involved')) {
+    const admins = await sql`
+      SELECT DISTINCT u.email
+      FROM operations.users u
+      JOIN operations.user_roles ur ON ur.user_id = u.id
+      JOIN operations.roles role ON role.id = ur.role_id AND role.name = 'admin'
+      WHERE u.active = TRUE
+    `
+    dynamic.push(...admins.map((row) => row.email))
+  }
   const configured = audiences.includes('configured') || audiences.includes('admin') || audiences.includes('all_involved') ? recipients : []
   const unique = (values) => [...new Set(values.filter((value) => value && /^\S+@\S+\.\S+$/.test(String(value))).map(String))]
   const to = unique([...configured.filter((item) => item.recipient_type === 'to').map((item) => item.email), ...dynamic])
@@ -69,7 +89,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const bcc = unique(configured.filter((item) => item.recipient_type === 'bcc').map((item) => item.email)).filter((email) => !to.includes(email) && !cc.includes(email))
   if (!to.length) throw new Error('La regla no tiene un destinatario principal tipo Para.')
 
-  const eventLabel = { payment_approved: 'Pago aprobado', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
+  const eventLabel = { payment_approved: 'Pago aprobado', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida', expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
   const subject = `${eventLabel} · ${request.reference}`
   // Notification rules may include the assigned expert. Keep shared mail
   // content free of client identity and operation details; authorized users
@@ -109,6 +129,8 @@ function notificationDescription(eventCode) {
     payment_approved: 'El pago asociado a esta solicitud fue aprobado.',
     payment_rejected: 'El pago asociado a esta solicitud no fue aprobado. Revisa el caso en el panel.',
     request_created: 'Se recibió una nueva solicitud y quedó registrada en la plataforma.',
+    expert_assigned: 'La solicitud fue asignada o reasignada a un experto.',
+    assignment_failed: 'No hay expertos activos asociados a este tipo de consulta. La solicitud quedó en la cola administrativa y requiere asignación manual.',
     status_changed: 'El estado de esta solicitud fue actualizado.',
     expert_response_submitted: 'Un experto envió su respuesta y está pendiente de revisión administrativa.',
     feedback_received: 'El cliente compartió su opinión sobre la respuesta recibida.',
