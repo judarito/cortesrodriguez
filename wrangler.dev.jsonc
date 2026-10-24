@@ -3,6 +3,19 @@
   "name": "cortes-rodriguez-asesores-dev",
   "main": "worker/index.js",
   "workers_dev": true,
+  "triggers": { "crons": ["* * * * *"] },
+  "queues": {
+    "producers": [{ "binding": "NOTIFICATION_EVENTS_QUEUE", "queue": "cra-notification-events-dev" }],
+    "consumers": [{
+      "queue": "cra-notification-events-dev",
+      "max_batch_size": 10,
+      "max_batch_timeout": 5,
+      "max_retries": 5,
+      "retry_delay": 60,
+      "dead_letter_queue": "cra-notification-events-dev-dlq",
+      "max_concurrency": 5
+    }]
+  },
   "observability": {
     "enabled": true,
     "logs": {

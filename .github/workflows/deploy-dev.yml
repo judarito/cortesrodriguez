@@ -34,6 +34,19 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: Ensure notification queues exist
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          queue_list="$(npx wrangler queues list)"
+          for queue_name in cra-notification-events-dev cra-notification-events-dev-dlq; do
+            if ! printf '%s\n' "$queue_list" | grep -Fq "$queue_name"; then
+              npx wrangler queues create "$queue_name"
+              queue_list="$(npx wrangler queues list)"
+            fi
+          done
+
       - name: Deploy dev Worker
         uses: cloudflare/wrangler-action@v4
         with:

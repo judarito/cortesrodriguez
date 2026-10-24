@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
-import { matchesExpectedPayment, verifyMercadoPagoWebhookSignature } from '../worker/routes/publicRequests.js'
+import { matchesExpectedPayment, paymentMatchReason, verifyMercadoPagoWebhookSignature } from '../worker/routes/publicRequests.js'
 
 const secret = 'dev-webhook-secret-for-unit-tests'
 
@@ -28,4 +28,15 @@ test('matches payment reference, preference, currency and exact expected COP amo
   assert.equal(matchesExpectedPayment({ ...payment, currency_id: 'USD' }, 'CRA-20261024-A1B2C3', record), false)
   assert.equal(matchesExpectedPayment({ ...payment, preference_id: 'other-pref' }, 'CRA-20261024-A1B2C3', record), false)
   assert.equal(matchesExpectedPayment({ ...payment, external_reference: 'other-request' }, 'CRA-20261024-A1B2C3', record), false)
+})
+
+test('diagnoses the specific payment mismatch without accepting non-approved states', () => {
+  const record = { reference: 'CRA-20261024-A1B2C3', mercado_pago_preference_id: 'pref-1', cop_amount_cents: 125000 }
+  const payment = { id: 123, external_reference: record.reference, preference_id: 'pref-1', currency_id: 'COP', transaction_amount: 1250, status: 'approved' }
+  assert.equal(paymentMatchReason(payment, record), null)
+  assert.equal(paymentMatchReason({ ...payment, external_reference: 'other' }, record), 'reference_mismatch')
+  assert.equal(paymentMatchReason({ ...payment, preference_id: 'other' }, record), 'preference_mismatch')
+  assert.equal(paymentMatchReason({ ...payment, currency_id: 'USD' }, record), 'currency_mismatch')
+  assert.equal(paymentMatchReason({ ...payment, transaction_amount: 1 }, record), 'amount_mismatch')
+  assert.equal(paymentMatchReason({ ...payment, status: 'pending' }, record), 'payment_not_approved')
 })

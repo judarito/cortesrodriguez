@@ -69,11 +69,18 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - Los adjuntos se validan por estructura/firma y dimensiones máximas, además de MIME declarado y límites de tamaño.
 - La migración `022_payment_retries_and_webhook_validation.sql` elimina la unicidad por solicitud y agrega los datos de reintento.
 - La migración `023_public_request_idempotency.sql` agrega idempotencia del formulario público.
-- Pendiente para cerrar este refuerzo: cargar secretos Turnstile/Mercado Pago en Cloudflare dev, aplicar migraciones 022 y 023 en Neon dev, desplegar y ejecutar pruebas sandbox; crear una automatización/alerta en Cloudflare Issues para errores del Worker y filtrar Workers Logs por eventos `payment_webhook_*` de severidad `warning`.
+- La migración `025_payment_diagnostics_and_email_outbox.sql` agrega auditoría segura de eventos de pago y una cola idempotente de correo para pagos aprobados.
+- La migración `026_event_notification_queue.sql` amplía el outbox a una cola duradera para solicitudes, pagos, asignaciones, revisión de respuestas y feedback; la clave única representa cada evento de negocio y permite múltiples eventos del mismo tipo para una solicitud.
+- La migración `027_transactional_notification_events.sql` agrega triggers para insertar eventos en la misma transacción de creación/actualización de solicitudes, pagos, asignaciones, respuestas y feedback.
+- La migración `028_cloudflare_notification_queue.sql` agrega estados de despacho y lease para publicar el outbox en Cloudflare Queues sin perder su idempotencia transaccional.
+- El panel administrativo permite verificar/reconciliar un pago consultando Mercado Pago; se guardan referencia, IDs, estado, moneda, monto y un código de diagnóstico, nunca secretos ni datos de tarjeta.
+- El Cron despacha hasta 20 eventos del outbox por ciclo a Cloudflare Queues; el consumidor envía por Resend y usa la fila Neon como control idempotente. Los fallos de Resend vuelven al outbox para reintento incremental (máximo ocho intentos); fallos transitorios de consumo reintentan en Queues y los agotados van a la DLQ. El estado de pago y el estado de entrega del correo son independientes.
+- Colas configuradas: `cra-notification-events-dev` y `cra-notification-events` (cada una con su DLQ). Antes de desplegar, deben existir en la cuenta Cloudflare que usa Wrangler; Wrangler registra el productor y consumidor con los manifiestos de cada entorno.
+- Pendiente para cerrar este refuerzo: cargar secretos Turnstile/Mercado Pago en Cloudflare dev, aplicar migraciones 022 y 023 en Neon dev, crear las colas de notificaciones en la cuenta Cloudflare (esta sesión no tiene `CLOUDFLARE_API_TOKEN` disponible), desplegar y ejecutar pruebas sandbox; crear una automatización/alerta en Cloudflare Issues para errores del Worker y filtrar Workers Logs por eventos `payment_webhook_*` de severidad `warning`.
 
 ## Regla de notificaciones pagadas
 
-Las solicitudes que requieren pago se crean antes de cobrar para conservar su referencia, pero no notifican a expertos en ese momento. El webhook consulta el pago en Mercado Pago y, únicamente al pasar a `approved`, registra `payment_approved` y envía la notificación. Los reintentos del webhook son seguros y los envíos manuales también quedan bloqueados mientras el pago no esté aprobado.
+Las solicitudes que requieren pago se crean antes de cobrar para conservar su referencia; mientras no exista confirmación, la cola limita el aviso al administrador. El webhook registra `payment_approved` con idempotencia por solicitud y, tras la confirmación, se notifican las partes configuradas. Pagos rechazados/cancelados solo alertan al administrador. Los eventos se persisten antes del envío y se procesan en segundo plano; los fallos reintentan sin cambiar el estado del pago.
 
 Despliegue dev validado el 24 de octubre de 2026:
 

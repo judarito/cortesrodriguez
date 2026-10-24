@@ -1,5 +1,5 @@
 import { requireOperationsAuth } from './operationsAuth.js'
-import { sendRequestNotification } from './operationsEmail.js'
+import { enqueueNotification } from './operationsEmail.js'
 
 export async function handleOperationsReviews(request, env) {
   const url = new URL(request.url)
@@ -94,23 +94,14 @@ export async function handleOperationsReviews(request, env) {
     WHERE id = ${match[1]}
     RETURNING id, status, admin_note
   `
-  let sent = false
-  let reason = ''
-  let feedbackUrl = ''
-  if (rows[0].email && (env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
-    try {
-      const feedbackToken = randomToken()
-      await sql`INSERT INTO operations.client_feedback (request_id, response_id, token_hash) VALUES (${rows[0].request_id}, ${match[1]}, ${await sha256(feedbackToken)})`
-      feedbackUrl = `${env.PUBLIC_APP_URL || 'https://cortes-rodriguez-asesores-dev.juan-d-ricardo-t.workers.dev'}/feedback?token=${encodeURIComponent(feedbackToken)}`
-      await sendApprovedResponse(env, rows[0], adminNote, feedbackUrl)
-      await sql`UPDATE operations.expert_responses SET status = 'sent', sent_at = NOW(), updated_at = NOW() WHERE id = ${match[1]}`
-      sent = true
-    } catch (error) { reason = error.message }
-  } else {
-    reason = rows[0].email ? 'Falta configurar el correo de operaciones.' : 'El cliente no tiene correo registrado.'
-  }
+  if (!rows[0].email) return response({ error: 'El cliente no tiene correo registrado.' }, 409)
+  await enqueueNotification(sql, rows[0].request_id, 'expert_response_approved', {
+    idempotencyKey: `expert_response_approved/${approved[0].id}`,
+    actorId: claims.sub,
+    payload: { responseId: String(approved[0].id) },
+  })
   await sql`UPDATE operations.requests SET status = 'closed', updated_at = NOW() WHERE id = ${rows[0].request_id}`
-  return response({ ok: true, sent, reason, response: { id: String(approved[0].id), status: sent ? 'sent' : 'approved', adminNote: approved[0].admin_note || '' } })
+  return response({ ok: true, queued: true, response: { id: String(approved[0].id), status: 'approved', adminNote: approved[0].admin_note || '' } }, 202)
 }
 
 async function listSimilarQuestions(sql, url) {
@@ -195,16 +186,15 @@ async function resolveSimilarQuestion(sql, request, requestId, claims, env) {
     `
     if (!experts.length) return response({ error: 'No hay expertos activos asociados a esta consulta.' }, 409)
     const expert = experts[crypto.getRandomValues(new Uint32Array(1))[0] % experts.length]
-    await sql`
+    const assignments = await sql`
       INSERT INTO operations.request_assignments (request_id, expert_id, consultation_type_id, candidate_count, strategy, status, reason, assigned_by)
       VALUES (${requestId}, ${expert.id}, ${review.consultation_type_id}, ${experts.length}, 'admin_similarity_review', 'assigned', 'Administración descartó la coincidencia sugerida', ${claims.sub})
+      RETURNING id
     `
     await sql`UPDATE operations.requests SET assigned_expert_id = ${expert.id}, status = 'in_progress', updated_at = NOW() WHERE id = ${requestId}`
     await sql`UPDATE operations.request_similarity_reviews SET status = 'forwarded_to_expert', resolved_by = ${claims.sub}, resolved_at = NOW() WHERE request_id = ${requestId}`
     await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${claims.sub}, 'similarity_forward', 'request', ${requestId}, ${JSON.stringify({ expertId: String(expert.id) })}::jsonb)`
-    if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
-      try { await sendRequestNotification(sql, env, requestId, 'expert_assigned', claims.sub) } catch (error) { console.error('No se pudo notificar la asignación del experto:', error.message) }
-    }
+    try { await enqueueNotification(sql, requestId, 'expert_assigned', { idempotencyKey: `expert_assigned/${assignments[0].id}`, actorId: claims.sub }) } catch (error) { console.error('No se pudo encolar la notificación de asignación:', error.message) }
     return response({ ok: true, action, expertName: String(expert.full_name) })
   }
 
@@ -222,9 +212,7 @@ async function resolveSimilarQuestion(sql, request, requestId, claims, env) {
     LIMIT 1
   `
   if (!candidates[0]) return response({ error: 'La respuesta elegida no es una coincidencia candidata válida.' }, 400)
-  if (!review.email || !(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.RESEND_FROM_EMAIL) {
-    return response({ error: review.email ? 'Falta configurar el correo de operaciones.' : 'El cliente no tiene un correo registrado.' }, 409)
-  }
+  if (!review.email) return response({ error: 'El cliente no tiene un correo registrado.' }, 409)
   const body = answer || String(candidates[0].body)
   const existing = await sql`
     SELECT id, version, body, status
@@ -253,41 +241,23 @@ async function resolveSimilarQuestion(sql, request, requestId, claims, env) {
     responseRecord = inserted[0]
   }
   try {
-    const existingFeedback = await sql`SELECT id FROM operations.client_feedback WHERE response_id = ${responseRecord.id} LIMIT 1`
-    let feedbackUrl = ''
-    if (!existingFeedback.length) {
-      const feedbackToken = randomToken()
-      await sql`INSERT INTO operations.client_feedback (request_id, response_id, token_hash) VALUES (${requestId}, ${responseRecord.id}, ${await sha256(feedbackToken)})`
-      feedbackUrl = `${env.PUBLIC_APP_URL || 'https://cortes-rodriguez-asesores-dev.juan-d-ricardo-t.workers.dev'}/feedback?token=${encodeURIComponent(feedbackToken)}`
-    }
-    await sendApprovedResponse(env, { reference: review.reference, email: review.email, client_name: review.client_name, body: String(responseRecord.body) }, adminNote, feedbackUrl)
-    await sql`UPDATE operations.expert_responses SET status = 'sent', sent_at = NOW(), updated_at = NOW() WHERE id = ${responseRecord.id}`
+    await enqueueNotification(sql, requestId, 'expert_response_approved', {
+      idempotencyKey: `expert_response_approved/${responseRecord.id}`,
+      actorId: claims.sub,
+      payload: { responseId: String(responseRecord.id) },
+    })
     await sql`UPDATE operations.requests SET status = 'closed', updated_at = NOW() WHERE id = ${requestId}`
     await sql`UPDATE operations.request_assignments SET status = 'completed' WHERE request_id = ${requestId} AND status = 'similarity_review'`
     await sql`UPDATE operations.request_similarity_reviews SET status = 'answer_reused', selected_response_id = ${responseId}, resolved_by = ${claims.sub}, resolved_at = NOW() WHERE request_id = ${requestId}`
     await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${claims.sub}, 'similarity_reuse', 'request', ${requestId}, ${JSON.stringify({ sourceResponseId: responseId, responseId: String(responseRecord.id) })}::jsonb)`
   } catch (error) {
     console.error('No se pudo enviar la respuesta reutilizada:', error.message)
-    return response({ error: 'No se pudo enviar la respuesta reutilizada. Puedes reintentar la validación.' }, 502)
+    return response({ error: 'No se pudo encolar la respuesta reutilizada. Puedes reintentar la validación.' }, 502)
   }
-  return response({ ok: true, action, sent: true })
-}
-
-async function sendApprovedResponse(env, row, adminNote, feedbackUrl) {
-  const subject = `Respuesta a tu solicitud · ${row.reference}`
-  const portalUrl = `${env.PUBLIC_APP_URL || 'https://cortes-rodriguez-asesores-dev.juan-d-ricardo-t.workers.dev'}/portal-cliente`
-  const textBody = [`Hola ${row.client_name},`, '', row.body, adminNote ? `\nNota de administración:\n${adminNote}` : '', '', `¿Quieres continuar el proceso con nosotros? Accede al portal de clientes: ${portalUrl}`, '', 'Gracias por confiar en Cortés Rodríguez Asesores.'].join('\n')
-  const feedbackText = feedbackUrl ? `\n\nEvalúa esta respuesta: ${feedbackUrl}` : ''
-  const html = `<p>Hola ${escapeHtml(row.client_name)},</p><div>${escapeHtml(row.body).replaceAll('\n', '<br />')}</div>${adminNote ? `<p><strong>Nota de administración:</strong><br />${escapeHtml(adminNote).replaceAll('\n', '<br />')}</p>` : ''}${feedbackUrl ? `<p>¿Cómo fue tu experiencia? <a href="${escapeHtml(feedbackUrl)}">Déjanos tu feedback</a>.</p>` : ''}<p>¿Quieres continuar el proceso con nosotros? <a href="${escapeHtml(portalUrl)}">Accede al portal de clientes</a> para consultar tus solicitudes.</p><p>Gracias por confiar en Cortés Rodríguez Asesores.</p>`
-  const result = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: env.RESEND_FROM_EMAIL, to: [row.email], subject, text: `${textBody}${feedbackText}`, html }) })
-  const body = await result.json().catch(() => ({}))
-  if (!result.ok || !body.id) throw new Error(body.message || 'Resend no aceptó el envío.')
+  return response({ ok: true, action, queued: true }, 202)
 }
 
 function serializeReview(row) { return { id: String(row.id), requestId: String(row.request_id), reference: String(row.reference), version: Number(row.version), body: String(row.body), status: String(row.status), serviceType: String(row.service_type), consultationType: row.consultation_type_name ? String(row.consultation_type_name) : '', clientName: String(row.client_name), clientEmail: row.email ? String(row.email) : '', expertName: String(row.expert_name), createdAt: String(row.created_at) } }
 function pagination(page, pageSize, totalValue) { const totalItems = Number(totalValue || 0); return { page, pageSize, totalItems, totalPages: Math.max(Math.ceil(totalItems / pageSize), 1) } }
 function text(value) { return typeof value === 'string' ? value.trim() : '' }
-function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;') }
-function randomToken() { const bytes = new Uint8Array(32); crypto.getRandomValues(bytes); let binary = ''; bytes.forEach((byte) => { binary += String.fromCharCode(byte) }); return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '') }
-async function sha256(value) { const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))); let binary = ''; bytes.forEach((byte) => { binary += String.fromCharCode(byte) }); return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '') }
 function response(payload, status = 200) { return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json; charset=utf-8' } }) }

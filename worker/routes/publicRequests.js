@@ -1,4 +1,4 @@
-import { sendRequestNotification } from './operationsEmail.js'
+import { enqueueNotification } from './operationsEmail.js'
 import { rankSimilarQuestions } from '../lib/questionSimilarity.js'
 
 export async function handlePublicRequests(request, env) {
@@ -197,14 +197,14 @@ export async function handlePublicRequests(request, env) {
     }
   }
 
-  // Las solicitudes pagadas se notifican únicamente después de que Mercado Pago
-  // confirme el pago. Las solicitudes sin cobro mantienen el flujo inmediato.
-  if (!service.payment_required && (env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
-    try { await sendRequestNotification(sql, env, requestId, 'request_created') } catch (error) { console.error('No se pudo enviar la notificación de solicitud creada:', error.message) }
-    if (similarCandidates.length) {
-      try { await sendRequestNotification(sql, env, requestId, 'similar_question_review') } catch (error) { console.error('No se pudo notificar la pregunta posiblemente similar:', error.message) }
-    } else if (!assignedExpertId) {
-      try { await sendRequestNotification(sql, env, requestId, 'assignment_failed') } catch (error) { console.error('No se pudo notificar la asignación fallida:', error.message) }
+  // Si requiere pago y aún está pendiente, la política limita el aviso al admin.
+  // Cliente/agente/experto solo se notifican después de la confirmación del pago.
+  {
+    try { await enqueueNotification(sql, requestId, 'request_created', { idempotencyKey: `request_created/${requestId}`, adminOnly: Boolean(service.payment_required) }) } catch (error) { console.error('No se pudo encolar la notificación de solicitud creada:', error.message) }
+    if (!service.payment_required && similarCandidates.length) {
+      try { await enqueueNotification(sql, requestId, 'similar_question_review', { idempotencyKey: `similar_question_review/${requestId}` }) } catch (error) { console.error('No se pudo encolar la revisión de similitud:', error.message) }
+    } else if (!service.payment_required && !assignedExpertId) {
+      try { await enqueueNotification(sql, requestId, 'assignment_failed', { idempotencyKey: `assignment_failed/${requestId}` }) } catch (error) { console.error('No se pudo encolar la asignación fallida:', error.message) }
     }
   }
 
@@ -284,7 +284,7 @@ async function handlePaymentWebhook(request, env) {
     return response({ error: 'El recurso firmado no coincide con el evento.' }, 401)
   }
   const payment = await mercadoPago(`/v1/payments/${encodeURIComponent(paymentId)}`, env.MP_ACCESS_TOKEN)
-  const result = await recordVerifiedPayment(payment, paymentId, env)
+  const result = await recordVerifiedPayment(payment, paymentId, env, null, 'webhook')
   if (!result.matched) logPaymentSecurityEvent('payment_webhook_payment_mismatch')
   if (result.approved) logPaymentSecurityEvent('payment_webhook_payment_approved')
   return response({ ok: true })
@@ -306,20 +306,20 @@ async function verifyReturnedPayment(request, env) {
     return response({ error: 'No fue posible confirmar el pago. Actualiza el estado en unos minutos.' }, 502)
   }
   if (String(payment.external_reference || '') !== reference) return response({ error: 'El pago no corresponde a esta solicitud.' }, 409)
-  const result = await recordVerifiedPayment(payment, paymentId, env)
+  const result = await recordVerifiedPayment(payment, paymentId, env, null, 'browser_return')
   if (!result.matched) return response({ error: 'El pago no coincide con el valor registrado para esta solicitud.' }, 409)
   return response({ ok: true, reference, status: result.status })
 }
 
 export async function refreshRequestPayment(sql, requestId, env) {
   if (!env.MP_ACCESS_TOKEN) throw new Error('La consulta de pagos de Mercado Pago no está configurada.')
-  const rows = await sql`SELECT reference FROM operations.requests WHERE id = ${requestId} LIMIT 1`
+  const rows = await sql`SELECT id, reference FROM operations.requests WHERE id = ${requestId} LIMIT 1`
   if (!rows[0]) return null
   const reference = String(rows[0].reference)
   const search = await mercadoPago(`/v1/payments/search?external_reference=${encodeURIComponent(reference)}&sort=date_created&criteria=desc&limit=50&offset=0`, env.MP_ACCESS_TOKEN)
   const payments = Array.isArray(search.results) ? search.results : []
   for (const payment of payments) {
-    const result = await recordVerifiedPayment(payment, String(payment.id || ''), env, sql)
+    const result = await recordVerifiedPayment(payment, String(payment.id || ''), env, sql, 'list_reconcile')
     if (result.matched && result.status === 'approved') return { reference, status: 'approved' }
   }
   const latest = await sql`
@@ -330,36 +330,155 @@ export async function refreshRequestPayment(sql, requestId, env) {
   return { reference, status: String(latest[0]?.status || 'pending') }
 }
 
-async function recordVerifiedPayment(payment, paymentId, env, database = null) {
-  const reference = text(payment.external_reference)
-  if (!reference) return { matched: false, approved: false, status: 'pending' }
-  const sql = database || (await import('@neondatabase/serverless')).neon(env.NEON_DATABASE_URL)
-  await ensurePaymentSchema(sql)
-  const records = await sql`
+export async function verifyRequestPayment(sql, requestId, env, actorId = null) {
+  const requests = await sql`SELECT id, reference FROM operations.requests WHERE id = ${requestId} LIMIT 1`
+  if (!requests[0]) return null
+  const request = requests[0]
+  const attempts = await sql`
     SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, status
-    FROM operations.request_payments
-    WHERE reference = ${reference} AND mercado_pago_preference_id = ${String(payment.preference_id || '')}
-    LIMIT 1
+    FROM operations.request_payments WHERE request_id = ${requestId}
+    ORDER BY created_at DESC
   `
-  const record = records[0]
-  if (!record || !matchesExpectedPayment(payment, reference, record)) {
-    return { matched: false, approved: false, status: 'pending' }
+  if (!attempts.length) {
+    await writePaymentDiagnostic(sql, { requestId, actorId, source: 'admin_verify', reference: request.reference, matchStatus: 'not_found', reasonCode: 'no_local_attempt' })
+    return { status: 'not_started', reconciled: false, reasonCode: 'no_local_attempt' }
   }
-  const status = payment.status === 'approved' ? 'approved' : payment.status === 'cancelled' ? 'cancelled' : 'pending'
-  const updated = await sql`
-    UPDATE operations.request_payments
-    SET mercado_pago_payment_id = ${paymentId}, status = ${status}, updated_at = NOW()
-    WHERE id = ${record.id} AND status <> 'approved'
-    RETURNING request_id, status
-  `
-  if (updated[0]?.request_id && status === 'approved' && (env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
-    try {
-      await sendRequestNotification(sql, env, updated[0].request_id, 'payment_approved')
-    } catch (error) {
-      console.error('No se pudo notificar el pago aprobado:', error.message)
+  if (!env.MP_ACCESS_TOKEN) throw new Error('La consulta de pagos de Mercado Pago no está configurada.')
+  let payments
+  try {
+    const search = await mercadoPago(`/v1/payments/search?external_reference=${encodeURIComponent(String(request.reference))}&sort=date_created&criteria=desc&limit=50&offset=0`, env.MP_ACCESS_TOKEN)
+    payments = Array.isArray(search.results) ? search.results : []
+  } catch {
+    await writePaymentDiagnostic(sql, { requestId, actorId, source: 'admin_verify', reference: request.reference, matchStatus: 'not_found', reasonCode: 'provider_unavailable' })
+    return { status: 'unknown', reconciled: false, reasonCode: 'provider_unavailable' }
+  }
+  if (!payments.length) {
+    await writePaymentDiagnostic(sql, { requestId, actorId, source: 'admin_verify', reference: request.reference, matchStatus: 'not_found', reasonCode: 'payment_not_found' })
+    return { status: 'not_found', reconciled: false, reasonCode: 'payment_not_found' }
+  }
+  let lastResult = null
+  for (const payment of payments) {
+    const result = await recordVerifiedPayment(payment, String(payment.id || ''), env, sql, 'admin_verify', requestId, actorId, request.reference)
+    if (result.matched && result.status === 'approved') {
+      return {
+        status: 'approved', reconciled: result.reconciled,
+        payment: safePaymentSummary(payment, result.expectedAmountCents),
+        reasonCode: result.reconciled ? 'payment_reconciled' : 'already_approved',
+      }
+    }
+    if (result.matched || !lastResult) lastResult = result
+  }
+  return {
+    status: lastResult?.status || 'pending',
+    reconciled: false,
+    reasonCode: lastResult?.reasonCode || 'payment_not_approved',
+    payment: lastResult?.payment || null,
+    expectedAmountCents: lastResult?.expectedAmountCents ?? null,
+  }
+}
+
+async function recordVerifiedPayment(payment, paymentId, env, database = null, source = 'webhook', targetRequestId = null, actorId = null, targetReference = null) {
+  const reference = text(payment.external_reference)
+  const sql = database || (await import('@neondatabase/serverless')).neon(env.NEON_DATABASE_URL)
+  const candidates = reference ? await sql`
+    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, status
+    FROM operations.request_payments WHERE reference = ${reference}
+    ORDER BY created_at DESC
+  ` : []
+  const record = candidates.find((item) => String(item.mercado_pago_preference_id || '') === String(payment.preference_id || '')) || null
+  const expectedAttempt = record || candidates[0] || null
+  const reasonCode = paymentMatchReason(payment, expectedAttempt, targetReference)
+  const resolvedRequestId = targetRequestId || expectedAttempt?.request_id || null
+  await writePaymentDiagnostic(sql, {
+    requestId: resolvedRequestId,
+    actorId,
+    source,
+    reference,
+    paymentId,
+    preferenceId: payment.preference_id,
+    paymentStatus: payment.status,
+    currency: payment.currency_id,
+    amountCents: Number.isFinite(Number(payment.transaction_amount)) ? Math.round(Number(payment.transaction_amount) * 100) : null,
+    expectedAmountCents: expectedAttempt?.cop_amount_cents,
+    matchStatus: reasonCode ? (reasonCode === 'payment_not_approved' ? 'unapproved' : 'mismatch') : (payment.status === 'approved' ? 'matched' : 'unapproved'),
+    reasonCode: reasonCode || (payment.status === 'approved' ? 'verified' : 'payment_not_approved'),
+  })
+  if (!record || reasonCode && reasonCode !== 'payment_not_approved') {
+    return {
+      matched: false, approved: false, reconciled: false,
+      status: text(payment.status) || 'unknown', reasonCode: reasonCode || 'no_local_attempt',
+      payment: safePaymentSummary(payment, expectedAttempt?.cop_amount_cents),
+      expectedAmountCents: expectedAttempt ? Number(expectedAttempt.cop_amount_cents) : null,
     }
   }
-  return { matched: true, approved: Boolean(updated[0]?.request_id && status === 'approved'), status: String(updated[0]?.status || record.status || status) }
+  const normalizedStatus = String(payment.status || '').toLowerCase()
+  const status = ['approved', 'rejected', 'cancelled', 'refunded', 'charged_back', 'in_process', 'pending'].includes(normalizedStatus)
+    ? normalizedStatus
+    : 'pending'
+  const updated = await sql`
+    UPDATE operations.request_payments
+    SET mercado_pago_payment_id = ${paymentId},
+        status = CASE WHEN status = 'approved' THEN status ELSE ${status} END,
+        updated_at = NOW()
+    WHERE id = ${record.id}
+    RETURNING request_id, status
+  `
+  if (updated[0]?.request_id && status === 'approved') {
+    try { await enqueueNotification(sql, updated[0].request_id, 'payment_approved', { idempotencyKey: `payment_approved/${updated[0].request_id}`, actorId, retryFailed: source === 'admin_verify' }) }
+    catch (error) { console.error(JSON.stringify({ event: 'payment_approval_email_enqueue_failed', severity: 'error', requestId: String(updated[0].request_id), errorCode: 'outbox_enqueue_failed' })) }
+  } else if (updated[0]?.request_id && ['rejected', 'cancelled'].includes(status) && record.status !== status) {
+    try { await enqueueNotification(sql, updated[0].request_id, 'payment_rejected', { idempotencyKey: `payment_rejected/${paymentId}` }) }
+    catch (error) { console.error(JSON.stringify({ event: 'payment_failure_email_enqueue_failed', severity: 'error', requestId: String(updated[0].request_id), errorCode: 'outbox_enqueue_failed' })) }
+  }
+  return {
+    matched: true,
+    approved: Boolean(updated[0]?.request_id && status === 'approved'),
+    reconciled: status === 'approved' && record.status !== 'approved',
+    status: String(updated[0]?.status || record.status || status),
+    reasonCode: status === 'approved' ? (record.status === 'approved' ? 'already_approved' : 'payment_reconciled') : 'payment_not_approved',
+    payment: safePaymentSummary(payment, record.cop_amount_cents),
+    expectedAmountCents: Number(record.cop_amount_cents),
+  }
+}
+
+export function paymentMatchReason(payment, attempt, targetReference = null) {
+  if (!payment.external_reference) return 'missing_external_reference'
+  if (targetReference && String(payment.external_reference) !== String(targetReference)) return 'reference_mismatch'
+  if (!attempt) return 'no_local_attempt'
+  if (String(payment.external_reference) !== String(attempt.reference)) return 'reference_mismatch'
+  if (String(payment.preference_id || '') !== String(attempt.mercado_pago_preference_id || '')) return 'preference_mismatch'
+  if (String(payment.currency_id || '').toUpperCase() !== 'COP') return 'currency_mismatch'
+  const amountCents = Math.round(Number(payment.transaction_amount) * 100)
+  if (!Number.isFinite(amountCents) || amountCents !== Number(attempt.cop_amount_cents)) return 'amount_mismatch'
+  return String(payment.status || '').toLowerCase() === 'approved' ? null : 'payment_not_approved'
+}
+
+function safePaymentSummary(payment, expectedAmountCents = null) {
+  const safeText = (value) => value == null ? '' : String(value).slice(0, 100)
+  return {
+    paymentId: safeText(payment.id),
+    preferenceId: safeText(payment.preference_id),
+    status: safeText(payment.status).slice(0, 40),
+    currency: safeText(payment.currency_id).slice(0, 8),
+    amountCents: Number.isFinite(Number(payment.transaction_amount)) ? Math.round(Number(payment.transaction_amount) * 100) : null,
+    expectedAmountCents: expectedAmountCents == null ? null : Number(expectedAmountCents),
+  }
+}
+
+async function writePaymentDiagnostic(sql, diagnostic) {
+  await sql`
+    INSERT INTO operations.payment_event_diagnostics (
+      request_id, actor_id, source, reference, payment_id, preference_id, payment_status,
+      currency, amount_cents, expected_cop_cents, match_status, reason_code
+    ) VALUES (
+      ${diagnostic.requestId || null}, ${diagnostic.actorId || null}, ${diagnostic.source}, ${text(diagnostic.reference).slice(0, 120) || null},
+      ${text(diagnostic.paymentId).slice(0, 80) || null}, ${text(diagnostic.preferenceId).slice(0, 100) || null},
+      ${text(diagnostic.paymentStatus).slice(0, 40) || null}, ${text(diagnostic.currency).slice(0, 8) || null},
+      ${Number.isSafeInteger(diagnostic.amountCents) ? diagnostic.amountCents : null},
+      ${diagnostic.expectedAmountCents != null && Number.isSafeInteger(Number(diagnostic.expectedAmountCents)) ? Number(diagnostic.expectedAmountCents) : null},
+      ${diagnostic.matchStatus}, ${diagnostic.reasonCode}
+    )
+  `
 }
 
 function logPaymentSecurityEvent(event) {

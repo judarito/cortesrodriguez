@@ -2,6 +2,19 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "cortes-rodriguez-asesores",
 	"main": "worker/index.js",
+	"triggers": { "crons": ["* * * * *"] },
+	"queues": {
+		"producers": [{ "binding": "NOTIFICATION_EVENTS_QUEUE", "queue": "cra-notification-events" }],
+		"consumers": [{
+			"queue": "cra-notification-events",
+			"max_batch_size": 10,
+			"max_batch_timeout": 5,
+			"max_retries": 5,
+			"retry_delay": 60,
+			"dead_letter_queue": "cra-notification-events-dlq",
+			"max_concurrency": 5
+		}]
+	},
 	"compatibility_date": "2026-05-13",
 	"flagship": [
 		{

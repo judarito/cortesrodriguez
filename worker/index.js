@@ -12,6 +12,7 @@ import { handleOperationsReviews } from './routes/operationsReviews.js'
 import { handlePublicFeedback } from './routes/publicFeedback.js'
 import { handleClientPortal } from './routes/clientPortal.js'
 import { handleResendWebhook } from './routes/resendWebhooks.js'
+import { consumeQueuedNotification, dispatchPendingNotifications } from './routes/operationsEmail.js'
 import {
   isLandingRequestApi,
   isLandingRequestButtonEnabled,
@@ -222,6 +223,25 @@ export default {
     } catch (error) {
       console.error(error)
       return json({ error: error.message || 'Error interno.' }, request, error.status || 500)
+    }
+  },
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(dispatchPendingNotifications(env))
+  },
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      try {
+        const eventId = message.body?.eventId
+        if (typeof eventId !== 'string' || !eventId) {
+          message.ack()
+          continue
+        }
+        await consumeQueuedNotification(env, eventId)
+        message.ack()
+      } catch (error) {
+        console.error(JSON.stringify({ event: 'notification_queue_consumer_failed', severity: 'error', errorCode: 'queue_consumer_failed' }))
+        message.retry({ delaySeconds: 60 })
+      }
     }
   },
 }

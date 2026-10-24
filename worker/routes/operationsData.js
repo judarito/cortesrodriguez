@@ -1,6 +1,6 @@
 import { requireOperationsAuth } from './operationsAuth.js'
-import { sendRequestNotification } from './operationsEmail.js'
-import { refreshRequestPayment } from './publicRequests.js'
+import { enqueueNotification } from './operationsEmail.js'
+import { refreshRequestPayment, verifyRequestPayment } from './publicRequests.js'
 
 export async function handleOperationsData(request, env) {
   const url = new URL(request.url)
@@ -11,11 +11,13 @@ export async function handleOperationsData(request, env) {
   const isRequestDetail = Boolean(requestDetailMatch) && request.method === 'GET'
   const requestAssignmentMatch = url.pathname.match(/^\/api\/app\/requests\/([^/]+)\/assignment$/)
   const isRequestAssignment = Boolean(requestAssignmentMatch) && request.method === 'POST'
+  const requestPaymentVerifyMatch = url.pathname.match(/^\/api\/app\/requests\/([^/]+)\/payment\/verify$/)
+  const isRequestPaymentVerify = Boolean(requestPaymentVerifyMatch) && request.method === 'POST'
   const isDashboard = url.pathname === '/api/app/dashboard' && request.method === 'GET'
-  if (!isClients && !isRequests && !createRequest && !isRequestDetail && !isRequestAssignment && !isDashboard) return null
+  if (!isClients && !isRequests && !createRequest && !isRequestDetail && !isRequestAssignment && !isRequestPaymentVerify && !isDashboard) return null
 
   const claims = await requireOperationsAuth(request, env)
-  const permission = isClients ? 'clients.read' : createRequest ? 'requests.create' : isRequestAssignment ? 'requests.update' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
+  const permission = isClients ? 'clients.read' : createRequest ? 'requests.create' : isRequestAssignment || isRequestPaymentVerify ? 'requests.update' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
   if (!claims?.permissions?.includes(permission)) {
     return response({ error: 'No tienes permisos para consultar este módulo.' }, 403)
   }
@@ -27,6 +29,13 @@ export async function handleOperationsData(request, env) {
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   if (isDashboard) return getDashboard(sql, claims)
+  if (isRequestPaymentVerify) {
+    if (!claims.roles?.includes('admin')) return response({ error: 'Solo administración puede verificar pagos.' }, 403)
+    if (!env.MP_ACCESS_TOKEN) return response({ error: 'La consulta de pagos de Mercado Pago no está configurada.' }, 503)
+    const result = await verifyRequestPayment(sql, requestPaymentVerifyMatch[1], env, claims.sub)
+    if (!result) return response({ error: 'Solicitud no encontrada.' }, 404)
+    return response({ ...result, message: paymentDiagnosisMessage(result.reasonCode) })
+  }
   if (isRequestAssignment) {
     if (!claims.roles?.includes('admin')) return response({ error: 'Solo administración puede asignar o reasignar expertos.' }, 403)
     return assignRequestExpert(sql, request, requestAssignmentMatch[1], claims, env)
@@ -141,6 +150,23 @@ export async function handleOperationsData(request, env) {
   return response({ items: requests.map(serializeRequest), pagination: pagination(page, pageSize, countRows[0]?.total), filters: { agents: agents.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email) })) } })
 }
 
+function paymentDiagnosisMessage(reasonCode) {
+  return ({
+    payment_reconciled: 'Pago aprobado en Mercado Pago y reconciliado con la solicitud.',
+    already_approved: 'Mercado Pago confirma que esta solicitud ya estaba pagada.',
+    no_local_attempt: 'La solicitud no tiene un intento de pago registrado en el sistema.',
+    payment_not_found: 'Mercado Pago no encontró pagos para la referencia de esta solicitud.',
+    provider_unavailable: 'No se pudo consultar Mercado Pago. Intenta nuevamente más tarde.',
+    missing_external_reference: 'El pago no contiene una referencia externa válida.',
+    reference_mismatch: 'La referencia del pago no coincide con la solicitud.',
+    no_local_attempt_for_payment: 'El pago no coincide con ningún intento registrado para esta solicitud.',
+    preference_mismatch: 'La preferencia de Mercado Pago no coincide con el intento registrado.',
+    currency_mismatch: 'La moneda reportada no coincide con COP.',
+    amount_mismatch: 'El valor pagado no coincide con el valor COP esperado.',
+    payment_not_approved: 'Mercado Pago encontró el pago, pero su estado aún no es aprobado.',
+  })[reasonCode] || 'Mercado Pago encontró un pago que no se pudo reconciliar automáticamente.'
+}
+
 async function refreshPendingRequestPayments(sql, requests, env) {
   const stalePayments = requests.filter((row) => row.payment_status === 'pending' && row.mercado_pago_preference_id)
   for (let offset = 0; offset < stalePayments.length; offset += 5) {
@@ -200,13 +226,8 @@ async function createAgentRequest(sql, request, claims, env) {
       ${freightAgent || null}, ${productType}, 'pending', ${claims.sub}, FALSE
     )
   `
-  if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
-    try {
-      await sendRequestNotification(sql, env, requestId, 'request_created', claims.sub)
-    } catch (error) {
-      console.error('No se pudo enviar la notificación de solicitud del agente:', error.message)
-    }
-  }
+  try { await enqueueNotification(sql, requestId, 'request_created', { idempotencyKey: `request_created/${requestId}`, actorId: claims.sub }) }
+  catch (error) { console.error('No se pudo encolar la notificación de solicitud del agente:', error.message) }
   return response({ ok: true, reference, status: 'pending', paymentRequired: false }, 201)
 }
 
@@ -255,7 +276,7 @@ async function getRequestDetail(sql, requestId, claims) {
   ])
   if (!requestRows[0]) return response({ error: 'Solicitud no encontrada.' }, 404)
   const isAdmin = claims.roles?.includes('admin')
-  const [assignmentHistory, eligibleExperts] = await Promise.all([
+  const [assignmentHistory, eligibleExperts, paymentDiagnosticRows, paymentOutboxRows] = await Promise.all([
     sql`SELECT a.id, a.expert_id, u.full_name AS expert_name, a.status, a.strategy, a.candidate_count, a.reason, a.assigned_at
       FROM operations.request_assignments a LEFT JOIN operations.users u ON u.id = a.expert_id
       WHERE a.request_id = ${requestId} ORDER BY a.assigned_at DESC`,
@@ -266,6 +287,19 @@ async function getRequestDetail(sql, requestId, claims) {
       JOIN operations.consultation_type_experts cte ON cte.user_id = u.id AND cte.active = TRUE
       WHERE u.active = TRUE AND cte.consultation_type_id = ${requestRows[0].consultation_type_id}
       ORDER BY u.full_name`,
+    isAdmin ? sql`
+      SELECT source, payment_id, preference_id, payment_status, currency, amount_cents,
+        expected_cop_cents, match_status, reason_code, created_at
+      FROM operations.payment_event_diagnostics
+      WHERE request_id = ${requestId}
+      ORDER BY created_at DESC LIMIT 1
+    ` : Promise.resolve([]),
+    isAdmin ? sql`
+      SELECT status, attempts, last_error_code, updated_at
+      FROM operations.notification_outbox
+      WHERE request_id = ${requestId} AND event_code = 'payment_approved'
+      LIMIT 1
+    ` : Promise.resolve([]),
   ])
   return response({
     request: serializeRequestDetail(requestRows[0]),
@@ -273,6 +307,24 @@ async function getRequestDetail(sql, requestId, claims) {
     responses: responseRows.map((row) => serializeRequestResponse(row, isAdmin || ['approved', 'sent'].includes(String(row.status)))),
     assignment: { expertId: requestRows[0].assigned_expert_id ? String(requestRows[0].assigned_expert_id) : null, expertName: requestRows[0].assigned_expert_name ? String(requestRows[0].assigned_expert_name) : '', history: assignmentHistory.map((row) => ({ id: String(row.id), expertId: row.expert_id ? String(row.expert_id) : null, expertName: row.expert_name ? String(row.expert_name) : '', status: String(row.status), strategy: String(row.strategy), candidateCount: Number(row.candidate_count), reason: row.reason ? String(row.reason) : '', assignedAt: String(row.assigned_at) })) },
     eligibleExperts: eligibleExperts.map((row) => ({ id: String(row.id), name: String(row.full_name) })),
+    paymentDiagnostic: paymentDiagnosticRows[0] ? {
+      source: String(paymentDiagnosticRows[0].source),
+      paymentId: paymentDiagnosticRows[0].payment_id ? String(paymentDiagnosticRows[0].payment_id) : '',
+      preferenceId: paymentDiagnosticRows[0].preference_id ? String(paymentDiagnosticRows[0].preference_id) : '',
+      status: paymentDiagnosticRows[0].payment_status ? String(paymentDiagnosticRows[0].payment_status) : '',
+      currency: paymentDiagnosticRows[0].currency ? String(paymentDiagnosticRows[0].currency) : '',
+      amountCents: paymentDiagnosticRows[0].amount_cents == null ? null : Number(paymentDiagnosticRows[0].amount_cents),
+      expectedAmountCents: paymentDiagnosticRows[0].expected_cop_cents == null ? null : Number(paymentDiagnosticRows[0].expected_cop_cents),
+      matchStatus: String(paymentDiagnosticRows[0].match_status),
+      reasonCode: String(paymentDiagnosticRows[0].reason_code),
+      createdAt: String(paymentDiagnosticRows[0].created_at),
+    } : null,
+    paymentNotification: paymentOutboxRows[0] ? {
+      status: String(paymentOutboxRows[0].status),
+      attempts: Number(paymentOutboxRows[0].attempts),
+      errorCode: paymentOutboxRows[0].last_error_code ? String(paymentOutboxRows[0].last_error_code) : '',
+      updatedAt: String(paymentOutboxRows[0].updated_at),
+    } : null,
   })
 }
 
@@ -296,15 +348,15 @@ async function assignRequestExpert(sql, request, requestId, claims, env) {
   `
   if (!experts[0]) return response({ error: 'El experto debe estar activo y asociado al tipo de consulta de esta solicitud.' }, 400)
   await sql`UPDATE operations.request_assignments SET status = 'reassigned' WHERE request_id = ${requestId} AND status = 'assigned'`
-  await sql`
+  const assignmentRows = await sql`
     INSERT INTO operations.request_assignments (request_id, expert_id, consultation_type_id, candidate_count, strategy, status, reason, assigned_by)
     VALUES (${requestId}, ${expertId}, ${requests[0].consultation_type_id}, 1, 'admin_manual', ${requests[0].assigned_expert_id ? 'reassigned' : 'assigned'}, ${text(body.reason) || (requests[0].assigned_expert_id ? 'Reasignación administrativa' : 'Asignación administrativa')}, ${claims.sub})
+    RETURNING id
   `
   await sql`UPDATE operations.requests SET assigned_expert_id = ${expertId}, updated_at = NOW() WHERE id = ${requestId}`
   await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${claims.sub}, 'assign', 'request', ${requestId}, ${JSON.stringify({ expertId, previousExpertId: requests[0].assigned_expert_id ? String(requests[0].assigned_expert_id) : null })}::jsonb)`
-  if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
-    try { await sendRequestNotification(sql, env, requestId, 'expert_assigned', claims.sub) } catch (error) { console.error('No se pudo notificar la asignación del experto:', error.message) }
-  }
+  try { await enqueueNotification(sql, requestId, 'expert_assigned', { idempotencyKey: `expert_assigned/${assignmentRows[0].id}`, actorId: claims.sub }) }
+  catch (error) { console.error('No se pudo encolar la notificación de asignación:', error.message) }
   return response({ ok: true, expert: { id: String(experts[0].id), name: String(experts[0].full_name) } })
 }
 

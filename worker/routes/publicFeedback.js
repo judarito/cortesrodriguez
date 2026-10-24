@@ -1,4 +1,4 @@
-import { sendRequestNotification } from './operationsEmail.js'
+import { enqueueNotification } from './operationsEmail.js'
 
 export async function handlePublicFeedback(request, env) {
   const url = new URL(request.url)
@@ -28,9 +28,11 @@ export async function handlePublicFeedback(request, env) {
   if (comment.length > 5000) return response({ error: 'El comentario no puede superar 5.000 caracteres.' }, 400)
   const status = rating <= 3 ? 'escalated' : 'received'
   await sql`UPDATE operations.client_feedback SET rating = ${rating}, comment = ${comment || null}, status = ${status}, received_at = NOW() WHERE id = ${rows[0].id}`
-  if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
-    try { await sendRequestNotification(sql, env, rows[0].request_id, status === 'escalated' ? 'feedback_low' : 'feedback_received') } catch (error) { console.error('No se pudo notificar el feedback:', error.message) }
-  }
+  try {
+    await enqueueNotification(sql, rows[0].request_id, status === 'escalated' ? 'feedback_low' : 'feedback_received', {
+      idempotencyKey: `${status === 'escalated' ? 'feedback_low' : 'feedback_received'}/${rows[0].id}`,
+    })
+  } catch (error) { console.error('No se pudo encolar la notificación del feedback:', error.message) }
   return response({ ok: true, status })
 }
 

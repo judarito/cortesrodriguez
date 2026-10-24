@@ -1,5 +1,5 @@
 import { requireOperationsAuth } from './operationsAuth.js'
-import { sendRequestNotification } from './operationsEmail.js'
+import { enqueueNotification } from './operationsEmail.js'
 
 export async function handleOperationsExpert(request, env) {
   const url = new URL(request.url)
@@ -66,9 +66,8 @@ export async function handleOperationsExpert(request, env) {
     RETURNING id, version, status, created_at
   `
   await sql`UPDATE operations.requests SET status = 'in_review', updated_at = NOW() WHERE id = ${requestId}`
-  if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
-    try { await sendRequestNotification(sql, env, requestId, 'expert_response_submitted', claims.sub) } catch (error) { console.error('No se pudo notificar la respuesta pendiente de revisión:', error.message) }
-  }
+  try { await enqueueNotification(sql, requestId, 'expert_response_submitted', { idempotencyKey: `expert_response_submitted/${created[0].id}`, actorId: claims.sub }) }
+  catch (error) { console.error('No se pudo encolar la respuesta pendiente de revisión:', error.message) }
   return response({ ok: true, response: { id: String(created[0].id), version: Number(created[0].version), status: String(created[0].status), createdAt: String(created[0].created_at) } }, 201)
 }
 

@@ -57,7 +57,7 @@ async function resolve(action) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, responseId: selectedResponseId.value, answer, adminNote }),
     })
-    notice.value = action === 'reuse' ? 'Respuesta reutilizada y enviada al cliente.' : `La solicitud fue asignada a ${data.expertName}.`
+    notice.value = action === 'reuse' ? 'Respuesta aprobada; el correo quedó en la cola de envío.' : `La solicitud fue asignada a ${data.expertName}.`
     close()
     await load()
   } catch (resolveError) { error.value = resolveError.message } finally { saving.value = false }
