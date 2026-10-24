@@ -78,7 +78,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   ` : []
   const audiences = [...new Set([...(rules[0]?.audiences || defaultAudiences[eventCode] || ['configured']), ...(['assignment_failed', 'similar_question_review'].includes(eventCode) ? ['admin'] : [])])]
   const dynamic = []
-  if (audiences.includes('client') || audiences.includes('all_involved')) dynamic.push(request.email)
+  if (shouldNotifyClient(eventCode, audiences)) dynamic.push(request.email)
   if ((audiences.includes('agent') || audiences.includes('all_involved')) && sourceChannel === 'agent_link') dynamic.push(request.agent_email)
   if (audiences.includes('expert') || audiences.includes('all_involved')) dynamic.push(request.expert_email)
   if (audiences.includes('admin') || audiences.includes('all_involved')) {
@@ -98,7 +98,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const bcc = unique(configured.filter((item) => item.recipient_type === 'bcc').map((item) => item.email)).filter((email) => !to.includes(email) && !cc.includes(email))
   if (!to.length) throw new Error('La regla no tiene un destinatario principal tipo Para.')
 
-  const eventLabel = { payment_approved: 'Pago aprobado', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida', expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', similar_question_review: 'Pregunta similar pendiente de validación', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
+  const eventLabel = { payment_approved: 'Pago recibido', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida', expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', similar_question_review: 'Pregunta similar pendiente de validación', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
   const subject = `${eventLabel} · ${request.reference}`
   // Notification rules may include the assigned expert. Keep shared mail
   // content free of client identity and operation details; authorized users
@@ -133,9 +133,13 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   return { sent: true, emailId: String(resendBody.id) }
 }
 
-function notificationDescription(eventCode) {
+export function shouldNotifyClient(eventCode, audiences = []) {
+  return eventCode === 'payment_approved' || audiences.includes('client') || audiences.includes('all_involved')
+}
+
+export function notificationDescription(eventCode) {
   const descriptions = {
-    payment_approved: 'El pago asociado a esta solicitud fue aprobado.',
+    payment_approved: 'Recibimos y confirmamos el pago de tu solicitud. Nuestro equipo está revisando tu caso y pronto te contactaremos con la respuesta correspondiente.',
     payment_rejected: 'El pago asociado a esta solicitud no fue aprobado. Revisa el caso en el panel.',
     request_created: 'Se recibió una nueva solicitud y quedó registrada en la plataforma.',
     expert_assigned: 'La solicitud fue asignada o reasignada a un experto.',
