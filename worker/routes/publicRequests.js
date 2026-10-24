@@ -385,7 +385,10 @@ async function recordVerifiedPayment(payment, paymentId, env, database = null, s
     FROM operations.request_payments WHERE reference = ${reference}
     ORDER BY created_at DESC
   ` : []
-  const record = candidates.find((item) => String(item.mercado_pago_preference_id || '') === String(payment.preference_id || '')) || null
+  const providerPreferenceId = text(payment.preference_id)
+  const record = providerPreferenceId
+    ? candidates.find((item) => String(item.mercado_pago_preference_id || '') === providerPreferenceId) || null
+    : candidates[0] || null
   const expectedAttempt = record || candidates[0] || null
   const reasonCode = paymentMatchReason(payment, expectedAttempt, targetReference)
   const resolvedRequestId = targetRequestId || expectedAttempt?.request_id || null
@@ -446,7 +449,11 @@ export function paymentMatchReason(payment, attempt, targetReference = null) {
   if (targetReference && String(payment.external_reference) !== String(targetReference)) return 'reference_mismatch'
   if (!attempt) return 'no_local_attempt'
   if (String(payment.external_reference) !== String(attempt.reference)) return 'reference_mismatch'
-  if (String(payment.preference_id || '') !== String(attempt.mercado_pago_preference_id || '')) return 'preference_mismatch'
+  // Some approved Checkout Pro payment resources omit preference_id. In that
+  // case the resource was still fetched with our access token, so the exact
+  // external reference, currency and amount remain the authoritative match.
+  // A preference explicitly returned by Mercado Pago must always match.
+  if (payment.preference_id && String(payment.preference_id) !== String(attempt.mercado_pago_preference_id || '')) return 'preference_mismatch'
   if (String(payment.currency_id || '').toUpperCase() !== 'COP') return 'currency_mismatch'
   const amountCents = Math.round(Number(payment.transaction_amount) * 100)
   if (!Number.isFinite(amountCents) || amountCents !== Number(attempt.cop_amount_cents)) return 'amount_mismatch'
@@ -533,7 +540,7 @@ export async function verifyMercadoPagoWebhookSignature(signatureHeader, request
 export function matchesExpectedPayment(payment, reference, record) {
   const paidCents = Math.round(Number(payment.transaction_amount) * 100)
   return String(payment.external_reference || '') === String(reference)
-    && String(payment.preference_id || '') === String(record.mercado_pago_preference_id || '')
+    && (!payment.preference_id || String(payment.preference_id) === String(record.mercado_pago_preference_id || ''))
     && String(payment.currency_id || '').toUpperCase() === 'COP'
     && Number.isFinite(paidCents)
     && paidCents === Number(record.cop_amount_cents)

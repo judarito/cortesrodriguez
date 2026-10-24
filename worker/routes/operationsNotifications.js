@@ -121,8 +121,7 @@ async function createRuleRecord(sql, body, actorId) {
   const sourceChannel = text(body.sourceChannel) || null
   const audiences = Array.isArray(body.audiences) ? body.audiences.filter((value) => typeof value === 'string') : ['configured']
   const recipientIds = Array.isArray(body.recipientIds) ? body.recipientIds.filter((value) => typeof value === 'string') : []
-  const requiresConfiguredRecipient = audiences.includes('configured')
-  if (!name || !eventCode || !serviceType || (requiresConfiguredRecipient && !recipientIds.length)) return response({ error: requiresConfiguredRecipient ? 'Nombre, evento, servicio y al menos un destinatario configurado son obligatorios.' : 'Nombre, evento y servicio son obligatorios.' }, 400)
+  if (!name || !eventCode || !serviceType) return response({ error: 'Nombre, evento y servicio son obligatorios.' }, 400)
   if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_response_submitted', 'feedback_received', 'feedback_low', 'expert_assigned', 'assignment_failed', 'similar_question_review'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
   if (!['all', 'importacion', 'exportacion', 'agente_carga'].includes(serviceType)) return response({ error: 'Tipo de servicio inválido.' }, 400)
   if (sourceChannel && !['direct_web', 'agent_link'].includes(sourceChannel)) return response({ error: 'Origen de solicitud inválido.' }, 400)
@@ -132,8 +131,10 @@ async function createRuleRecord(sql, body, actorId) {
       const consultation = await sql`SELECT id FROM operations.consultation_types WHERE id = ${consultationTypeId} AND active = TRUE LIMIT 1`
       if (!consultation[0]) return response({ error: 'El tipo de consulta no existe o está inactivo.' }, 400)
     }
-    const recipients = await sql`SELECT id FROM operations.notification_recipients WHERE id = ANY(${recipientIds}) AND active = TRUE`
-    if (requiresConfiguredRecipient && !recipients.length) return response({ error: 'No hay destinatarios activos válidos.' }, 400)
+    const recipients = recipientIds.length
+      ? await sql`SELECT id FROM operations.notification_recipients WHERE id = ANY(${recipientIds}) AND active = TRUE`
+      : []
+    if (recipients.length !== new Set(recipientIds).size) return response({ error: 'Uno o más correos adicionales no existen o están inactivos.' }, 400)
     const rows = await sql`INSERT INTO operations.notification_rules (name, event_code, service_type, consultation_type_id, source_channel, audiences) VALUES (${name}, ${eventCode}, ${serviceType}, ${consultationTypeId}, ${sourceChannel}, ${audiences}) RETURNING id, name, event_code, service_type, consultation_type_id, source_channel, audiences, active`
     for (const recipient of recipients) await sql`INSERT INTO operations.notification_rule_recipients (rule_id, recipient_id) VALUES (${rows[0].id}, ${recipient.id}) ON CONFLICT DO NOTHING`
     await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'create', 'notification_rule', ${rows[0].id}, ${JSON.stringify({ eventCode, serviceType, recipientIds })}::jsonb)`

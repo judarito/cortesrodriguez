@@ -49,7 +49,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const sourceChannel = request.source_channel || (request.source === 'agent' ? 'agent_link' : 'direct_web')
 
   const rules = await sql`
-    SELECT id, name, audiences
+    SELECT id, audiences
     FROM operations.notification_rules
     WHERE event_code = ${eventCode}
       AND service_type IN ('all', ${request.service_type})
@@ -59,7 +59,6 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     ORDER BY (consultation_type_id IS NOT NULL) DESC,
       (source_channel IS NOT NULL) DESC,
       (service_type <> 'all') DESC
-    LIMIT 1
   `
   const defaultAudiences = {
     request_created: ['admin', 'expert', 'agent', 'client'],
@@ -75,16 +74,21 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   }
   if (!rules.length && !defaultAudiences[eventCode]) return { sent: false, reason: 'no_active_rule' }
 
-  const recipients = rules[0] ? await sql`
+  const ruleIds = rules.map((rule) => rule.id)
+  const recipients = ruleIds.length ? await sql`
     SELECT nr.email, nr.recipient_type
     FROM operations.notification_rule_recipients rnr
     JOIN operations.notification_recipients nr ON nr.id = rnr.recipient_id
-    WHERE rnr.rule_id = ${rules[0].id} AND nr.active = TRUE
+    WHERE rnr.rule_id = ANY(${ruleIds}) AND nr.active = TRUE
     ORDER BY nr.name
   ` : []
+  // Each event has core recipients derived from the request and its user
+  // accounts. Matching rules can add audiences or extra addresses, but cannot
+  // accidentally suppress the client or the assigned expert.
+  const ruleAudiences = rules.flatMap((rule) => Array.isArray(rule.audiences) ? rule.audiences : [])
   const audiences = paymentPolicy.adminOnly
     ? ['admin']
-    : [...new Set([...(rules[0]?.audiences || defaultAudiences[eventCode] || ['configured']), ...(['assignment_failed', 'similar_question_review'].includes(eventCode) ? ['admin'] : [])])]
+    : [...new Set([...(defaultAudiences[eventCode] || ['configured']), ...ruleAudiences, ...(['assignment_failed', 'similar_question_review'].includes(eventCode) ? ['admin'] : [])])]
   const dynamic = []
   if (!paymentPolicy.adminOnly && shouldNotifyClient(eventCode, audiences)) dynamic.push(request.email)
   if (!paymentPolicy.adminOnly && (audiences.includes('agent') || audiences.includes('all_involved')) && sourceChannel === 'agent_link') dynamic.push(request.agent_email)

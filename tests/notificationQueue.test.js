@@ -44,7 +44,7 @@ test('retries a failed Resend delivery and succeeds idempotently without changin
       expert_email: null,
     }]
     if (query.includes('SELECT EXISTS (SELECT 1 FROM operations.request_payments')) return [{ paid: paymentStatus === 'approved' }]
-    if (query.includes('SELECT id, name, audiences')) return [{ id: 'rule-test', name: 'Pago aprobado', audiences: ['admin', 'client'] }]
+    if (query.includes('SELECT id, audiences')) return [{ id: 'rule-test', audiences: ['admin', 'client'] }]
     if (query.includes('SELECT nr.email, nr.recipient_type')) return []
     if (query.includes('SELECT DISTINCT u.email')) return [{ email: 'admin@example.test' }]
     if (query.includes('INSERT INTO operations.notification_messages')) return []

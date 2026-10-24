@@ -27,6 +27,7 @@ test('matches payment reference, preference, currency and exact expected COP amo
   assert.equal(matchesExpectedPayment({ ...payment, transaction_amount: 1250.01 }, 'CRA-20261024-A1B2C3', record), false)
   assert.equal(matchesExpectedPayment({ ...payment, currency_id: 'USD' }, 'CRA-20261024-A1B2C3', record), false)
   assert.equal(matchesExpectedPayment({ ...payment, preference_id: 'other-pref' }, 'CRA-20261024-A1B2C3', record), false)
+  assert.equal(matchesExpectedPayment({ ...payment, preference_id: undefined }, 'CRA-20261024-A1B2C3', record), true)
   assert.equal(matchesExpectedPayment({ ...payment, external_reference: 'other-request' }, 'CRA-20261024-A1B2C3', record), false)
 })
 
@@ -36,6 +37,7 @@ test('diagnoses the specific payment mismatch without accepting non-approved sta
   assert.equal(paymentMatchReason(payment, record), null)
   assert.equal(paymentMatchReason({ ...payment, external_reference: 'other' }, record), 'reference_mismatch')
   assert.equal(paymentMatchReason({ ...payment, preference_id: 'other' }, record), 'preference_mismatch')
+  assert.equal(paymentMatchReason({ ...payment, preference_id: undefined }, record), null)
   assert.equal(paymentMatchReason({ ...payment, currency_id: 'USD' }, record), 'currency_mismatch')
   assert.equal(paymentMatchReason({ ...payment, transaction_amount: 1 }, record), 'amount_mismatch')
   assert.equal(paymentMatchReason({ ...payment, status: 'pending' }, record), 'payment_not_approved')
