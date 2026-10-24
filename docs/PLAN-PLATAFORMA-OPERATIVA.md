@@ -14,7 +14,7 @@ Plataforma operativa
   /app
   /solicitud
   /api/app/*
-  /api/webhooks/wompi
+  /api/public/payments/webhook
   └── Neon
 ```
 
@@ -28,7 +28,7 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - Solicitudes provenientes de múltiples fuentes: landing, panel interno, manual, API y aliados.
 - Clientes y contactos.
 - Solicitudes de importación y exportación.
-- Pagos de asesoría mediante Wompi.
+- Pagos de asesoría mediante Mercado Pago Checkout Pro.
 - Confirmación de pagos mediante webhook.
 - Estados y trazabilidad de solicitudes.
 - Usuarios, roles y permisos.
@@ -75,23 +75,28 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - [x] Modelar “Agente de carga” como un tipo de servicio, retirar el campo separado del formulario y habilitar sus reglas de notificación específicas.
 - [x] Configurar el catálogo de “Asesoría personalizada” con valor y moneda administrables, mostrando el precio vigente y conservando una copia histórica en cada solicitud.
 - [x] Registrar solicitudes de la landing con `source = landingpage` y estado inicial `pending`.
-- [x] Mostrar confirmación al usuario con referencia de solicitud, sin iniciar todavía pago ni notificaciones.
+- [x] Mostrar confirmación al usuario con referencia de solicitud; si el servicio requiere pago, iniciar Checkout Pro desde `/solicitud` sin notificar al experto hasta la confirmación del webhook.
 - [x] Mostrar clientes y solicitudes reales en el panel `/app`, protegidos por sesión y permisos.
 - [x] Implementar paginación server-side y búsqueda por texto para los listados de clientes y solicitudes.
 - [ ] Crear entidades de contactos, documentos, tareas, comentarios, eventos e historial de actividad.
 - [ ] Registrar en cada solicitud `source_type`, `source_reference`, `source_metadata` y `created_by` para identificar su origen.
 - [ ] Ampliar el formulario `/solicitud` con origen, destino, modalidad, fechas, documentos y observaciones.
 - [ ] Definir una política de pago por fuente, tipo de servicio o convenio, incluyendo solicitudes exentas.
-- [ ] Separar `payment_status` de `request_status` para que el pago no controle todo el flujo operativo.
-- [ ] Definir `payment_status`: `not_required`, `pending`, `approved`, `rejected`, `cancelled` y `refunded`.
+- [x] Separar el estado del pago del estado operativo de la solicitud mediante `operations.request_payments`; una solicitud puede continuar en `pending` mientras el pago queda registrado por separado.
+- [x] Registrar referencia única, preferencia, identificador de pago, estado, USD, COP, TRM y fecha efectiva de TRM.
+- [x] Definir estados de pago usados por el webhook: `pending`, `approved` y `cancelled`.
 - [ ] Definir `request_status`: `draft`, `received`, `awaiting_payment`, `under_review`, `more_information_required`, `in_progress`, `completed` y `cancelled`.
 - [ ] Crear el panel de solicitudes con listado, filtros, búsqueda, detalle, responsables, historial, documentos y comentarios.
 
 ### Fase 3: pagos y notificaciones
 
-- [ ] Integrar Wompi con referencias únicas, firma de integridad, sandbox y configuración separada por entorno.
-- [ ] Implementar el webhook de Wompi con validación de firma, idempotencia y registro de eventos.
-- [ ] Después de un pago, limitar la automatización a actualizar el estado correspondiente, registrar el evento y enviar los correos configurados; la asignación y gestión operativa quedan para el equipo desde el panel.
+- [x] Integrar Mercado Pago Checkout Pro con referencias únicas, app sandbox separada y configuración por entorno.
+- [x] Crear la app sandbox `cortesrodriguez-dev-test` para pruebas de Checkout Pro y guardar su token únicamente como secreto de Cloudflare dev (`MP_ACCESS_TOKEN`).
+- [x] Crear preferencias con monto COP calculado desde el precio histórico USD y la TRM oficial; retornar al formulario mediante `/solicitud?payment=success|pending|failure`.
+- [x] Implementar `/api/public/payments/webhook`, consultar el pago real en Mercado Pago y guardar el estado en `operations.request_payments`.
+- [x] Hacer idempotente la notificación: solo la transición a `approved` dispara `payment_approved`; reintentos del webhook no duplican el correo.
+- [x] Impedir notificaciones de solicitudes con `payment_required = true` mientras no exista un pago aprobado, incluidos envíos manuales desde el panel.
+- [x] Enviar la notificación de pago aprobado a las audiencias configuradas, incluyendo al experto asignado, administración, agente de origen y cliente cuando aplique.
 - [x] Implementar configuración inicial de destinatarios y reglas por evento/tipo de servicio desde `/app`, incluyendo destinatarios principales, CC para supervisión y CCO.
 - [ ] Integrar remitente, plantillas, activación por entorno y proveedor de correo.
 - [ ] Enviar notificaciones por solicitud creada, pago aprobado, pago rechazado, información adicional, cambio de estado y cierre.
@@ -99,15 +104,15 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - [x] Mostrar el estado de correo en solicitudes y métricas de correos sin enviar/abiertos en el dashboard.
 - [x] Conectar el envío operativo con reglas de destinatarios y guardar el identificador devuelto por Resend.
 - [x] Configurar `RESEND_WEBHOOK_SECRET`, activar open tracking en el dominio y registrar el webhook dev.
-- [ ] Repetir la configuración de secretos, tracking y webhook en producción.
+- [ ] Repetir la configuración de secretos, tracking y webhook en producción con una app Mercado Pago de producción distinta.
 
 ### Fase 4: auditoría, pruebas y despliegue
 
 - [ ] Añadir auditoría de accesos, permisos, estados, pagos, documentos y configuraciones.
 - [ ] Crear migraciones Neon versionadas para identidad, autorización, solicitudes, pagos, documentos y notificaciones.
 - [ ] Crear pruebas integrales de autenticación, autorización, solicitudes multifuente, pagos condicionales y webhooks repetidos.
-- [ ] Configurar secretos independientes de dev y producción.
-- [ ] Probar todo en dev con Neon dev y Wompi sandbox.
+- [x] Configurar secretos independientes de dev, incluyendo `MP_ACCESS_TOKEN`, `NEON_DATABASE_URL` y credenciales de Resend.
+- [x] Probar en dev con Neon dev, Mercado Pago sandbox, retorno aprobado y visualización del pago en el panel.
 - [ ] Desplegar producción únicamente mediante Pull Request aprobado hacia `main`.
 
 ## Roles iniciales
@@ -130,7 +135,8 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - Los webhooks deben ser idempotentes.
 - Los estados solo pueden cambiar mediante transiciones permitidas.
 - Una solicitud sin pago requerido puede pasar directamente a `received` y continuar a revisión.
-- Una solicitud con pago requerido debe permanecer en `awaiting_payment` hasta recibir confirmación válida de Wompi.
+- Una solicitud con pago requerido debe mantener su estado de pago en `pending` hasta recibir confirmación válida de Mercado Pago.
+- Una solicitud con pago requerido no envía notificaciones automáticas ni manuales a expertos antes de `payment_status = approved`.
 - El webhook nunca debe asignar automáticamente un asesor ni avanzar por sí solo todo el proceso operativo.
 - Los cambios de estado y pago deben conservar quién, cuándo, fuente y motivo del cambio.
 

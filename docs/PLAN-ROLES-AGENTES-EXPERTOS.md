@@ -176,12 +176,13 @@ Después de recibir una respuesta aprobada, el cliente puede optar por continuar
 
 ### 6. Notificaciones y aprobación
 
-- [x] Ampliar las reglas de correo para filtrar por evento, servicio general, tipo de consulta y fuente. El filtro por estado de pago sigue pendiente.
+- [x] Ampliar las reglas de correo para filtrar por evento, servicio general, tipo de consulta y fuente; las solicitudes con pago requerido quedan bloqueadas hasta que `operations.request_payments.status = 'approved'`.
 - [x] Permitir destinatarios por rol, experto asignado, agente de origen, administrador y cliente. Las reglas ya admiten audiencias dinámicas y destinatarios administrativos configurables.
 - [x] Asociar cada regla a un tipo de consulta y/o origen; las reglas genéricas del servicio general funcionan como fallback. Para varias consultas se pueden crear reglas separadas.
 - [x] Evitar duplicados cuando el mismo correo aparezca por rol, regla y asignación.
-- [x] Al crear una solicitud directa desde nuestra página (`direct_web`): notificar al cliente, al experto asignado y a administración; nunca notificar a un agente.
-- [x] Al crear una solicitud desde enlace de agente: notificar al cliente, al agente propietario, al experto asignado y a administración.
+- [x] Al crear una solicitud directa desde nuestra página (`direct_web`): notificar según la regla únicamente si no requiere pago; si requiere pago, esperar confirmación de Mercado Pago.
+- [x] Al crear una solicitud desde enlace de agente: conservar el origen y esperar el pago aprobado antes de notificar a expertos o involucrados.
+- [x] Enviar `payment_approved` después de la confirmación real del webhook de Mercado Pago, con protección contra reintentos duplicados.
 - [x] Si no hay experto activo para el tipo de consulta, conservar la solicitud en la cola sin asignar, registrar el fallo de asignación y avisar a administración.
 - [x] Al asignar o reasignar manualmente, notificar al nuevo experto, a administración y al agente solo si la solicitud proviene de su enlace.
 - [ ] Al enviar una respuesta a revisión: notificar al administrador.
@@ -202,8 +203,9 @@ Después de recibir una respuesta aprobada, el cliente puede optar por continuar
 
 | Evento | Cliente | Agente | Experto | Admin |
 |---|---:|---:|---:|---:|
-| Solicitud directa desde nuestra página (`direct_web`) | Confirmación | — | Solicitud asignada | Sí |
-| Solicitud creada desde enlace de agente | Confirmación | Sí | Solicitud asignada | Sí |
+| Solicitud directa desde nuestra página (`direct_web`) | Confirmación si no requiere pago | — | Solo si no requiere pago | Según regla |
+| Solicitud creada desde enlace de agente | Confirmación si no requiere pago | Solo si corresponde | Solo si no requiere pago | Según regla |
+| Pago aprobado por Mercado Pago | Según regla | Si es su origen | Sí, si está asignado | Sí |
 | Posible pregunta similar | — | Si es el origen, según la regla | No hasta validación | Tarea para validar coincidencia |
 | Solicitud derivada a experto tras validación | Según avance | Si es el origen | Nueva asignación | Sí |
 | Solicitud asignada o reasignada | Sí | Si es su origen | Sí, solo si es asignado | Sí |
@@ -245,11 +247,13 @@ Después de recibir una respuesta aprobada, el cliente puede optar por continuar
 
 La landing pública existente es un flujo crítico y debe conservar su comportamiento. La nueva llamada a la acción (CTA/botón) de la landing se desplegará apagada y su disponibilidad se controlará con un feature flag de Cloudflare, de modo que publicar código y habilitar la función sean acciones separadas. El flag controla la exposición de la función, pero no reemplaza autorización ni validación en el backend.
 
-**Inspección inicial (2026-10-22):** se verificó la landing productiva en navegador, sin enviar formularios: carga el contenido actual, el botón “Cotiza ahora” abre su formulario y `/solicitud` actualmente sirve la landing existente. La rama `main` (`7ca5191`) no contiene la nueva CTA; `dev` (`ab3b70b`) sí la añade en `src/App.vue` y enruta `/solicitud` a la app pública desde `src/main.js`. Ambos manifiestos Wrangler versionados describen el mismo Worker de producción/dev assets con el nombre correspondiente, por lo que un despliegue de la app actualiza el artefacto de la landing y la aplicación en conjunto. `npm run build` pasó. No se encontraron pruebas E2E generales; solo hay una prueba unitaria de similitud. Aún falta verificar los bindings/flags actualmente configurados en el dashboard de Cloudflare, pues la CLI Wrangler local no reconoce los comandos Flagship.
+**Inspección inicial (2026-10-22):** se verificó la landing productiva en navegador, sin enviar formularios: carga el contenido actual, el botón “Cotiza ahora” abre su formulario y `/solicitud` actualmente sirve la landing existente. La rama `main` (`7ca5191`) no contiene la nueva CTA; `dev` (`ab3b70b`) sí la añade en `src/App.vue` y enruta `/solicitud` a la app pública desde `src/main.js`. Ambos manifiestos Wrangler versionados describen el mismo Worker de producción/dev assets con el nombre correspondiente, por lo que un despliegue de la app actualiza el artefacto de la landing y la aplicación en conjunto. `npm run build` pasó. No se encontraron pruebas E2E generales; solo hay una prueba unitaria de similitud.
 
 **Avance (2026-10-23):** implementada la evaluación fail-closed del flag `landing_new_request_button`: la CTA solo aparece con respuesta explícitamente `true`; sin binding, si el flag falla o está apagado, `/solicitud` vuelve a `/` y los endpoints públicos del formulario responden 404. Las cotizaciones existentes y el endpoint de feedback quedan fuera de esta barrera. Se añadieron pruebas para estos casos; las pruebas y la compilación pasan. No se desplegó.
 
 **Avance (2026-10-23):** en Cloudflare Flagship se crearon dos apps y el flag booleano `landing_new_request_button`, ambos inactivos y con `off` como valor predeterminado. App ID dev: `aabdeecf-cb37-4656-8ef0-d4bcfec436e9`; producción: `dacec36c-be99-416b-b1ac-a27abb404a68`. Se añadieron los bindings `LANDING_FLAGS` a `wrangler.dev.jsonc` y `wrangler.jsonc`, respectivamente. El dry-run de Wrangler resuelve los bindings correctamente en ambos manifiestos. No se ha desplegado ni activado el flag. Falta validar el flag conectado en dev y el comportamiento en Cloudflare antes de publicar código.
+
+**Despliegue dev (2026-10-23):** GitHub Actions #42 quedó bloqueado por facturación. Se desplegó directamente a Cloudflare, desde un checkout aislado del commit `fc7c24f` para excluir cambios locales no relacionados. Worker: `cortes-rodriguez-asesores-dev`; versión `caa43282-3c20-4c8e-abea-820b86a0fd59`. Validaciones en vivo: landing raíz HTTP 200 y CTA nueva oculta; `/api/public/features` devuelve `landingRequestButton: false`; `/solicitud` redirige a `/`; `/api/public/catalog` responde 404. Las 2 pruebas unitarias y el build pasaron. El flag continúa apagado. Producción no se tocó.
 
 - [ ] Completar la comparación de producción con el cambio candidato, incluyendo bindings/variables live de Cloudflare; el diff de `main`/`dev`, rutas SPA y el formulario existente ya fueron inspeccionados.
 - [ ] Definir pruebas de aceptación de la landing existente: carga, navegación, recursos, formularios e integraciones, con resultados de referencia antes del despliegue.
@@ -258,8 +262,8 @@ La landing pública existente es un flujo crítico y debe conservar su comportam
 - [x] Evaluar el flag desde el Worker que sirve la landing y renderizar la nueva CTA solo cuando esté habilitada; mantener intactos los botones y formularios actuales. La evaluación falla cerrada y los endpoints de la función quedan fuera de servicio mientras el flag esté apagado.
 - [x] Crear y enlazar el binding `LANDING_FLAGS` con App IDs separados para dev y producción; ambos manifiestos pasaron `wrangler deploy --dry-run` y muestran el binding correcto.
 - [x] Comprobar el flag también en el Worker/API para impedir el uso directo de la función cuando esté apagada; el flag de interfaz por sí solo no es una barrera de seguridad.
-- [ ] Probar en Cloudflare dev ambos estados del flag: apagado (landing equivalente a la actual) y encendido (CTA y flujo nuevo completos). Las pruebas unitarias locales cubren flag apagado, encendido simulado y fallback fail-closed; falta validación con el binding real.
-- [ ] Desplegar primero el código con el flag apagado; validar la landing y los flujos productivos existentes antes de activar la CTA.
+- [ ] Probar en Cloudflare dev ambos estados del flag: el estado apagado ya fue comprobado en vivo; falta validar el estado encendido y el flujo nuevo completo, sin activar producción.
+- [x] Desplegar primero el código con el flag apagado en dev desde el commit `fc7c24f`; confirmar landing 200, CTA oculta, redirección `/solicitud` y API nueva 404.
 - [ ] Activar el flag en producción solo después de aprobar las pruebas, inicialmente con exposición controlada si la configuración de Flagship lo permite; verificar métricas y errores antes de ampliar.
 - [ ] Documentar el procedimiento de kill switch: apagar el flag sin redeplegar y confirmar que la landing vuelve al estado conocido. Mantener preparado el rollback del Worker y no revertir migraciones destructivamente.
 - [ ] Acordar una ventana de publicación y monitorear errores, envíos de formularios, navegación y recursos de la landing inmediatamente después del despliegue y de la activación.

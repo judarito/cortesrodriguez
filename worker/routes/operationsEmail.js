@@ -26,7 +26,7 @@ export async function handleOperationsEmail(request, env) {
 
 export async function sendRequestNotification(sql, env, requestId, eventCode, actorId = null) {
   const requests = await sql`
-    SELECT r.id, r.reference, r.email, r.service_name, r.service_type, r.product_type, r.status, r.source,
+    SELECT r.id, r.reference, r.email, r.service_name, r.service_type, r.product_type, r.status, r.source, r.payment_required,
       r.agent_id, r.assigned_expert_id, r.consultation_type_id, r.source_channel, c.full_name AS client_name,
       agent.email AS agent_email, expert.email AS expert_email
     FROM operations.requests r
@@ -38,6 +38,13 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   `
   const request = requests[0]
   if (!request) throw new Error('Solicitud no encontrada.')
+  if (request.payment_required) {
+    const payments = await sql`SELECT status FROM operations.request_payments WHERE request_id = ${request.id} ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1`
+    const paid = payments[0]?.status === 'approved'
+    if (!paid) {
+      return { sent: false, reason: 'payment_required' }
+    }
+  }
   const sourceChannel = request.source_channel || (request.source === 'agent' ? 'agent_link' : 'direct_web')
 
   const rules = await sql`
@@ -55,6 +62,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   `
   const defaultAudiences = {
     request_created: ['admin', 'expert', 'agent', 'client'],
+    payment_approved: ['admin', 'expert', 'agent', 'client'],
     expert_assigned: ['admin', 'expert', 'agent'],
     assignment_failed: ['admin'],
     similar_question_review: ['admin'],

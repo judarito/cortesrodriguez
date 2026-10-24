@@ -15,6 +15,8 @@ export async function handlePublicRequests(request, env) {
     if (!rows[0]) return response({ error: 'El servicio no está disponible.' }, 404)
     return response({ code: String(rows[0].code), name: String(rows[0].name), amountCents: Number(rows[0].amount_cents), currency: String(rows[0].currency) })
   }
+  if (url.pathname === '/api/public/payments/preference' && request.method === 'POST') return createPaymentPreference(request, env)
+  if (url.pathname === '/api/public/payments/webhook' && request.method === 'POST') return handlePaymentWebhook(request, env)
   if (url.pathname !== '/api/public/requests' || request.method !== 'POST') return null
 
   if (!env.NEON_DATABASE_URL) {
@@ -26,6 +28,12 @@ export async function handlePublicRequests(request, env) {
 
   const parsed = await parseInput(request)
   const input = validate(parsed.fields)
+  if (env.TURNSTILE_SECRET_KEY && env.TURNSTILE_SITE_KEY) {
+    const token = text(parsed.fields.turnstileToken)
+    if (!token || token.length > 2048 || !await verifyTurnstile(token, request, env.TURNSTILE_SECRET_KEY)) {
+      return response({ error: 'No se pudo verificar el envío. Actualiza la verificación e inténtalo de nuevo.' }, 400)
+    }
+  }
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   const serviceRows = await sql`
@@ -163,7 +171,9 @@ export async function handlePublicRequests(request, env) {
     }
   }
 
-  if ((env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
+  // Las solicitudes pagadas se notifican únicamente después de que Mercado Pago
+  // confirme el pago. Las solicitudes sin cobro mantienen el flujo inmediato.
+  if (!service.payment_required && (env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
     try { await sendRequestNotification(sql, env, requestId, 'request_created') } catch (error) { console.error('No se pudo enviar la notificación de solicitud creada:', error.message) }
     if (similarCandidates.length) {
       try { await sendRequestNotification(sql, env, requestId, 'similar_question_review') } catch (error) { console.error('No se pudo notificar la pregunta posiblemente similar:', error.message) }
@@ -173,6 +183,100 @@ export async function handlePublicRequests(request, env) {
   }
 
   return response({ ok: true, reference, status: 'pending' }, 201)
+}
+
+async function createPaymentPreference(request, env) {
+  if (!env.NEON_DATABASE_URL || !env.MP_ACCESS_TOKEN) return response({ error: 'El pago no está configurado.' }, 503)
+  const body = await request.json().catch(() => ({}))
+  const reference = text(body.reference)
+  if (!reference) return response({ error: 'Falta la referencia de la solicitud.' }, 400)
+  const { neon } = await import('@neondatabase/serverless')
+  const sql = neon(env.NEON_DATABASE_URL)
+  await ensurePaymentSchema(sql)
+  const rows = await sql`SELECT id, reference, service_amount_cents, service_currency FROM operations.requests WHERE reference = ${reference} LIMIT 1`
+  if (!rows[0] || String(rows[0].service_currency).toUpperCase() !== 'USD') return response({ error: 'La solicitud no tiene un precio USD válido.' }, 400)
+  const trm = await fetchOfficialTrm()
+  const usdCents = Number(rows[0].service_amount_cents)
+  const copPesos = Math.round((usdCents / 100) * trm.value)
+  const copCents = copPesos * 100
+  const paymentId = crypto.randomUUID()
+  const origin = env.PUBLIC_APP_URL || new URL(request.url).origin
+  const preference = await mercadoPago('/checkout/preferences', env.MP_ACCESS_TOKEN, {
+    items: [{ id: reference, title: `Asesoría ${reference}`, quantity: 1, currency_id: 'COP', unit_price: copPesos }],
+    external_reference: reference,
+    back_urls: { success: `${origin}/solicitud?payment=success`, failure: `${origin}/solicitud?payment=failure`, pending: `${origin}/solicitud?payment=pending` },
+    auto_return: 'approved',
+    notification_url: `${origin}/api/public/payments/webhook`,
+  })
+  await sql`INSERT INTO operations.request_payments (id, request_id, reference, usd_amount_cents, trm_cop_per_usd, cop_amount_cents, trm_effective_date, mercado_pago_preference_id) VALUES (${paymentId}, ${rows[0].id}, ${reference}, ${usdCents}, ${trm.value}, ${copCents}, ${trm.date}, ${preference.id})`
+  return response({ initPoint: preference.init_point, usdAmountCents: usdCents, copAmountCents: copCents, trm: trm.value, trmDate: trm.date })
+}
+
+async function handlePaymentWebhook(request, env) {
+  if (!env.NEON_DATABASE_URL || !env.MP_ACCESS_TOKEN) return response({ ok: true })
+  const payload = await request.json().catch(() => ({}))
+  const paymentId = text(payload.data?.id)
+  if (!paymentId) return response({ ok: true })
+  const payment = await mercadoPago(`/v1/payments/${encodeURIComponent(paymentId)}`, env.MP_ACCESS_TOKEN)
+  const reference = text(payment.external_reference)
+  if (!reference) return response({ ok: true })
+  const { neon } = await import('@neondatabase/serverless')
+  const sql = neon(env.NEON_DATABASE_URL)
+  await ensurePaymentSchema(sql)
+  const status = payment.status === 'approved' ? 'approved' : payment.status === 'cancelled' ? 'cancelled' : 'pending'
+  const previous = await sql`SELECT request_id, status FROM operations.request_payments WHERE reference = ${reference} LIMIT 1`
+  const updated = await sql`
+    UPDATE operations.request_payments
+    SET mercado_pago_payment_id = ${paymentId}, status = ${status}, updated_at = NOW()
+    WHERE reference = ${reference}
+    RETURNING request_id, status
+  `
+  if (updated[0]?.request_id && status === 'approved' && previous[0]?.status !== 'approved' && (env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) && env.RESEND_FROM_EMAIL) {
+    try {
+      await sendRequestNotification(sql, env, updated[0].request_id, 'payment_approved')
+    } catch (error) {
+      console.error('No se pudo notificar el pago aprobado:', error.message)
+    }
+  }
+  return response({ ok: true })
+}
+
+async function ensurePaymentSchema(sql) {
+  await sql`CREATE TABLE IF NOT EXISTS operations.request_payments (
+    id UUID PRIMARY KEY,
+    request_id UUID NOT NULL REFERENCES operations.requests(id) ON DELETE CASCADE,
+    reference TEXT NOT NULL UNIQUE,
+    usd_amount_cents INTEGER NOT NULL,
+    trm_cop_per_usd NUMERIC(14,4) NOT NULL,
+    cop_amount_cents INTEGER NOT NULL,
+    trm_effective_date DATE NOT NULL,
+    mercado_pago_preference_id TEXT,
+    mercado_pago_payment_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`
+  await sql`CREATE INDEX IF NOT EXISTS request_payments_request_id_idx ON operations.request_payments(request_id)`
+}
+
+async function mercadoPago(path, token, body) {
+  const result = await fetch(`https://api.mercadopago.com${path}`, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+  const data = await result.json().catch(() => ({}))
+  if (!result.ok) throw new Error(data.message || 'Mercado Pago rechazó la operación.')
+  return data
+}
+
+async function fetchOfficialTrm() {
+  const endpoint = 'https://www.superfinanciera.gov.co/SuperfinancieraWebServiceTRM/TCRMServicesWebService/TCRMServicesWebService'
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date())
+  const soap = `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="http://action.trm.services.generic.action.superfinanciera.nexura.sc.com.co/"><soap:Body><tns:queryTCRM><tns:tcrmQueryAssociatedDate>${today}</tns:tcrmQueryAssociatedDate></tns:queryTCRM></soap:Body></soap:Envelope>`
+  const result = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'text/xml; charset=utf-8', SOAPAction: '""' }, body: soap })
+  const xml = await result.text()
+  const value = Number((xml.match(/<valor>([^<]+)/i) || [])[1])
+  const resolvedValue = Number.isFinite(value) ? value : Number((xml.match(/<value>([^<]+)/i) || [])[1])
+  const date = (xml.match(/<fecha>([^<]+)/i) || xml.match(/<validityFrom>([^<]+)/i) || [])[1]
+  if (!result.ok || !Number.isFinite(resolvedValue) || !date) throw new Error('No fue posible obtener la TRM oficial.')
+  return { value: resolvedValue, date: date.slice(0, 10) }
 }
 
 function validate(payload) {
@@ -213,6 +317,31 @@ async function parseInput(request) {
   const fields = Object.fromEntries([...formData.entries()].filter(([, value]) => typeof value === 'string'))
   const files = formData.getAll('attachments').filter((value) => value && typeof value.arrayBuffer === 'function')
   return { fields, files }
+}
+
+async function verifyTurnstile(token, request, secret) {
+  let result
+  try {
+    const verifyResponse = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        secret,
+        response: token,
+        remoteip: request.headers.get('CF-Connecting-IP') || undefined,
+        idempotency_key: crypto.randomUUID(),
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!verifyResponse.ok) return false
+    result = await verifyResponse.json()
+  } catch (error) {
+    console.error('No se pudo validar Turnstile:', error.message)
+    return false
+  }
+  return result.success === true
+    && result.hostname === new URL(request.url).hostname
+    && result.action === 'request_create'
 }
 
 function safeName(name) {
@@ -259,10 +388,10 @@ class RequestError extends Error {
   }
 }
 
-function response(payload, status = 200) {
+function response(payload, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers: { 'content-type': 'application/json; charset=utf-8', ...extraHeaders },
   })
 }
 

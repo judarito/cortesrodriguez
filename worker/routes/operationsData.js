@@ -92,10 +92,19 @@ export async function handleOperationsData(request, env) {
       SELECT r.id, r.reference, r.source, r.legal_entity_type, r.email, r.phone, r.whatsapp, r.payment_required,
         r.service_name, r.service_amount_cents, r.service_currency, r.service_type, r.freight_agent, r.product_type, r.status, r.created_at, r.updated_at,
         r.notification_status, r.notification_last_event_at, r.notification_last_opened_at,
-        c.id AS client_id, c.full_name AS client_name, u.full_name AS agent_name, u.email AS agent_email
+        c.id AS client_id, c.full_name AS client_name, u.full_name AS agent_name, u.email AS agent_email,
+        payment.status AS payment_status, payment.mercado_pago_payment_id, payment.mercado_pago_preference_id,
+        payment.usd_amount_cents, payment.cop_amount_cents, payment.trm_cop_per_usd, payment.trm_effective_date,
+        payment.updated_at AS payment_updated_at
       FROM operations.requests r
       JOIN operations.clients c ON c.id = r.client_id
       LEFT JOIN operations.users u ON u.id = COALESCE(r.agent_id, r.created_by)
+      LEFT JOIN LATERAL (
+        SELECT * FROM operations.request_payments p
+        WHERE p.request_id = r.id
+        ORDER BY p.created_at DESC
+        LIMIT 1
+      ) payment ON TRUE
       WHERE (c.full_name ILIKE ${searchPattern}
         OR r.reference ILIKE ${searchPattern}
         OR r.service_type ILIKE ${searchPattern}
@@ -186,12 +195,21 @@ async function getRequestDetail(sql, requestId, claims) {
         r.product_type, r.status, r.created_at, r.updated_at, r.notification_status, r.consultation_type_id,
         r.consultation_type_name, r.assigned_expert_id, assigned.full_name AS assigned_expert_name,
         r.notification_last_event_at, r.notification_last_opened_at,
+        payment.status AS payment_status, payment.mercado_pago_payment_id, payment.mercado_pago_preference_id,
+        payment.usd_amount_cents, payment.cop_amount_cents, payment.trm_cop_per_usd, payment.trm_effective_date,
+        payment.updated_at AS payment_updated_at,
         c.id AS client_id, c.full_name AS client_name, c.created_at AS client_created_at,
         u.full_name AS agent_name, u.email AS agent_email
       FROM operations.requests r
       JOIN operations.clients c ON c.id = r.client_id
       LEFT JOIN operations.users u ON u.id = COALESCE(r.agent_id, r.created_by)
       LEFT JOIN operations.users assigned ON assigned.id = r.assigned_expert_id
+      LEFT JOIN LATERAL (
+        SELECT * FROM operations.request_payments p
+        WHERE p.request_id = r.id
+        ORDER BY p.created_at DESC
+        LIMIT 1
+      ) payment ON TRUE
       WHERE r.id = ${requestId} AND ${accessFilter}
       LIMIT 1
     `,
@@ -409,6 +427,16 @@ function serializeRequest(row) {
     clientName: String(row.client_name),
     agentName: row.agent_name ? String(row.agent_name) : '',
     agentEmail: row.agent_email ? String(row.agent_email) : '',
+    payment: row.payment_status ? {
+      status: String(row.payment_status),
+      paymentId: row.mercado_pago_payment_id ? String(row.mercado_pago_payment_id) : '',
+      preferenceId: row.mercado_pago_preference_id ? String(row.mercado_pago_preference_id) : '',
+      usdAmountCents: Number(row.usd_amount_cents || 0),
+      copAmountCents: Number(row.cop_amount_cents || 0),
+      trm: Number(row.trm_cop_per_usd || 0),
+      trmDate: row.trm_effective_date ? String(row.trm_effective_date) : '',
+      updatedAt: row.payment_updated_at ? String(row.payment_updated_at) : '',
+    } : null,
   }
 }
 

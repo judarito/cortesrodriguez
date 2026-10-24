@@ -2,6 +2,14 @@
 
 Sitio web Vue configurable desde un panel administrador con persistencia en Turso/libSQL y API en Cloudflare Worker.
 
+La plataforma operativa usa Neon y Mercado Pago Checkout Pro. La landing mantiene Turso de forma independiente.
+
+## Flujo de pagos en dev
+
+En dev se usa una app sandbox de Mercado Pago y el secreto `MP_ACCESS_TOKEN` en Cloudflare. La solicitud se crea con una referencia, el pago se inicia desde `/solicitud` y el webhook `/api/public/payments/webhook` confirma el estado consultando Mercado Pago. El retorno del navegador solo muestra el resultado; no confirma por sí mismo el pago.
+
+Las solicitudes pagadas no notifican a expertos al crearse. Solo un pago confirmado como `approved` dispara `payment_approved`; el estado y los datos de pago se consultan en el panel administrativo. Ver [flujo de entornos y pagos](docs/DEPLOYMENT_ENVIRONMENTS.md) para la configuración de dev.
+
 ## Configuración
 
 1. Para desarrollo local con Wrangler, copia `.dev.vars.example` a `.dev.vars`.
