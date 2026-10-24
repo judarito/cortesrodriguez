@@ -12,6 +12,11 @@ import { handleOperationsReviews } from './routes/operationsReviews.js'
 import { handlePublicFeedback } from './routes/publicFeedback.js'
 import { handleClientPortal } from './routes/clientPortal.js'
 import { handleResendWebhook } from './routes/resendWebhooks.js'
+import {
+  isLandingRequestApi,
+  isLandingRequestButtonEnabled,
+  isLandingRequestPage,
+} from './lib/landingFeatureFlags.js'
 
 const jsonHeaders = {
   'content-type': 'application/json; charset=utf-8',
@@ -28,6 +33,36 @@ export default {
     }
 
     try {
+      const isFeatureFlagRequest = url.pathname === '/api/public/features' && request.method === 'GET'
+      const isGatedRequestPage = isLandingRequestPage(url.pathname)
+      const isGatedRequestApi = isLandingRequestApi(url.pathname)
+
+      if (isFeatureFlagRequest || isGatedRequestPage || isGatedRequestApi) {
+        const requestButtonEnabled = await isLandingRequestButtonEnabled(env)
+
+        if (isFeatureFlagRequest) {
+          return json({ landingRequestButton: requestButtonEnabled }, request, 200, {
+            'cache-control': 'no-store',
+          })
+        }
+
+        if (!requestButtonEnabled && isGatedRequestPage && ['GET', 'HEAD'].includes(request.method)) {
+          return new Response(null, {
+            status: 302,
+            headers: {
+              location: new URL('/', url).toString(),
+              'cache-control': 'no-store',
+            },
+          })
+        }
+
+        if (!requestButtonEnabled) {
+          return json({ error: 'Esta función no está disponible.' }, request, 404, {
+            'cache-control': 'no-store',
+          })
+        }
+      }
+
       const resendWebhookResponse = await handleResendWebhook(request, env)
       if (resendWebhookResponse) return resendWebhookResponse
 

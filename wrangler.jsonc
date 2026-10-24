@@ -3,6 +3,12 @@
 	"name": "cortes-rodriguez-asesores",
 	"main": "worker/index.js",
 	"compatibility_date": "2026-05-13",
+	"flagship": [
+		{
+			"binding": "LANDING_FLAGS",
+			"app_id": "dacec36c-be99-416b-b1ac-a27abb404a68"
+		}
+	],
 	"assets": {
 		"directory": "./dist",
 		"binding": "ASSETS",

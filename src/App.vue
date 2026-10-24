@@ -86,6 +86,7 @@ const iconMap = {
 const iconOptions = Object.keys(iconMap)
 const menuOpen = ref(false)
 const routePath = ref(window.location.pathname)
+const landingRequestButtonEnabled = ref(false)
 const isAdmin = computed(() => routePath.value === '/admin')
 const isLogin = computed(() => routePath.value === '/login')
 const content = ref(cloneDefaultContent())
@@ -1256,8 +1257,20 @@ function formatBytes(bytes) {
   return `${Math.round(bytes / 1024)} KB`
 }
 
+async function loadLandingFeatureFlags() {
+  try {
+    const response = await fetch('/api/public/features', { cache: 'no-store' })
+    if (!response.ok) return
+    const flags = await response.json()
+    landingRequestButtonEnabled.value = flags.landingRequestButton === true
+  } catch {
+    landingRequestButtonEnabled.value = false
+  }
+}
+
 onMounted(() => {
   loadContent()
+  loadLandingFeatureFlags()
   heroCarouselTimer = window.setInterval(() => {
     nextHeroSlide()
   }, 8400)
@@ -2349,7 +2362,7 @@ watch(site, (newSite) => {
       <a class="admin-floating-link" href="/login" aria-label="Ir al administrador">
         <Settings :size="22" />
       </a>
-      <a class="request-floating-link" href="/solicitud" aria-label="Crear una solicitud de asesoría">
+      <a v-if="landingRequestButtonEnabled" class="request-floating-link" href="/solicitud" aria-label="Crear una solicitud de asesoría">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
           <path d="M16 8H20C20.5523 8 21 8.44772 21 9V20L17.667 17.231C17.4875 17.0818 17.2608 17 17.0273 17H9C8.44771 17 8 16.5523 8 16V13M16 8V5C16 4.44772 15.5523 4 15 4H4C3.44772 4 3 4.44772 3 5V16.0003L6.33301 13.2308C6.51255 13.0817 6.73924 13 6.97266 13H8M16 8V12C16 12.5523 15.5523 13 15 13H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>

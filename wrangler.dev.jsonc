@@ -4,6 +4,12 @@
   "main": "worker/index.js",
   "workers_dev": true,
   "compatibility_date": "2026-05-13",
+  "flagship": [
+    {
+      "binding": "LANDING_FLAGS",
+      "app_id": "aabdeecf-cb37-4656-8ef0-d4bcfec436e9"
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

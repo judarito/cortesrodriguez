@@ -241,6 +241,29 @@ Después de recibir una respuesta aprobada, el cliente puede optar por continuar
 - [ ] Ejecutar migraciones, pruebas y correcciones primero en dev con Neon/R2/Resend dev.
 - [ ] Subir cambios únicamente a `dev`; producción se actualiza solo mediante Pull Request aprobado hacia `main`.
 
+### 8.1. Actualización gradual de producción sin afectar la landing
+
+La landing pública existente es un flujo crítico y debe conservar su comportamiento. La nueva llamada a la acción (CTA/botón) de la landing se desplegará apagada y su disponibilidad se controlará con un feature flag de Cloudflare, de modo que publicar código y habilitar la función sean acciones separadas. El flag controla la exposición de la función, pero no reemplaza autorización ni validación en el backend.
+
+**Inspección inicial (2026-10-22):** se verificó la landing productiva en navegador, sin enviar formularios: carga el contenido actual, el botón “Cotiza ahora” abre su formulario y `/solicitud` actualmente sirve la landing existente. La rama `main` (`7ca5191`) no contiene la nueva CTA; `dev` (`ab3b70b`) sí la añade en `src/App.vue` y enruta `/solicitud` a la app pública desde `src/main.js`. Ambos manifiestos Wrangler versionados describen el mismo Worker de producción/dev assets con el nombre correspondiente, por lo que un despliegue de la app actualiza el artefacto de la landing y la aplicación en conjunto. `npm run build` pasó. No se encontraron pruebas E2E generales; solo hay una prueba unitaria de similitud. Aún falta verificar los bindings/flags actualmente configurados en el dashboard de Cloudflare, pues la CLI Wrangler local no reconoce los comandos Flagship.
+
+**Avance (2026-10-23):** implementada la evaluación fail-closed del flag `landing_new_request_button`: la CTA solo aparece con respuesta explícitamente `true`; sin binding, si el flag falla o está apagado, `/solicitud` vuelve a `/` y los endpoints públicos del formulario responden 404. Las cotizaciones existentes y el endpoint de feedback quedan fuera de esta barrera. Se añadieron pruebas para estos casos; las pruebas y la compilación pasan. No se desplegó.
+
+**Avance (2026-10-23):** en Cloudflare Flagship se crearon dos apps y el flag booleano `landing_new_request_button`, ambos inactivos y con `off` como valor predeterminado. App ID dev: `aabdeecf-cb37-4656-8ef0-d4bcfec436e9`; producción: `dacec36c-be99-416b-b1ac-a27abb404a68`. Se añadieron los bindings `LANDING_FLAGS` a `wrangler.dev.jsonc` y `wrangler.jsonc`, respectivamente. El dry-run de Wrangler resuelve los bindings correctamente en ambos manifiestos. No se ha desplegado ni activado el flag. Falta validar el flag conectado en dev y el comportamiento en Cloudflare antes de publicar código.
+
+- [ ] Completar la comparación de producción con el cambio candidato, incluyendo bindings/variables live de Cloudflare; el diff de `main`/`dev`, rutas SPA y el formulario existente ya fueron inspeccionados.
+- [ ] Definir pruebas de aceptación de la landing existente: carga, navegación, recursos, formularios e integraciones, con resultados de referencia antes del despliegue.
+- [ ] Aislar los cambios de la aplicación para que no alteren rutas, componentes, estilos globales ni endpoints de la landing existente.
+- [x] Crear en Cloudflare Flagship un flag booleano `landing_new_request_button`, con apps separadas para dev y producción, inactivas y con `off` como valor predeterminado.
+- [x] Evaluar el flag desde el Worker que sirve la landing y renderizar la nueva CTA solo cuando esté habilitada; mantener intactos los botones y formularios actuales. La evaluación falla cerrada y los endpoints de la función quedan fuera de servicio mientras el flag esté apagado.
+- [x] Crear y enlazar el binding `LANDING_FLAGS` con App IDs separados para dev y producción; ambos manifiestos pasaron `wrangler deploy --dry-run` y muestran el binding correcto.
+- [x] Comprobar el flag también en el Worker/API para impedir el uso directo de la función cuando esté apagada; el flag de interfaz por sí solo no es una barrera de seguridad.
+- [ ] Probar en Cloudflare dev ambos estados del flag: apagado (landing equivalente a la actual) y encendido (CTA y flujo nuevo completos). Las pruebas unitarias locales cubren flag apagado, encendido simulado y fallback fail-closed; falta validación con el binding real.
+- [ ] Desplegar primero el código con el flag apagado; validar la landing y los flujos productivos existentes antes de activar la CTA.
+- [ ] Activar el flag en producción solo después de aprobar las pruebas, inicialmente con exposición controlada si la configuración de Flagship lo permite; verificar métricas y errores antes de ampliar.
+- [ ] Documentar el procedimiento de kill switch: apagar el flag sin redeplegar y confirmar que la landing vuelve al estado conocido. Mantener preparado el rollback del Worker y no revertir migraciones destructivamente.
+- [ ] Acordar una ventana de publicación y monitorear errores, envíos de formularios, navegación y recursos de la landing inmediatamente después del despliegue y de la activación.
+
 ## Estados recomendados
 
 Separar el estado operativo del estado de respuesta y del pago:
