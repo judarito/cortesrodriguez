@@ -234,7 +234,7 @@ export async function consumeQueuedNotification(env, eventId) {
   await deliverNotification(sql, env, String(eventId))
 }
 
-async function deliverNotification(sql, env, outboxId) {
+export async function deliverNotification(sql, env, outboxId) {
   const claimed = await sql`
     UPDATE operations.notification_outbox
     SET status = 'processing', attempts = attempts + 1,

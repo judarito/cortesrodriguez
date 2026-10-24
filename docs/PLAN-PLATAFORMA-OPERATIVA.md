@@ -103,6 +103,10 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - [x] Preparar trazabilidad de correos con `resend_email_id`, estados por solicitud y eventos idempotentes de Resend.
 - [x] Mostrar el estado de correo en solicitudes y métricas de correos sin enviar/abiertos en el dashboard.
 - [x] Conectar el envío operativo con reglas de destinatarios y guardar el identificador devuelto por Resend.
+- [x] Persistir eventos de dominio en un outbox transaccional e idempotente en Neon; entregar los identificadores mediante Cloudflare Queues en dev, con consumidor, reintentos y DLQ.
+- [x] Separar el resultado del pago del envío: un fallo de Resend programa reintento sin revertir el pago; mantener la misma clave idempotente al volver a enviar.
+- [x] Probar con Resend simulado la selección de destinatarios de pago aprobado, fallo → `pending_retry` → éxito y reutilización de clave; no se enviaron correos reales.
+- [ ] Completar prueba E2E de solicitud y pago en sandbox con una solicitud/destinatarios de prueba aislados, y verificar la DLQ mediante un fallo controlado.
 - [x] Configurar `RESEND_WEBHOOK_SECRET`, activar open tracking en el dominio y registrar el webhook dev.
 - [ ] Repetir la configuración de secretos, tracking y webhook en producción con una app Mercado Pago de producción distinta.
 

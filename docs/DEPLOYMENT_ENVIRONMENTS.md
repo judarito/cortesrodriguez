@@ -75,14 +75,18 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - La migración `028_cloudflare_notification_queue.sql` agrega estados de despacho y lease para publicar el outbox en Cloudflare Queues sin perder su idempotencia transaccional.
 - El panel administrativo permite verificar/reconciliar un pago consultando Mercado Pago; se guardan referencia, IDs, estado, moneda, monto y un código de diagnóstico, nunca secretos ni datos de tarjeta.
 - El Cron despacha hasta 20 eventos del outbox por ciclo a Cloudflare Queues; el consumidor envía por Resend y usa la fila Neon como control idempotente. Los fallos de Resend vuelven al outbox para reintento incremental (máximo ocho intentos); fallos transitorios de consumo reintentan en Queues y los agotados van a la DLQ. El estado de pago y el estado de entrega del correo son independientes.
-- Colas configuradas: `cra-notification-events-dev` y `cra-notification-events` (cada una con su DLQ). Antes de desplegar, deben existir en la cuenta Cloudflare que usa Wrangler; Wrangler registra el productor y consumidor con los manifiestos de cada entorno.
-- Pendiente para cerrar este refuerzo: cargar secretos Turnstile/Mercado Pago en Cloudflare dev, aplicar migraciones 022 y 023 en Neon dev, crear las colas de notificaciones en la cuenta Cloudflare (esta sesión no tiene `CLOUDFLARE_API_TOKEN` disponible), desplegar y ejecutar pruebas sandbox; crear una automatización/alerta en Cloudflare Issues para errores del Worker y filtrar Workers Logs por eventos `payment_webhook_*` de severidad `warning`.
+- Colas dev creadas y activas en Cloudflare: `cra-notification-events-dev` y `cra-notification-events-dev-dlq`. Wrangler confirma un productor y un consumidor en la cola principal; la DLQ queda asociada al consumidor.
 
 ## Regla de notificaciones pagadas
 
 Las solicitudes que requieren pago se crean antes de cobrar para conservar su referencia; mientras no exista confirmación, la cola limita el aviso al administrador. El webhook registra `payment_approved` con idempotencia por solicitud y, tras la confirmación, se notifican las partes configuradas. Pagos rechazados/cancelados solo alertan al administrador. Los eventos se persisten antes del envío y se procesan en segundo plano; los fallos reintentan sin cambiar el estado del pago.
 
-Despliegue dev validado el 24 de octubre de 2026:
+### Estado de despliegue y validación (2026-10-24)
 
-- Versión Cloudflare: `84bf5345-6f6c-4a8f-858f-85825443bb43`.
+- Worker dev `cortes-rodriguez-asesores-dev`, versión activa `0420f649-3c4c-4e3e-8123-029c000881fe`; producción no se modificó.
+- La migración `028_cloudflare_notification_queue.sql` está aplicada: Neon dev acepta consultas al outbox con el nuevo esquema. Al revisar el entorno, el outbox no tenía eventos pendientes ni históricos.
+- Se verificó en Cloudflare que la cola dev tiene productor/consumidor y DLQ asociados.
+- Suite de pruebas: 28 pruebas aprobadas. Incluye una simulación de Resend que falla y luego se recupera: la notificación pasa por `pending_retry` y `accepted`, conserva la misma clave `Idempotency-Key` y no altera el estado del pago.
 - `npm run build` pasó correctamente.
+- Las pruebas de fallo/recuperación simulan Resend localmente; no se generó un pago, no se envió correo real y no se usaron solicitudes reales de clientes. Queda pendiente una prueba E2E con solicitud de prueba aislada y credenciales sandbox.
+- Pendiente operativo: configurar alerta/monitorización para fallos del Worker y DLQ, y completar E2E sandbox de pago y notificación en una solicitud dedicada de prueba.
