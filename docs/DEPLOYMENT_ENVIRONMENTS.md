@@ -81,6 +81,18 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 
 Las solicitudes que requieren pago se crean antes de cobrar para conservar su referencia; mientras no exista confirmación, la cola limita el aviso al administrador. El webhook registra `payment_approved` con idempotencia por solicitud y, tras la confirmación, se notifican las partes configuradas. Pagos rechazados/cancelados solo alertan al administrador. Los eventos se persisten antes del envío y se procesan en segundo plano; los fallos reintentan sin cambiar el estado del pago.
 
+### Destinatarios y alcance de las reglas
+
+- Los correos del cliente, agente, experto y administración se obtienen de los usuarios relacionados con la solicitud; no se deben duplicar en la lista de destinatarios adicionales.
+- “Correos adicionales” sirve para buzones compartidos o de supervisión sin usuario propio en la plataforma. Estos pueden asociarse a reglas como Para, CC o CCO.
+- Las reglas aplicables se combinan por evento, servicio, consulta y origen. Sus audiencias y direcciones adicionales se agregan a los destinatarios base del evento; una regla no puede quitar las notificaciones base al cliente o al experto asignado.
+- Para solicitudes que requieren pago, `request_created` avisa solo a administración hasta que el pago sea aprobado. Los pagos rechazados o cancelados también avisan solo a administración.
+- En `payment_approved`, el cliente recibe confirmación de que el pago fue recibido y que el equipo pronto lo contactará; la entrega de este correo sigue la cola idempotente y no cambia el estado del pago si Resend falla.
+
+### Reconciliación de pagos
+
+La acción administrativa **Verificar pago** consulta el recurso de pago en Mercado Pago y valida la referencia externa, moneda COP y monto contra el intento guardado. Si Mercado Pago devuelve `preference_id`, este debe coincidir con la preferencia local. Algunos recursos de pago aprobados no incluyen ese campo; su ausencia no bloquea la conciliación cuando la consulta autenticada del pago y las demás validaciones coinciden. Un `preference_id` presente pero distinto sí se rechaza. El diagnóstico guarda el motivo sin almacenar tokens ni datos de tarjeta.
+
 ### Estado de despliegue y validación (2026-10-24)
 
 - Worker dev `cortes-rodriguez-asesores-dev`, versión activa `0420f649-3c4c-4e3e-8123-029c000881fe`; producción no se modificó.

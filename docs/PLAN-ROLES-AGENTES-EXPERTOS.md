@@ -178,11 +178,16 @@ Después de recibir una respuesta aprobada, el cliente puede optar por continuar
 
 - [x] Ampliar las reglas de correo para filtrar por evento, servicio general, tipo de consulta y fuente; las solicitudes con pago requerido quedan bloqueadas hasta que `operations.request_payments.status = 'approved'`.
 - [x] Permitir destinatarios por rol, experto asignado, agente de origen, administrador y cliente. Las reglas ya admiten audiencias dinámicas y destinatarios administrativos configurables.
+- [x] Resolver los correos de cliente, agente, experto y administración desde sus registros de usuario, sin volver a ingresarlos como destinatarios manuales.
+- [x] Reservar “Correos adicionales” para buzones compartidos o de supervisión sin usuario propio en la plataforma.
+- [x] Combinar las audiencias de reglas coincidentes con los destinatarios base del evento; las reglas no pueden suprimir el aviso base al cliente ni al experto asignado.
 - [x] Asociar cada regla a un tipo de consulta y/o origen; las reglas genéricas del servicio general funcionan como fallback. Para varias consultas se pueden crear reglas separadas.
 - [x] Evitar duplicados cuando el mismo correo aparezca por rol, regla y asignación.
-- [x] Al crear una solicitud directa desde nuestra página (`direct_web`): notificar según la regla únicamente si no requiere pago; si requiere pago, esperar confirmación de Mercado Pago.
+- [x] Al crear una solicitud directa desde nuestra página (`direct_web`): aplicar destinatarios base y reglas coincidentes si no requiere pago; si requiere pago, esperar confirmación de Mercado Pago y mientras tanto avisar solo a administración.
 - [x] Al crear una solicitud desde enlace de agente: conservar el origen y esperar el pago aprobado antes de notificar a expertos o involucrados.
 - [x] Enviar `payment_approved` después de la confirmación real del webhook de Mercado Pago, con protección contra reintentos duplicados.
+- [x] En pago aprobado, enviar siempre al cliente la confirmación de pago recibido e indicar que el equipo pronto lo contactará; notificar además a las audiencias y destinatarios configurados que correspondan.
+- [x] Antes de confirmar un pago requerido, limitar el aviso de solicitud creada a administración; pagos rechazados o cancelados también avisan solo a administración.
 - [x] Si no hay experto activo para el tipo de consulta, conservar la solicitud en la cola sin asignar, registrar el fallo de asignación y avisar a administración.
 - [x] Al asignar o reasignar manualmente, notificar al nuevo experto, a administración y al agente solo si la solicitud proviene de su enlace.
 - [ ] Al enviar una respuesta a revisión: notificar al administrador.
@@ -292,6 +297,7 @@ Separar el estado operativo del estado de respuesta y del pago:
 
 Todos los listados administrativos deben usar el componente común `ListView` y respetar el mismo patrón:
 
+- El contenedor visual del listado (fondo, borde, radio, espaciado y sombra) debe estar definido en `ListView`, no depender de clases scoped del componente padre. Así conserva el mismo aspecto cuando se reutiliza desde cualquier módulo.
 - encabezado con título, descripción, contador y botón de alta cuando aplique;
 - búsqueda y filtros en una barra consistente;
 - tabla/lista con columnas alineadas y estado visible;
@@ -299,6 +305,15 @@ Todos los listados administrativos deben usar el componente común `ListView` y 
 - acciones de fila para ver, editar, activar/desactivar y eliminar según permisos;
 - confirmación explícita antes de cualquier eliminación;
 - estados homogéneos para carga, vacío, error y guardado.
+- En pantallas estrechas, cada fila debe transformarse en una tarjeta para evitar desplazamiento horizontal; esta presentación debe ser parte del componente compartido.
+
+### Seguimiento de consistencia visual
+
+- [x] Corregir el contenedor visual de `ListView` para que sea autocontenido y no dependa de estilos scoped del padre; esto resuelve el panel sin tarjeta visible en “Solicitudes asignadas” del experto, que ya utilizaba el componente compartido.
+- [ ] Auditar los listados de los módulos (incluidos experto, administración, usuarios y configuración) para confirmar uso real de `ListView`, estilos coherentes y presentación responsive sin scroll horizontal.
+- [ ] Revisar de forma transversal botones, formularios, paneles contextuales, estados de carga/vacío/error y controles de paginación; registrar y resolver discrepancias por módulo.
+
+**Estado del arreglo puntual (2026-10-24):** cambio local en `src/shared/components/ListView.vue`; `npm run build` y `git diff --check` pasan. Aún no desplegado ni publicado.
 
 La configuración se divide en secciones cortas mediante pestañas o módulos independientes:
 

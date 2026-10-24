@@ -7,6 +7,7 @@ La plataforma operativa vive en el mismo repositorio y despliegue que la landing
 - `src/landing/`: sitio público y administración editorial existente.
 - `src/operations/`: panel interno para clientes, operaciones, documentos, tareas y reportes.
 - `src/shared/`: componentes, autenticación, cliente API y utilidades compartidas.
+- `src/shared/components/ListView.vue`: componente común de listados con encabezado, barra de herramientas, tabla, paginación y estados de carga/vacío. Su contenedor visual debe ser autocontenido (no depender de estilos scoped del padre); en móvil presenta filas como tarjetas para evitar scroll horizontal.
 
 ## Backend
 
