@@ -19,6 +19,7 @@ export async function handlePublicRequests(request, env) {
     return response({ code: String(rows[0].code), name: String(rows[0].name), amountCents: Number(rows[0].amount_cents), currency: String(rows[0].currency) })
   }
   if (url.pathname === '/api/public/payments/preference' && request.method === 'POST') return createPaymentPreference(request, env)
+  if (url.pathname === '/api/public/payments/verify' && request.method === 'POST') return verifyReturnedPayment(request, env)
   if (url.pathname === '/api/public/payments/webhook' && request.method === 'POST') return handlePaymentWebhook(request, env)
   if (url.pathname !== '/api/public/requests' || request.method !== 'POST') return null
 
@@ -283,10 +284,56 @@ async function handlePaymentWebhook(request, env) {
     return response({ error: 'El recurso firmado no coincide con el evento.' }, 401)
   }
   const payment = await mercadoPago(`/v1/payments/${encodeURIComponent(paymentId)}`, env.MP_ACCESS_TOKEN)
+  const result = await recordVerifiedPayment(payment, paymentId, env)
+  if (!result.matched) logPaymentSecurityEvent('payment_webhook_payment_mismatch')
+  if (result.approved) logPaymentSecurityEvent('payment_webhook_payment_approved')
+  return response({ ok: true })
+}
+
+async function verifyReturnedPayment(request, env) {
+  if (!env.NEON_DATABASE_URL || !env.MP_ACCESS_TOKEN) return response({ error: 'La verificación de pagos no está configurada.' }, 503)
+  const body = await request.json().catch(() => ({}))
+  const paymentId = text(body.paymentId)
+  const reference = text(body.reference)
+  if (!/^\d{1,32}$/.test(paymentId) || !/^CRA-[A-Z0-9-]{8,40}$/i.test(reference)) {
+    return response({ error: 'La referencia de pago no es válida.' }, 400)
+  }
+  let payment
+  try {
+    payment = await mercadoPago(`/v1/payments/${encodeURIComponent(paymentId)}`, env.MP_ACCESS_TOKEN)
+  } catch (error) {
+    console.error('No se pudo verificar el pago al regresar de Mercado Pago:', error.message)
+    return response({ error: 'No fue posible confirmar el pago. Actualiza el estado en unos minutos.' }, 502)
+  }
+  if (String(payment.external_reference || '') !== reference) return response({ error: 'El pago no corresponde a esta solicitud.' }, 409)
+  const result = await recordVerifiedPayment(payment, paymentId, env)
+  if (!result.matched) return response({ error: 'El pago no coincide con el valor registrado para esta solicitud.' }, 409)
+  return response({ ok: true, reference, status: result.status })
+}
+
+export async function refreshRequestPayment(sql, requestId, env) {
+  if (!env.MP_ACCESS_TOKEN) throw new Error('La consulta de pagos de Mercado Pago no está configurada.')
+  const rows = await sql`SELECT reference FROM operations.requests WHERE id = ${requestId} LIMIT 1`
+  if (!rows[0]) return null
+  const reference = String(rows[0].reference)
+  const search = await mercadoPago(`/v1/payments/search?external_reference=${encodeURIComponent(reference)}&sort=date_created&criteria=desc&limit=50&offset=0`, env.MP_ACCESS_TOKEN)
+  const payments = Array.isArray(search.results) ? search.results : []
+  for (const payment of payments) {
+    const result = await recordVerifiedPayment(payment, String(payment.id || ''), env, sql)
+    if (result.matched && result.status === 'approved') return { reference, status: 'approved' }
+  }
+  const latest = await sql`
+    SELECT status FROM operations.request_payments
+    WHERE request_id = ${requestId}
+    ORDER BY (status = 'approved') DESC, created_at DESC LIMIT 1
+  `
+  return { reference, status: String(latest[0]?.status || 'pending') }
+}
+
+async function recordVerifiedPayment(payment, paymentId, env, database = null) {
   const reference = text(payment.external_reference)
-  if (!reference) return response({ ok: true })
-  const { neon } = await import('@neondatabase/serverless')
-  const sql = neon(env.NEON_DATABASE_URL)
+  if (!reference) return { matched: false, approved: false, status: 'pending' }
+  const sql = database || (await import('@neondatabase/serverless')).neon(env.NEON_DATABASE_URL)
   await ensurePaymentSchema(sql)
   const records = await sql`
     SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, status
@@ -296,8 +343,7 @@ async function handlePaymentWebhook(request, env) {
   `
   const record = records[0]
   if (!record || !matchesExpectedPayment(payment, reference, record)) {
-    logPaymentSecurityEvent('payment_webhook_payment_mismatch')
-    return response({ ok: true })
+    return { matched: false, approved: false, status: 'pending' }
   }
   const status = payment.status === 'approved' ? 'approved' : payment.status === 'cancelled' ? 'cancelled' : 'pending'
   const updated = await sql`
@@ -313,8 +359,7 @@ async function handlePaymentWebhook(request, env) {
       console.error('No se pudo notificar el pago aprobado:', error.message)
     }
   }
-  if (updated[0]?.request_id && status === 'approved') logPaymentSecurityEvent('payment_webhook_payment_approved')
-  return response({ ok: true })
+  return { matched: true, approved: Boolean(updated[0]?.request_id && status === 'approved'), status: String(updated[0]?.status || record.status || status) }
 }
 
 function logPaymentSecurityEvent(event) {
@@ -412,7 +457,7 @@ async function fetchOfficialTrm() {
   return { value: resolvedValue, date: date.slice(0, 10) }
 }
 
-function validate(payload) {
+export function validate(payload) {
   const fullName = text(payload.fullName)
   const legalEntityType = text(payload.legalEntityType)
   const email = text(payload.email).toLowerCase()
@@ -427,8 +472,8 @@ function validate(payload) {
   if (!fullName) throw new RequestError('El nombre completo es obligatorio.')
   if (fullName.length < 2 || fullName.length > 120 || !/^[\p{L}\p{M}][\p{L}\p{M}\s.'’-]*$/u.test(fullName)) throw new RequestError('El nombre debe tener entre 2 y 120 caracteres y solo puede contener letras, espacios, puntos o guiones.')
   if (!['natural', 'juridica'].includes(legalEntityType)) throw new RequestError('Selecciona la constitución legal.')
-  if (!email && !phone && !whatsapp) throw new RequestError('Ingresa al menos un medio de contacto.')
-  if (email && (email.length > 254 || /[\u0000-\u001F\u007F<>]/.test(email) || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email))) throw new RequestError('Ingresa un correo electrónico válido.')
+  if (!email) throw new RequestError('El correo electrónico es obligatorio.')
+  if (email.length > 254 || /[\u0000-\u001F\u007F<>]/.test(email) || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) throw new RequestError('Ingresa un correo electrónico válido.')
   if (!['exportacion', 'importacion', 'agente_carga'].includes(serviceType)) throw new RequestError('Selecciona el tipo de servicio.')
   if (!consultationType) throw new RequestError('Selecciona el tipo de consulta.')
   if (!['vehiculos', 'mercancias'].includes(productType)) throw new RequestError('Selecciona el tipo de producto.')

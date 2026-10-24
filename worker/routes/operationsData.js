@@ -1,5 +1,6 @@
 import { requireOperationsAuth } from './operationsAuth.js'
 import { sendRequestNotification } from './operationsEmail.js'
+import { refreshRequestPayment } from './publicRequests.js'
 
 export async function handleOperationsData(request, env) {
   const url = new URL(request.url)
@@ -102,7 +103,7 @@ export async function handleOperationsData(request, env) {
       LEFT JOIN LATERAL (
         SELECT * FROM operations.request_payments p
         WHERE p.request_id = r.id
-        ORDER BY p.created_at DESC
+        ORDER BY (p.status = 'approved') DESC, p.created_at DESC
         LIMIT 1
       ) payment ON TRUE
       WHERE (c.full_name ILIKE ${searchPattern}
@@ -136,7 +137,30 @@ export async function handleOperationsData(request, env) {
       ORDER BY u.full_name
     `,
   ])
+  if (isAdmin && env.MP_ACCESS_TOKEN) await refreshPendingRequestPayments(sql, requests, env)
   return response({ items: requests.map(serializeRequest), pagination: pagination(page, pageSize, countRows[0]?.total), filters: { agents: agents.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email) })) } })
+}
+
+async function refreshPendingRequestPayments(sql, requests, env) {
+  const stalePayments = requests.filter((row) => row.payment_status === 'pending' && row.mercado_pago_preference_id)
+  for (let offset = 0; offset < stalePayments.length; offset += 5) {
+    await Promise.all(stalePayments.slice(offset, offset + 5).map(async (row) => {
+      try {
+        await refreshRequestPayment(sql, row.id, env)
+        const latest = await sql`
+          SELECT status AS payment_status, mercado_pago_payment_id, mercado_pago_preference_id,
+            usd_amount_cents, cop_amount_cents, trm_cop_per_usd, trm_effective_date,
+            updated_at AS payment_updated_at
+          FROM operations.request_payments
+          WHERE request_id = ${row.id}
+          ORDER BY (status = 'approved') DESC, created_at DESC LIMIT 1
+        `
+        if (latest[0]) Object.assign(row, latest[0])
+      } catch (error) {
+        console.error('No se pudo reconciliar un pago pendiente al cargar solicitudes:', error.message)
+      }
+    }))
+  }
 }
 
 async function createAgentRequest(sql, request, claims, env) {
@@ -207,7 +231,7 @@ async function getRequestDetail(sql, requestId, claims) {
       LEFT JOIN LATERAL (
         SELECT * FROM operations.request_payments p
         WHERE p.request_id = r.id
-        ORDER BY p.created_at DESC
+        ORDER BY (p.status = 'approved') DESC, p.created_at DESC
         LIMIT 1
       ) payment ON TRUE
       WHERE r.id = ${requestId} AND ${accessFilter}
@@ -420,6 +444,7 @@ function serializeRequest(row) {
     freightAgent: row.freight_agent ? String(row.freight_agent) : '',
     productType: String(row.product_type),
     status: String(row.status),
+    paymentRequired: row.payment_required === undefined ? true : Boolean(row.payment_required),
     notificationStatus: String(row.notification_status || 'not_sent'),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),

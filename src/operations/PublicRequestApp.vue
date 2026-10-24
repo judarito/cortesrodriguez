@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import logoUrl from '../assets/logo-cortes-rodriguez.png'
 
 const agentToken = ref('')
 const agentContext = ref(null)
@@ -42,8 +43,30 @@ const servicePrice = computed(() => selectedConsultation.value ? new Intl.Number
 function formatPrice(item) { return new Intl.NumberFormat('es-CO', { style: 'currency', currency: item.currency, maximumFractionDigits: 0 }).format(item.amountCents / 100) }
 
 onMounted(async () => {
-  const paymentStatus = new URLSearchParams(window.location.search).get('payment')
-  if (paymentStatus === 'success') paymentNotice.value = 'Pago aprobado. Estamos confirmando la solicitud.'
+  const query = new URLSearchParams(window.location.search)
+  const paymentStatus = query.get('payment')
+  if (paymentStatus === 'success') {
+    paymentNotice.value = 'Verificando el pago con Mercado Pago…'
+    const paymentId = query.get('payment_id') || query.get('collection_id')
+    const paymentReference = query.get('external_reference') || query.get('reference')
+    if (paymentId && paymentReference) {
+      try {
+        const verification = await fetch('/api/public/payments/verify', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ paymentId, reference: paymentReference }),
+        })
+        const result = await verification.json().catch(() => ({}))
+        if (verification.ok && result.status === 'approved') paymentNotice.value = `Pago aprobado para la solicitud ${result.reference}.`
+        else if (verification.ok) paymentNotice.value = 'Pago recibido y pendiente de confirmación. Actualizaremos el estado cuando Mercado Pago lo confirme.'
+        else paymentNotice.value = result.error || 'No pudimos confirmar el pago ahora. El estado se actualizará cuando llegue la notificación de Mercado Pago.'
+      } catch {
+        paymentNotice.value = 'No pudimos confirmar el pago ahora. El estado se actualizará cuando llegue la notificación de Mercado Pago.'
+      }
+    } else {
+      paymentNotice.value = 'Pago recibido. Estamos esperando la confirmación de Mercado Pago.'
+    }
+  }
   if (paymentStatus === 'pending') paymentNotice.value = 'Pago pendiente de confirmación. Te avisaremos cuando Mercado Pago lo confirme.'
   if (paymentStatus === 'failure') paymentNotice.value = 'El pago no fue aprobado. Puedes intentarlo nuevamente.'
   const turnstileSetup = initializeTurnstile()
@@ -174,8 +197,8 @@ function validateForm() {
   const whatsapp = normalizePhone(form.value.whatsapp)
   const question = form.value.question.trim()
   if (fullName.length < 2 || fullName.length > 120 || !/^[\p{L}\p{M}][\p{L}\p{M}\s.'’-]*$/u.test(fullName)) return 'El nombre debe tener entre 2 y 120 caracteres y solo puede contener letras, espacios, puntos o guiones.'
-  if (!email && !phone && !whatsapp) return 'Ingresa al menos un medio de contacto.'
-  if (email && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email))) return 'Ingresa un correo electrónico válido.'
+  if (!email) return 'El correo electrónico es obligatorio.'
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return 'Ingresa un correo electrónico válido.'
   if (phone && !/^\+?\d{7,15}$/.test(phone)) return 'El teléfono debe tener entre 7 y 15 dígitos.'
   if (whatsapp && !/^\+?\d{7,15}$/.test(whatsapp)) return 'El WhatsApp debe tener entre 7 y 15 dígitos.'
   if (question.length < 20 || question.length > 3000) return 'La consulta debe tener entre 20 y 3000 caracteres.'
@@ -262,7 +285,7 @@ function goToLanding() {
 
 <template>
   <main class="request-page">
-    <header class="request-header"><button class="request-brand" type="button" @click="goToLanding"><span>CRA</span><strong>Cortés Rodríguez<br /><small>Asesores</small></strong></button><div class="header-note"><span class="header-dot"></span> Solicitud de asesoría</div></header>
+    <header class="request-header"><button class="request-brand" type="button" aria-label="Volver al inicio de Cortés Rodríguez Asesores" @click="goToLanding"><img :src="logoUrl" alt="Logo Cortés Rodríguez Asesores" /><strong>Cortés Rodríguez<br /><small>Asesores</small></strong></button><div class="header-note"><span class="header-dot"></span> Solicitud de asesoría</div></header>
     <section class="request-layout">
       <aside class="request-intro"><p class="request-kicker">Comercio exterior</p><h1>Cuéntanos sobre tu operación.</h1><p>Completa el formulario y nuestro equipo analizará tu requerimiento para acompañarte en el proceso.</p><div class="intro-points"><div><span>01</span><p><strong>Déjanos tus datos</strong><br />Solo te pedimos la información necesaria.</p></div><div><span>02</span><p><strong>Revisamos tu caso</strong><br />Un asesor estudiará los detalles de tu operación.</p></div><div><span>03</span><p><strong>Te contactamos</strong><br />Pronto recibirás noticias de nuestro equipo.</p></div></div><div class="intro-footer">¿Ya tienes una solicitud? <a href="/app/login">Ingresa al panel operativo →</a></div></aside>
       <section class="request-card"><div class="form-heading"><div><p class="form-step">Solicitud nueva <span>•</span> Paso 1 de 1</p><h2>Información de tu operación</h2><p>Los campos marcados con <b>*</b> son obligatorios.</p><p v-if="agentContext" class="agent-context">{{ agentContext.displayLabel }}</p></div><span class="form-badge">⟡</span></div>
@@ -277,7 +300,7 @@ function goToLanding() {
         </section>
         <form v-else-if="!submitted" @submit.prevent="submitRequest">
           <fieldset><legend>Datos del cliente</legend><div class="field full-field"><label for="fullName">Nombre completo <b>*</b></label><input id="fullName" v-model="form.fullName" type="text" minlength="2" maxlength="120" autocomplete="name" placeholder="Ej. Juan Pablo Gómez" required /></div><div class="field"><label for="legalEntityType">Constitución legal <b>*</b></label><select id="legalEntityType" v-model="form.legalEntityType" required><option value="" disabled>Selecciona una opción</option><option value="natural">Persona natural</option><option value="juridica">Persona jurídica</option></select></div></fieldset>
-          <fieldset><legend>Medios de contacto <span>Ingresa al menos uno</span></legend><div class="field"><label for="email">Correo electrónico</label><input id="email" v-model="form.email" type="email" maxlength="254" autocomplete="email" placeholder="nombre@empresa.com" /></div><div class="field"><label for="phone">Teléfono</label><input id="phone" v-model="form.phone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" pattern="[+0-9 ()-]{7,20}" placeholder="+57 300 000 0000" /></div><div class="field"><label for="whatsapp">WhatsApp</label><input id="whatsapp" v-model="form.whatsapp" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" pattern="[+0-9 ()-]{7,20}" placeholder="+57 300 000 0000" /></div></fieldset>
+          <fieldset><legend>Medios de contacto <span>Correo obligatorio; teléfono y WhatsApp opcionales</span></legend><div class="field"><label for="email">Correo electrónico <b>*</b></label><input id="email" v-model="form.email" type="email" maxlength="254" autocomplete="email" placeholder="nombre@empresa.com" required /></div><div class="field"><label for="phone">Teléfono</label><input id="phone" v-model="form.phone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" pattern="[+0-9 ()-]{7,20}" placeholder="+57 300 000 0000" /></div><div class="field"><label for="whatsapp">WhatsApp</label><input id="whatsapp" v-model="form.whatsapp" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" pattern="[+0-9 ()-]{7,20}" placeholder="+57 300 000 0000" /></div></fieldset>
           <fieldset><legend>Detalles de la operación</legend><div class="field"><label for="serviceType">Servicio general <b>*</b></label><select id="serviceType" v-model="form.serviceType" required @change="changeService"><option value="" disabled>Selecciona un servicio</option><option v-for="item in serviceOptions" :key="item.serviceCode" :value="item.serviceCode">{{ item.serviceName }}</option></select></div><div class="field"><label for="consultationType">Tipo de consulta <b>*</b></label><select id="consultationType" v-model="form.consultationType" required :disabled="!form.serviceType"><option value="" disabled>Selecciona una consulta</option><option v-for="item in consultationOptions" :key="item.consultationCode" :value="item.consultationCode">{{ item.consultationName }} · {{ formatPrice(item) }}</option></select><small v-if="selectedConsultation" class="field-help">{{ selectedConsultation.consultationDescription }}</small></div><div class="field full-field"><label>Valor de la asesoría</label><div class="static-field"><span>{{ selectedConsultation?.consultationName || 'Selecciona un tipo de consulta' }}</span><strong>{{ servicePrice }}</strong></div></div><div class="field"><label for="productType">Tipo de producto <b>*</b></label><select id="productType" v-model="form.productType" required><option value="" disabled>Selecciona una opción</option><option value="vehiculos">Vehículos</option><option value="mercancias">Mercancías</option></select></div><div class="field full-field"><label for="question">¿Qué necesitas consultar? <b>*</b></label><textarea id="question" v-model="form.question" rows="5" minlength="20" maxlength="3000" placeholder="Describe tu operación o la pregunta que deseas resolver." required></textarea><small class="field-help">Mínimo 20 caracteres.</small></div><div class="field full-field"><label for="attachments">Imágenes de apoyo</label><input id="attachments" type="file" accept="image/png,image/jpeg,image/webp" multiple @change="selectAttachments" /><small class="field-help">Puedes adjuntar hasta 5 imágenes, máximo 10 MB cada una.</small><small v-if="attachments.length" class="field-help">{{ attachments.length }} imagen(es) seleccionada(s).</small></div><div v-if="turnstileEnabled" class="field full-field"><label>Verificación de seguridad <b>*</b></label><div ref="turnstileContainer" class="turnstile-container"></div><small v-if="turnstileError" class="field-help request-error" role="alert">{{ turnstileError }}</small></div></fieldset>
           <button v-if="turnstileEnabled && turnstileError" type="button" class="retry-turnstile" :disabled="turnstileConfigLoading" @click="retryTurnstile">{{ turnstileConfigLoading ? 'Reintentando…' : 'Reintentar verificación' }}</button><p v-if="error" class="request-error" role="alert">{{ error }}</p><div class="form-actions"><button type="button" class="back-button" @click="goToLanding">Volver a la página principal</button><button type="submit" class="submit-request" :disabled="loading || turnstileConfigLoading || (turnstileEnabled && !turnstileToken)">{{ loading ? 'Registrando solicitud…' : 'Enviar solicitud' }} <span>→</span></button></div>
         </form>
@@ -295,4 +318,6 @@ function goToLanding() {
 .retry-turnstile{justify-self:start;padding:8px 12px;border:1px solid #dfe6ef;border-radius:7px;color:#0c3c78;background:#fff;font-size:11px;font-weight:700;cursor:pointer}.retry-turnstile:disabled{opacity:.6;cursor:wait}
 .payment-notice{margin:0 0 18px;padding:11px 13px;border:1px solid #cfe6db;border-radius:7px;color:#28694f;background:#edf9f3;font-size:11px;font-weight:700}
 .payment-review{display:grid;gap:12px;padding:20px;border:1px solid #dfe6ef;border-radius:10px;background:#fff}.payment-review h2{margin:0;color:#062653;font-size:20px}.payment-summary{display:grid;gap:0;margin:0;border:1px solid #dfe6ef;border-radius:8px;overflow:hidden}.payment-summary>div{display:flex;justify-content:space-between;gap:18px;padding:12px 14px;border-bottom:1px solid #e9eef4;font-size:12px}.payment-summary>div:last-child{border-bottom:0}.payment-summary dt{color:#586780}.payment-summary dd{margin:0;color:#173b58;font-weight:700;text-align:right}.payment-summary .payment-total{background:#f5f8fc;font-size:14px;font-weight:800}.payment-summary .payment-total dd{color:#0c6c4c}.payment-review .form-actions{justify-content:flex-end}
+.request-intro{justify-content:flex-start}
+.request-brand>img{display:block;width:48px;height:48px;padding:2px;border:1px solid #dfe6ef;border-radius:9px;background:#fff;object-fit:contain}
 </style>
