@@ -38,13 +38,13 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   `
   const request = requests[0]
   if (!request) throw new Error('Solicitud no encontrada.')
+  let paid = false
   if (request.payment_required) {
     const payments = await sql`SELECT status FROM operations.request_payments WHERE request_id = ${request.id} ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1`
-    const paid = payments[0]?.status === 'approved'
-    if (!paid) {
-      return { sent: false, reason: 'payment_required' }
-    }
+    paid = payments[0]?.status === 'approved'
   }
+  const paymentPolicy = notificationPolicyForPayment(eventCode, Boolean(request.payment_required), paid)
+  if (!paymentPolicy.send) return { sent: false, reason: paymentPolicy.reason }
   const sourceChannel = request.source_channel || (request.source === 'agent' ? 'agent_link' : 'direct_web')
 
   const rules = await sql`
@@ -63,6 +63,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const defaultAudiences = {
     request_created: ['admin', 'expert', 'agent', 'client'],
     payment_approved: ['admin', 'expert', 'agent', 'client'],
+    payment_rejected: ['admin'],
     expert_assigned: ['admin', 'expert', 'agent'],
     assignment_failed: ['admin'],
     similar_question_review: ['admin'],
@@ -76,12 +77,14 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     WHERE rnr.rule_id = ${rules[0].id} AND nr.active = TRUE
     ORDER BY nr.name
   ` : []
-  const audiences = [...new Set([...(rules[0]?.audiences || defaultAudiences[eventCode] || ['configured']), ...(['assignment_failed', 'similar_question_review'].includes(eventCode) ? ['admin'] : [])])]
+  const audiences = paymentPolicy.adminOnly
+    ? ['admin']
+    : [...new Set([...(rules[0]?.audiences || defaultAudiences[eventCode] || ['configured']), ...(['assignment_failed', 'similar_question_review'].includes(eventCode) ? ['admin'] : [])])]
   const dynamic = []
-  if (shouldNotifyClient(eventCode, audiences)) dynamic.push(request.email)
-  if ((audiences.includes('agent') || audiences.includes('all_involved')) && sourceChannel === 'agent_link') dynamic.push(request.agent_email)
-  if (audiences.includes('expert') || audiences.includes('all_involved')) dynamic.push(request.expert_email)
-  if (audiences.includes('admin') || audiences.includes('all_involved')) {
+  if (!paymentPolicy.adminOnly && shouldNotifyClient(eventCode, audiences)) dynamic.push(request.email)
+  if (!paymentPolicy.adminOnly && (audiences.includes('agent') || audiences.includes('all_involved')) && sourceChannel === 'agent_link') dynamic.push(request.agent_email)
+  if (!paymentPolicy.adminOnly && (audiences.includes('expert') || audiences.includes('all_involved'))) dynamic.push(request.expert_email)
+  if (paymentPolicy.adminOnly || audiences.includes('admin') || audiences.includes('all_involved')) {
     const admins = await sql`
       SELECT DISTINCT u.email
       FROM operations.users u
@@ -91,7 +94,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     `
     dynamic.push(...admins.map((row) => row.email))
   }
-  const configured = audiences.includes('configured') || audiences.includes('admin') || audiences.includes('all_involved') ? recipients : []
+  const configured = !paymentPolicy.adminOnly && (audiences.includes('configured') || audiences.includes('admin') || audiences.includes('all_involved')) ? recipients : []
   const unique = (values) => [...new Set(values.filter((value) => value && /^\S+@\S+\.\S+$/.test(String(value))).map(String))]
   const to = unique([...configured.filter((item) => item.recipient_type === 'to').map((item) => item.email), ...dynamic])
   const cc = unique(configured.filter((item) => item.recipient_type === 'cc').map((item) => item.email)).filter((email) => !to.includes(email))
@@ -135,6 +138,14 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
 
 export function shouldNotifyClient(eventCode, audiences = []) {
   return eventCode === 'payment_approved' || audiences.includes('client') || audiences.includes('all_involved')
+}
+
+export function notificationPolicyForPayment(eventCode, paymentRequired, paid) {
+  if (eventCode === 'payment_approved' && (!paymentRequired || !paid)) {
+    return { send: false, adminOnly: false, reason: 'payment_required' }
+  }
+  if (paymentRequired && !paid) return { send: true, adminOnly: true, reason: null }
+  return { send: true, adminOnly: false, reason: null }
 }
 
 export function notificationDescription(eventCode) {
