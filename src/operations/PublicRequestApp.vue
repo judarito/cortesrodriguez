@@ -28,6 +28,12 @@ const error = ref('')
 const submitted = ref(false)
 const reference = ref('')
 const paymentNotice = ref('')
+const paymentRequired = ref(false)
+const paymentAttemptKey = ref('')
+const pendingPayment = ref(null)
+const paymentRedirecting = ref(false)
+const requestIdempotencyKey = ref('')
+const requestPayloadSignature = ref('')
 const serviceOptions = computed(() => [...new Map(catalog.value.map((item) => [item.serviceCode, item])).values()])
 const consultationOptions = computed(() => catalog.value.filter((item) => item.serviceCode === form.value.serviceType))
 const selectedConsultation = computed(() => consultationOptions.value.find((item) => item.consultationCode === form.value.consultationType) || null)
@@ -173,6 +179,12 @@ async function submitRequest() {
     if (agentToken.value) payload.append('agentToken', agentToken.value)
     if (turnstileToken.value) payload.append('turnstileToken', turnstileToken.value)
     attachments.value.forEach((file) => payload.append('attachments', file))
+    const payloadSignature = JSON.stringify({ ...form.value, agentToken: agentToken.value, attachments: attachments.value.map((file) => [file.name, file.size, file.type, file.lastModified]) })
+    if (!requestIdempotencyKey.value || requestPayloadSignature.value !== payloadSignature) {
+      requestIdempotencyKey.value = crypto.randomUUID()
+      requestPayloadSignature.value = payloadSignature
+    }
+    payload.append('idempotencyKey', requestIdempotencyKey.value)
     const response = await fetch('/api/public/requests', {
       method: 'POST',
       body: payload,
@@ -183,18 +195,48 @@ async function submitRequest() {
       throw new Error(data.error || 'No fue posible registrar la solicitud.')
     }
     reference.value = data.reference
-    const paymentResponse = await fetch('/api/public/payments/preference', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ reference: data.reference }),
-    })
-    const paymentData = await paymentResponse.json().catch(() => ({}))
-    if (!paymentResponse.ok || !paymentData.initPoint) throw new Error(paymentData.error || 'La solicitud fue registrada, pero no fue posible iniciar el pago.')
-    window.location.href = paymentData.initPoint
+    paymentRequired.value = Boolean(data.paymentRequired)
+    if (paymentRequired.value) await requestPaymentPreference()
+    else submitted.value = true
   } catch (submitError) {
     error.value = submitError.message
   } finally {
     loading.value = false
+  }
+}
+
+async function requestPaymentPreference() {
+  if (!paymentAttemptKey.value) paymentAttemptKey.value = crypto.randomUUID()
+  loading.value = true
+  error.value = ''
+  try {
+    const response = await fetch('/api/public/payments/preference', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reference: reference.value, idempotencyKey: paymentAttemptKey.value }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || !data.initPoint) throw new Error(data.error || 'La solicitud quedó registrada, pero no fue posible cotizar el pago.')
+    pendingPayment.value = data
+  } catch (paymentError) {
+    error.value = paymentError.message
+  } finally {
+    loading.value = false
+  }
+}
+
+function continueToPayment() {
+  if (paymentRedirecting.value || !pendingPayment.value?.initPoint) return
+  paymentRedirecting.value = true
+  try {
+    const checkoutUrl = new URL(pendingPayment.value.initPoint)
+    if (checkoutUrl.protocol !== 'https:' || !/(^|\.)mercadopago\.com(\.co)?$/i.test(checkoutUrl.hostname)) {
+      throw new Error('El enlace de pago no pertenece a Mercado Pago.')
+    }
+    window.location.assign(checkoutUrl.toString())
+  } catch (navigationError) {
+    paymentRedirecting.value = false
+    error.value = navigationError.message || 'No fue posible abrir el pago.'
   }
 }
 
@@ -209,7 +251,16 @@ function goToLanding() {
     <section class="request-layout">
       <aside class="request-intro"><p class="request-kicker">Comercio exterior</p><h1>Cuéntanos sobre tu operación.</h1><p>Completa el formulario y nuestro equipo analizará tu requerimiento para acompañarte en el proceso.</p><div class="intro-points"><div><span>01</span><p><strong>Déjanos tus datos</strong><br />Solo te pedimos la información necesaria.</p></div><div><span>02</span><p><strong>Revisamos tu caso</strong><br />Un asesor estudiará los detalles de tu operación.</p></div><div><span>03</span><p><strong>Te contactamos</strong><br />Pronto recibirás noticias de nuestro equipo.</p></div></div><div class="intro-footer">¿Ya tienes una solicitud? <a href="/app/login">Ingresa al panel operativo →</a></div></aside>
       <section class="request-card"><div class="form-heading"><div><p class="form-step">Solicitud nueva <span>•</span> Paso 1 de 1</p><h2>Información de tu operación</h2><p>Los campos marcados con <b>*</b> son obligatorios.</p><p v-if="agentContext" class="agent-context">{{ agentContext.displayLabel }}</p></div><span class="form-badge">⟡</span></div>
-        <p v-if="paymentNotice" class="payment-notice" role="status">{{ paymentNotice }}</p><form @submit.prevent="submitRequest">
+        <p v-if="paymentNotice" class="payment-notice" role="status">{{ paymentNotice }}</p>
+        <section v-if="reference && paymentRequired" class="payment-review" aria-live="polite">
+          <p class="form-step">Solicitud registrada</p><h2>Revisa el valor antes de pagar</h2>
+          <dl v-if="pendingPayment" class="payment-summary"><div><dt>Solicitud</dt><dd>{{ reference }}</dd></div><div><dt>Valor del servicio</dt><dd>{{ (pendingPayment.usdAmountCents / 100).toFixed(2) }} USD</dd></div><div><dt>Tasa de conversión (TRM)</dt><dd>{{ Number(pendingPayment.trm).toLocaleString('es-CO', { maximumFractionDigits: 4 }) }} COP/USD · {{ pendingPayment.trmDate }}</dd></div><div class="payment-total"><dt>Total en Mercado Pago</dt><dd>{{ (pendingPayment.copAmountCents / 100).toLocaleString('es-CO') }} COP</dd></div></dl>
+          <p v-else-if="loading" class="field-help">Calculando el valor en pesos colombianos…</p>
+          <p v-else class="field-help">La solicitud ya está registrada. Puedes volver a intentar calcular el pago.</p>
+          <p v-if="error" class="request-error" role="alert">{{ error }}</p>
+          <div class="form-actions"><button v-if="!pendingPayment" type="button" class="back-button" :disabled="loading" @click="requestPaymentPreference">{{ loading ? 'Consultando…' : 'Reintentar cálculo' }}</button><button v-else type="button" class="submit-request" :disabled="loading || paymentRedirecting" @click="continueToPayment">{{ paymentRedirecting ? 'Abriendo pago…' : 'Pagar' }} <span>→</span></button></div>
+        </section>
+        <form v-else-if="!submitted" @submit.prevent="submitRequest">
           <fieldset><legend>Datos del cliente</legend><div class="field full-field"><label for="fullName">Nombre completo <b>*</b></label><input id="fullName" v-model="form.fullName" type="text" minlength="2" maxlength="120" autocomplete="name" placeholder="Ej. Juan Pablo Gómez" required /></div><div class="field"><label for="legalEntityType">Constitución legal <b>*</b></label><select id="legalEntityType" v-model="form.legalEntityType" required><option value="" disabled>Selecciona una opción</option><option value="natural">Persona natural</option><option value="juridica">Persona jurídica</option></select></div></fieldset>
           <fieldset><legend>Medios de contacto <span>Ingresa al menos uno</span></legend><div class="field"><label for="email">Correo electrónico</label><input id="email" v-model="form.email" type="email" maxlength="254" autocomplete="email" placeholder="nombre@empresa.com" /></div><div class="field"><label for="phone">Teléfono</label><input id="phone" v-model="form.phone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" pattern="[+0-9 ()-]{7,20}" placeholder="+57 300 000 0000" /></div><div class="field"><label for="whatsapp">WhatsApp</label><input id="whatsapp" v-model="form.whatsapp" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" pattern="[+0-9 ()-]{7,20}" placeholder="+57 300 000 0000" /></div></fieldset>
           <fieldset><legend>Detalles de la operación</legend><div class="field"><label for="serviceType">Servicio general <b>*</b></label><select id="serviceType" v-model="form.serviceType" required @change="changeService"><option value="" disabled>Selecciona un servicio</option><option v-for="item in serviceOptions" :key="item.serviceCode" :value="item.serviceCode">{{ item.serviceName }}</option></select></div><div class="field"><label for="consultationType">Tipo de consulta <b>*</b></label><select id="consultationType" v-model="form.consultationType" required :disabled="!form.serviceType"><option value="" disabled>Selecciona una consulta</option><option v-for="item in consultationOptions" :key="item.consultationCode" :value="item.consultationCode">{{ item.consultationName }} · {{ formatPrice(item) }}</option></select><small v-if="selectedConsultation" class="field-help">{{ selectedConsultation.consultationDescription }}</small></div><div class="field full-field"><label>Valor de la asesoría</label><div class="static-field"><span>{{ selectedConsultation?.consultationName || 'Selecciona un tipo de consulta' }}</span><strong>{{ servicePrice }}</strong></div></div><div class="field"><label for="productType">Tipo de producto <b>*</b></label><select id="productType" v-model="form.productType" required><option value="" disabled>Selecciona una opción</option><option value="vehiculos">Vehículos</option><option value="mercancias">Mercancías</option></select></div><div class="field full-field"><label for="question">¿Qué necesitas consultar? <b>*</b></label><textarea id="question" v-model="form.question" rows="5" minlength="20" maxlength="3000" placeholder="Describe tu operación o la pregunta que deseas resolver." required></textarea><small class="field-help">Mínimo 20 caracteres.</small></div><div class="field full-field"><label for="attachments">Imágenes de apoyo</label><input id="attachments" type="file" accept="image/png,image/jpeg,image/webp" multiple @change="selectAttachments" /><small class="field-help">Puedes adjuntar hasta 5 imágenes, máximo 10 MB cada una.</small><small v-if="attachments.length" class="field-help">{{ attachments.length }} imagen(es) seleccionada(s).</small></div><div v-if="turnstileEnabled" class="field full-field"><label>Verificación de seguridad <b>*</b></label><div ref="turnstileContainer" class="turnstile-container"></div><small v-if="turnstileError" class="field-help request-error" role="alert">{{ turnstileError }}</small></div></fieldset>
@@ -227,4 +278,5 @@ function goToLanding() {
 .field textarea{width:100%;padding:11px 12px;border:1px solid #dfe6ef;border-radius:7px;outline:0;resize:vertical;color:#071c3f;background:#fff;font-size:12px;line-height:1.5}.field textarea:focus{border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.1)}.field-help{color:#98a2b3;font-size:10px;line-height:1.4}.agent-context{margin:9px 0 0!important;color:#39836d!important;font-size:10px!important;font-weight:700}
 .turnstile-container{min-height:65px}
 .payment-notice{margin:0 0 18px;padding:11px 13px;border:1px solid #cfe6db;border-radius:7px;color:#28694f;background:#edf9f3;font-size:11px;font-weight:700}
+.payment-review{display:grid;gap:12px;padding:20px;border:1px solid #dfe6ef;border-radius:10px;background:#fff}.payment-review h2{margin:0;color:#062653;font-size:20px}.payment-summary{display:grid;gap:0;margin:0;border:1px solid #dfe6ef;border-radius:8px;overflow:hidden}.payment-summary>div{display:flex;justify-content:space-between;gap:18px;padding:12px 14px;border-bottom:1px solid #e9eef4;font-size:12px}.payment-summary>div:last-child{border-bottom:0}.payment-summary dt{color:#586780}.payment-summary dd{margin:0;color:#173b58;font-weight:700;text-align:right}.payment-summary .payment-total{background:#f5f8fc;font-size:14px;font-weight:800}.payment-summary .payment-total dd{color:#0c6c4c}.payment-review .form-actions{justify-content:flex-end}
 </style>

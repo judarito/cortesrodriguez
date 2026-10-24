@@ -3,6 +3,15 @@
   "name": "cortes-rodriguez-asesores-dev",
   "main": "worker/index.js",
   "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true
+    }
+  },
   "compatibility_date": "2026-05-13",
   "flagship": [
     {

@@ -38,7 +38,12 @@ npx wrangler secret put JWT_SECRET --config wrangler.dev.jsonc
 npx wrangler secret put RESEND_API_KEY --config wrangler.dev.jsonc
 npx wrangler secret put NEON_DATABASE_URL --config wrangler.dev.jsonc
 npx wrangler secret put MP_ACCESS_TOKEN --config wrangler.dev.jsonc
+npx wrangler secret put MP_WEBHOOK_SECRET --config wrangler.dev.jsonc
+npx wrangler secret put TURNSTILE_SITE_KEY --config wrangler.dev.jsonc
+npx wrangler secret put TURNSTILE_SECRET_KEY --config wrangler.dev.jsonc
 ```
+
+Para Turnstile en Dev, crea un widget independiente desde **Cloudflare Dashboard → Turnstile → Add widget manually**. Usa modo **Managed**, nombre `CRA formulario público - Dev` y hostname `cortes-rodriguez-asesores-dev.juan-d-ricardo-t.workers.dev` (sin `https://` ni rutas). Copia el Sitekey y el Secret key y cárgalos con los dos comandos anteriores; no los pegues en el repositorio ni en el chat. La app muestra/verifica el desafío cuando ambas variables están configuradas. Crea otro widget y claves independientes para producción cuando se vaya a habilitar allí.
 
 La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago permanece en sandbox en dev y debe usar una app/token de producción independiente antes de publicar.
 
@@ -51,6 +56,20 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - Webhook: `POST /api/public/payments/webhook`.
 - Retornos: `/solicitud?payment=success`, `/solicitud?payment=pending` y `/solicitud?payment=failure`.
 - No guardar tokens en el repositorio ni documentar su valor; usar `wrangler secret`.
+- `MP_WEBHOOK_SECRET` debe contener la firma secreta configurada para el webhook sandbox; no es el Access Token.
+
+### Refuerzo del flujo de pagos (2026-10-24)
+
+- El backend crea checkout solo si la solicitud tiene `payment_required = true`; las solicitudes sin cobro terminan sin redirección a Mercado Pago.
+- Antes de salir al checkout, el cliente ve USD, TRM con fecha y total COP, y debe confirmar que desea continuar.
+- Cada intento tiene una clave de idempotencia y una fila propia. Los reintentos HTTP reutilizan la misma preferencia y los intentos posteriores no chocan por referencia única.
+- El webhook exige y verifica `x-signature` con HMAC-SHA256. Antes de aprobar, comprueba referencia externa, preferencia, COP y monto exacto contra el intento persistido.
+- La creación de solicitudes usa una clave UUID de idempotencia; la base de datos conserva hashes de la clave y del contenido para no guardar credenciales del navegador ni duplicar solicitudes.
+- Los eventos de webhook relevantes se escriben como logs estructurados sin datos del cliente, referencias, tokens ni contenido de pago.
+- Los adjuntos se validan por estructura/firma y dimensiones máximas, además de MIME declarado y límites de tamaño.
+- La migración `022_payment_retries_and_webhook_validation.sql` elimina la unicidad por solicitud y agrega los datos de reintento.
+- La migración `023_public_request_idempotency.sql` agrega idempotencia del formulario público.
+- Pendiente para cerrar este refuerzo: cargar secretos Turnstile/Mercado Pago en Cloudflare dev, aplicar migraciones 022 y 023 en Neon dev, desplegar y ejecutar pruebas sandbox; crear una automatización/alerta en Cloudflare Issues para errores del Worker y filtrar Workers Logs por eventos `payment_webhook_*` de severidad `warning`.
 
 ## Regla de notificaciones pagadas
 
