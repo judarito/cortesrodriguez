@@ -109,3 +109,10 @@ La acción administrativa **Verificar pago** consulta el recurso de pago en Merc
 - `npm run build` pasó correctamente.
 - Las pruebas de fallo/recuperación simulan Resend localmente; no se generó un pago, no se envió correo real y no se usaron solicitudes reales de clientes. Queda pendiente una prueba E2E con solicitud de prueba aislada y credenciales sandbox.
 - Pendiente operativo: configurar alerta/monitorización para fallos del Worker y DLQ, y completar E2E sandbox de pago y notificación en una solicitud dedicada de prueba.
+
+### Publicación dev (2026-10-24)
+
+- Commit `008470a` (`Move expert response review into request details`) subido a `origin/dev`.
+- Worker `cortes-rodriguez-asesores-dev` desplegado correctamente; versión activa `3d4fa4cb-ad9a-4d20-9059-2f6f5d81563e`.
+- Incluye la revisión de respuesta en el detalle de la solicitud, el menú de Feedback de clientes separado y mejoras léxicas de detección de similitud. Producción no se modificó.
+- Pruebas: 10 suites aprobadas; `npm run build` y `git diff --check` correctos.
