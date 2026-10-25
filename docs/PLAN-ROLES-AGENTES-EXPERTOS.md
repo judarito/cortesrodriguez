@@ -223,6 +223,28 @@ Después de recibir una respuesta aprobada, el cliente puede optar por continuar
 | Feedback con baja calificación | — | Si es su origen, según regla | Solo si admin lo comparte | Alerta |
 | Solicitud cerrada | Sí | Si es su origen | Sí | Sí |
 
+#### Bandeja realtime dentro de la aplicación
+
+La campanita del encabezado debe convertirse en una bandeja persistente de notificaciones para usuarios autenticados. Se reutiliza el outbox idempotente de Neon y Cloudflare Queues ya implementado para correo; el realtime acelera la actualización visual, pero nunca será el almacenamiento de referencia.
+
+- [x] Preparar la migración `030_in_app_notifications.sql` para `operations.app_notifications` y tickets realtime de un solo uso. La notificación guarda solo usuario, evento, referencia interna, texto seguro y estado del correo; tiene clave idempotente única.
+- [x] Definir y aplicar contenido por rol: admin recibe alertas operativas y de revisión, el experto recibe solo asignaciones y cambios relevantes sin identidad/contacto del cliente, y el agente recibe novedades solo de solicitudes atribuidas a sus enlaces. El cliente se incorporará cuando exista vínculo con el portal autenticado.
+- [x] Implementar contenido y destino distintos por rol; las vistas de destino vuelven a validar permisos en servidor y los mensajes no incluyen PII del cliente.
+- [x] Separar el estado del email del aviso en la app (`accepted`, `sent`, `delivered`, `opened`, `failed`, `bounced`, `complained`, `pending_retry`). “Aceptado por Resend” no equivale a “entregado”; fallos y reintentos alertan a administración.
+- [x] Enlazar la materialización de notificaciones al outbox existente; aplicar idempotencia y limitar los destinatarios a usuarios operativos, no a buzones externos sin usuario.
+- [x] Enrutar correo y campanita del experto exclusivamente al usuario indicado por `requests.assigned_expert_id`; la lista de expertos elegibles del tipo de consulta solo participa en la asignación, no en los destinatarios. Si no hay experto asignado, solo se notifica a las otras audiencias aplicables.
+- [x] Añadir API autenticada y paginada para listar, contar no leídas y marcar como leídas, restringida al `user_id` de la sesión.
+- [x] Añadir Cloudflare Durable Object por usuario y tickets de un solo uso ligados a una sesión activa para abrir el WebSocket; el usuario se deriva del ticket guardado en Neon, no de un parámetro controlado por el navegador.
+- [x] Usar WebSocket Hibernation; Neon mantiene la bandeja y la UI recupera eventos por HTTP al reconectar, además de un sondeo de respaldo cada minuto.
+- [x] Implementar campanita, contador, estado/fecha del correo, lectura, carga de avisos anteriores y apertura de solicitud con autorización del rol.
+- [x] Añadir pruebas unitarias para contenido por rol, privacidad del experto, atribución del agente y enrutamiento exclusivo al experto asignado.
+- [ ] Completar pruebas integrales de permisos de API, reconexión/WebSocket caído, lectura, idempotencia en Neon y entrega/reintento de Resend en dev.
+- [x] Registrar las cuotas gratuitas consultadas de Queues y Durable Objects y habilitar fallback sin WebSocket. **Pendiente:** instrumentar métricas/alertas de consumo y confirmar cuotas en la cuenta antes de producción.
+- [x] Aplicar la migración `030_in_app_notifications.sql` en Neon dev y desplegar Worker/Assets con la migración del Durable Object. Verificado el 2026-10-24; producción no se modificó.
+- [ ] Completar la prueba integrada autenticada de la campanita y notificaciones con cuentas de admin, agente y experto antes de producción.
+
+**Flujo propuesto:** evento de negocio → outbox idempotente en Neon → Cloudflare Queue → persistencia del estado de email y notificaciones en Neon → señal ligera al Durable Object del usuario → campanita actualizada. Si no hay conexión, la notificación queda guardada y aparece al volver a cargar o reconectar.
+
 ### 7. Administración y reportes
 
 - [ ] Crear pantallas para servicios generales, tipos de consulta, precios, expertos por tipo de consulta, enlaces y reglas de notificación.

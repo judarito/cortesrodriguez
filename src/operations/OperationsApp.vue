@@ -8,6 +8,7 @@ import SecurityPanel from './SecurityPanel.vue'
 import ExpertRequestsPanel from './ExpertRequestsPanel.vue'
 import FeedbackPanel from './FeedbackPanel.vue'
 import SimilarQuestionPanel from './SimilarQuestionPanel.vue'
+import NotificationBell from './NotificationBell.vue'
 
 const token = ref(localStorage.getItem('operationsToken') || '')
 const user = ref(JSON.parse(localStorage.getItem('operationsUser') || 'null'))
@@ -22,6 +23,7 @@ const moduleError = ref('')
 const clients = ref([])
 const requests = ref([])
 const requestDetail = ref(null)
+const notificationRequestId = ref('')
 const requestDetailLoading = ref(false)
 const requestDetailError = ref('')
 const paymentVerifying = ref(false)
@@ -273,6 +275,18 @@ async function openRequestDetail(item) {
   } finally {
     requestDetailLoading.value = false
   }
+}
+
+async function openNotification(item) {
+  if (!item.requestId) return
+  if (isExpert.value) {
+    notificationRequestId.value = item.requestId
+    activeMenu.value = 'Solicitudes asignadas'
+    return
+  }
+  const targetMenu = visibleMenu.value.find((entry) => entry.label === 'Solicitudes')
+  if (targetMenu) await selectMenu(targetMenu)
+  await openRequestDetail({ id: item.requestId })
 }
 
 async function reviewRequestResponse(expertResponse, action) {
@@ -570,7 +584,7 @@ onMounted(restoreSession)
 
   <main v-else class="operations-shell">
     <aside class="operations-sidebar"><div class="sidebar-head"><div class="sidebar-brand"><img class="brand-logo" :src="logoUrl" alt="Cortés Rodríguez Asesores" /><span><strong>Cortés Rodríguez</strong><small>Operaciones</small></span></div><button class="mobile-menu-toggle" type="button" :aria-expanded="mobileMenuOpen" aria-controls="operations-navigation" @click="mobileMenuOpen = !mobileMenuOpen"><span>☰</span><span>Menú</span></button></div><div class="sidebar-label">Menú principal</div><nav id="operations-navigation" :class="{ open: mobileMenuOpen }" aria-label="Navegación de operaciones"><button v-for="item in visibleMenu.slice(0, 6)" :key="item.permission" type="button" :class="['operations-menu-item', { active: activeMenu === item.label }]" @click="selectMenu(item)"><span class="menu-icon">{{ item.icon }}</span><span>{{ item.label }}</span><span v-if="item.label === 'Solicitudes'" class="menu-count">{{ requestCount }}</span></button></nav><div v-if="visibleMenu.length > 6" class="sidebar-bottom-menu"><div class="sidebar-label">Administración</div><button v-for="item in visibleMenu.slice(6)" :key="item.permission" type="button" :class="['operations-menu-item', { active: activeMenu === item.label }]" @click="selectMenu(item)"><span class="menu-icon">{{ item.icon }}</span><span>{{ item.label }}</span></button></div><div class="sidebar-profile"><div class="avatar avatar-small">{{ user.name?.slice(0, 2).toUpperCase() }}</div><div><strong>{{ user.name }}</strong><span>{{ user.roles?.[0] || 'Usuario' }}</span></div><button type="button" aria-label="Cerrar sesión" @click="logout">↪</button></div></aside>
-    <section class="operations-content"><header class="operations-topbar"><div class="breadcrumb"><span>Operaciones</span><b>/</b><strong>{{ currentMenu?.label }}</strong></div><div class="topbar-actions"><label class="search-box"><span>⌕</span><input placeholder="Buscar en la plataforma..." /></label><button class="icon-button" type="button" aria-label="Notificaciones">♧<i></i></button><div class="avatar">{{ user.name?.slice(0, 2).toUpperCase() }}</div></div></header>
+    <section class="operations-content"><header class="operations-topbar"><div class="breadcrumb"><span>Operaciones</span><b>/</b><strong>{{ currentMenu?.label }}</strong></div><div class="topbar-actions"><label class="search-box"><span>⌕</span><input placeholder="Buscar en la plataforma..." /></label><NotificationBell :token="token" @open="openNotification" /><div class="avatar">{{ user.name?.slice(0, 2).toUpperCase() }}</div></div></header>
       <div v-if="activeMenu === 'Inicio'" class="dashboard-view"><div class="dashboard-heading"><div><p class="eyebrow">Miércoles, 14 de octubre de 2026</p><h1>Buenos días, {{ user.name?.split(' ')[0] }} <span>✦</span></h1><p>{{ isAgent ? 'Este es el resumen de tus solicitudes.' : isExpert ? 'Este es el resumen de tus solicitudes asignadas.' : 'Este es el resumen de lo que está sucediendo hoy.' }}</p></div><button type="button" class="secondary-button">⌕&nbsp; Ver actividad</button></div>
         <section class="metric-grid" aria-label="Indicadores principales"><article v-for="metric in metrics" :key="metric.label" class="metric-card"><div class="metric-top"><span :class="['metric-icon', `tone-${metric.tone}`]">{{ metric.icon }}</span><span :class="['metric-trend', `trend-${metric.tone}`]">{{ metric.trend }}</span></div><strong>{{ metric.value }}</strong><h3>{{ metric.label }}</h3><p>{{ metric.detail }}</p></article></section>
         <section class="dashboard-grid"><article class="panel pipeline-panel"><div class="panel-heading"><div><h2>Estado de solicitudes</h2><p>{{ isExpert ? 'Distribución de tus asignaciones.' : 'Distribución de tus operaciones activas' }}</p></div><button type="button" class="more-button">Últimos 30 días⌄</button></div><div class="pipeline-list"><div v-for="item in pipeline" :key="item.label" class="pipeline-row"><div class="pipeline-label"><span>{{ item.label }}</span><strong>{{ item.value }}</strong></div><div class="progress-track"><span :class="`progress-${item.color}`" :style="{ width: `${(item.value / item.total) * 100}%` }"></span></div></div></div><div class="panel-footer"><span><i class="legend-dot dot-blue"></i> Activas <strong>{{ metrics.find((item) => item.label === 'Solicitudes activas')?.value || '00' }}</strong></span><span><i class="legend-dot dot-gray"></i> Cerradas <strong>{{ metrics.find((item) => item.label === 'Cerradas este mes')?.value || '00' }}</strong></span><a href="#">Ver todas →</a></div></article><article class="panel activity-panel"><div class="panel-heading"><div><h2>Actividad reciente</h2><p>Últimos movimientos {{ isExpert ? 'de tus asignaciones' : 'del equipo' }}</p></div><button type="button" class="more-button">•••</button></div><div class="activity-list"><div v-for="item in activity" :key="item.title + item.time" class="activity-item"><div :class="['avatar avatar-activity', `avatar-${item.color}`]">{{ item.initials }}</div><div class="activity-copy"><strong>{{ item.title }}</strong><span>{{ item.description }}</span></div><time>{{ item.time }}</time></div><p v-if="!activity.length" class="empty-row">No hay actividad reciente.</p></div><div class="panel-footer centered"><a href="#">Ver toda la actividad →</a></div></article></section>
@@ -595,7 +609,7 @@ onMounted(restoreSession)
         </template>
       </section>
       <OperationsCatalogPanel v-else-if="activeMenu === 'Servicios y consultas' || activeMenu === 'Enlaces de agentes'" :token="token" :user="user" :section="activeMenu === 'Servicios y consultas' ? 'catalog' : 'links'" />
-      <ExpertRequestsPanel v-else-if="activeMenu === 'Solicitudes asignadas'" :token="token" />
+      <ExpertRequestsPanel v-else-if="activeMenu === 'Solicitudes asignadas'" :token="token" :open-request-id="notificationRequestId" @request-opened="notificationRequestId = ''" />
       <FeedbackPanel v-else-if="activeMenu === 'Feedback de clientes'" :token="token" />
       <SimilarQuestionPanel v-else-if="activeMenu === 'Preguntas similares'" :token="token" />
       <NotificationConfigPanel v-else-if="activeMenu === 'Configuración'" :token="token" />
@@ -655,7 +669,7 @@ onMounted(restoreSession)
 .detail-empty{padding:14px;border:1px dashed #dce5ed;border-radius:8px;color:#98a2b3;font-size:10px}.request-response-item{display:grid;gap:10px;padding:14px;border:1px solid #e5eaf0;border-radius:8px;background:#fbfcfe}.request-response-item+.request-response-item{margin-top:10px}.request-response-heading{display:flex;align-items:start;justify-content:space-between;gap:10px}.request-response-heading>div{display:grid;gap:4px}.request-response-heading strong{color:#344b60;font-size:11px}.request-response-heading span:not(.status-pill){color:#7d8999;font-size:10px}.request-response-body{margin:0;padding:12px;border-radius:7px;color:#344b60;background:#fff;font-size:11px;line-height:1.6;white-space:pre-wrap}.request-response-pending{margin:0;color:#98a2b3;font-size:10px}.request-response-note{margin:0;padding-top:10px;border-top:1px solid #e5eaf0;color:#526174;font-size:10px;line-height:1.5}.request-response-note strong{color:#344b60}.assignment-controls{display:flex;align-items:end;gap:10px;max-width:520px}.assignment-controls label{display:grid;flex:1;gap:6px;color:#526174;font-size:10px;font-weight:700}.assignment-controls select{min-height:38px;padding:0 10px;border:1px solid #d8e0ea;border-radius:6px;color:#344b60;background:#fff;font-size:11px}.assignment-current{margin:0 0 12px;color:#526174;font-size:11px}.assignment-history{display:grid;gap:8px;margin:14px 0 0;padding:0;list-style:none}.assignment-history li{display:grid;gap:3px;padding:9px 11px;border:1px solid #edf1f5;border-radius:7px}.assignment-history strong{color:#344b60;font-size:10px}.assignment-history span{color:#98a2b3;font-size:9px}@media(max-width:520px){.assignment-controls{align-items:stretch;flex-direction:column}}
 .payment-diagnosis,.payment-delivery-status{margin:12px 0 0;padding:11px 12px;border:1px solid #dce7ef;border-radius:7px;color:#526174;background:#f7fafc;font-size:10px;line-height:1.5}.payment-diagnosis.is-error{border-color:#f3c6c6;color:#a33a3a;background:#fff6f6}.payment-delivery-status{color:#397aa2}
 .brand-logo{display:block;width:44px;height:44px;flex:0 0 44px;border:1px solid rgba(255,255,255,.26);border-radius:10px;background:#fff;object-fit:contain}.brand-logo-login{width:58px;height:58px;padding:3px;border-color:#e4e9ef;border-radius:12px}
-.request-detail-panel{width:50vw}
+.request-detail-panel{width:min(72vw,1100px)}
 .detail-response-review{display:grid;gap:12px;padding-top:10px;border-top:1px solid #e5eaf0}.detail-response-review label{display:grid;gap:6px;color:#526174;font-size:10px;font-weight:700}.detail-response-review textarea{width:100%;padding:10px;border:1px solid #d8e0ea;border-radius:7px;resize:vertical;color:#344b60;background:#fff;font:inherit;font-size:11px}.detail-response-actions{display:flex;justify-content:flex-end;align-items:center;gap:9px}.detail-response-actions .primary-button{min-height:36px;padding:0 13px}.detail-response-actions .danger-link{min-height:36px;padding:0 12px;border:1px solid #f0c5c5;border-radius:7px;color:#b54747;background:#fff;font-size:11px;font-weight:700;cursor:pointer}.detail-response-actions button:disabled{opacity:.55;cursor:not-allowed}
 @media(max-width:720px){.request-detail-panel{width:100%;max-width:none;padding:36px 20px}}
 </style>

@@ -2,6 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "cortes-rodriguez-asesores-dev",
   "main": "worker/index.js",
+  "durable_objects": { "bindings": [{ "name": "APP_NOTIFICATION_HUB", "class_name": "NotificationHub" }] },
+  "migrations": [{ "tag": "notifications-hub-v1", "new_sqlite_classes": ["NotificationHub"] }],
   "workers_dev": true,
   "triggers": { "crons": ["* * * * *"] },
   "queues": {

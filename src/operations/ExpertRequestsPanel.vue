@@ -1,8 +1,9 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import ListView from '../shared/components/ListView.vue'
 
-const props = defineProps({ token: { type: String, required: true } })
+const props = defineProps({ token: { type: String, required: true }, openRequestId: { type: String, default: '' } })
+const emit = defineEmits(['request-opened'])
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
@@ -26,10 +27,12 @@ async function load(nextPage = page.value) {
   error.value = ''
   try {
     const params = new URLSearchParams({ page: String(nextPage), pageSize: '10', search: search.value.trim() })
+    if (props.openRequestId) params.set('requestId', props.openRequestId)
     const data = await request(`/api/app/expert/requests?${params}`)
     items.value = data.items || []
     pagination.value = data.pagination || pagination.value
     page.value = pagination.value.page
+    openRequestedItem()
   } catch (loadError) { error.value = loadError.message } finally { loading.value = false }
 }
 
@@ -37,6 +40,15 @@ function open(item) {
   selected.value = item
   responseBody.value = item.responseBody || ''
   error.value = ''
+}
+
+function openRequestedItem() {
+  if (!props.openRequestId) return
+  const item = items.value.find((entry) => entry.id === props.openRequestId)
+  if (item) {
+    open(item)
+    emit('request-opened')
+  }
 }
 
 function close() { selected.value = null; responseBody.value = '' }
@@ -58,6 +70,11 @@ function responseLabel(status) {
   return { none: 'Sin respuesta', draft: 'Borrador', pending_admin_review: 'En revisión', rejected: 'Devuelta', approved: 'Aprobada', sent: 'Enviada' }[status] || status
 }
 
+watch(() => props.openRequestId, (requestId) => {
+  if (!requestId) return
+  if (items.value.some((item) => item.id === requestId)) openRequestedItem()
+  else load(1)
+})
 onMounted(load)
 </script>
 

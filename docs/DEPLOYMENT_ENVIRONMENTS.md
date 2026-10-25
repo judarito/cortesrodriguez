@@ -76,6 +76,18 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - El panel administrativo permite verificar/reconciliar un pago consultando Mercado Pago; se guardan referencia, IDs, estado, moneda, monto y un código de diagnóstico, nunca secretos ni datos de tarjeta.
 - El Cron despacha hasta 20 eventos del outbox por ciclo a Cloudflare Queues; el consumidor envía por Resend y usa la fila Neon como control idempotente. Los fallos de Resend vuelven al outbox para reintento incremental (máximo ocho intentos); fallos transitorios de consumo reintentan en Queues y los agotados van a la DLQ. El estado de pago y el estado de entrega del correo son independientes.
 - Colas dev creadas y activas en Cloudflare: `cra-notification-events-dev` y `cra-notification-events-dev-dlq`. Wrangler confirma un productor y un consumidor en la cola principal; la DLQ queda asociada al consumidor.
+- La migración `030_in_app_notifications.sql` está aplicada en Neon dev. La campanita realtime se desplegó en el Worker dev con endpoints autenticados y Durable Object `NotificationHub` (WebSocket Hibernation); producción no se modificó.
+- Las notificaciones persistentes se materializan idempotentemente desde eventos del outbox después de que Resend acepta el correo; estados webhook posteriores actualizan la campanita. Neon sigue siendo la fuente de verdad y el WebSocket solo transmite el ID de la notificación.
+- La bandeja exige una sesión operativa vigente tanto para la API como para emitir tickets WebSocket; los tickets se guardan hasheados, expiran en 90 segundos y se consumen una sola vez.
+- Los avisos de experto se dirigen al `assigned_expert_id` persistido en cada solicitud. El correo obtiene únicamente la dirección del usuario unido a esa asignación y la campanita filtra por ese mismo ID; nunca se expande a todos los expertos asociados al tipo de consulta. Sin asignación individual no se envía aviso a expertos.
+
+### Campanita realtime en dev (2026-10-24)
+
+- Se aplicó `030_in_app_notifications.sql` en Neon dev y se desplegaron Worker/Assets con `wrangler.dev.jsonc`.
+- Worker `cortes-rodriguez-asesores-dev`, versión activa `4f99031a-6312-4b49-a6db-f378060c77b3`; Durable Object `NotificationHub` y cola `cra-notification-events-dev` aparecen enlazados.
+- Smoke tests HTTP: `/` y `/api/public/features` responden 200; `/api/app/notifications` sin sesión responde 401, como requiere el control de acceso.
+- En correo y campanita, el experto destinatario se toma exclusivamente de `requests.assigned_expert_id`. No se notifica a todos los expertos elegibles; la prueba unitaria verifica el aislamiento del destinatario.
+- Suite: 11 pruebas aprobadas; build y `git diff --check` correctos. Pendiente: prueba integrada autenticada de campanita y notificaciones con cuentas de admin, agente y experto.
 
 ## Regla de notificaciones pagadas
 

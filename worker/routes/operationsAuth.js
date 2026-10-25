@@ -73,6 +73,22 @@ export async function requireOperationsAuth(request, env) {
   return verifyToken(request, env)
 }
 
+export async function requireActiveOperationsAuth(request, env) {
+  const claims = await verifyToken(request, env)
+  const token = getToken(request)
+  if (!claims || !token || !env.NEON_DATABASE_URL) return null
+  const sql = await getNeonClient(env)
+  const sessions = await sql`
+    SELECT 1
+    FROM operations.sessions s
+    JOIN operations.users u ON u.id = s.user_id
+    WHERE s.user_id = ${claims.sub} AND s.token_hash = ${await sha256(token)}
+      AND s.revoked_at IS NULL AND s.expires_at > NOW() AND u.active = TRUE
+    LIMIT 1
+  `
+  return sessions.length ? claims : null
+}
+
 async function verifyToken(request, env) {
   const token = getToken(request)
   if (!token || !env.OPERATIONS_JWT_SECRET) return null

@@ -1,3 +1,5 @@
+import { updateEmailAppNotificationStatus } from './appNotifications.js'
+
 export async function handleResendWebhook(request, env) {
   const url = new URL(request.url)
   if (url.pathname !== '/api/webhooks/resend' || request.method !== 'POST') return null
@@ -19,11 +21,11 @@ export async function handleResendWebhook(request, env) {
     RETURNING id
   `
   if (!inserted.length) return response({ ok: true, duplicate: true })
-  if (resendEmailId) await applyEmailEvent(sql, resendEmailId, eventType, event)
+  if (resendEmailId) await applyEmailEvent(sql, env, resendEmailId, eventType, event)
   return response({ ok: true })
 }
 
-async function applyEmailEvent(sql, resendEmailId, eventType, event) {
+async function applyEmailEvent(sql, env, resendEmailId, eventType, event) {
   const eventAt = event.created_at ? new Date(event.created_at) : new Date()
   const status = {
     'email.sent': 'sent',
@@ -42,6 +44,7 @@ async function applyEmailEvent(sql, resendEmailId, eventType, event) {
   if (status === 'bounced') await sql`UPDATE operations.notification_messages SET status = 'bounced', failed_at = COALESCE(failed_at, ${eventAt}), error_message = ${event.data?.bounce?.message || null}, last_event_at = ${eventAt}, updated_at = NOW() WHERE resend_email_id = ${resendEmailId}`
   if (status === 'complained') await sql`UPDATE operations.notification_messages SET status = 'complained', last_event_at = ${eventAt}, updated_at = NOW() WHERE resend_email_id = ${resendEmailId}`
   await refreshRequestNotificationStatus(sql, resendEmailId, eventAt)
+  await updateEmailAppNotificationStatus(sql, env, resendEmailId, status)
 }
 
 async function refreshRequestNotificationStatus(sql, resendEmailId, eventAt) {

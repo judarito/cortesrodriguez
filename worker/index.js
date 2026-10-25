@@ -1,6 +1,7 @@
 import { createClient } from '@libsql/client/web'
 import { defaultContent, normalizeContent } from '../src/contentDefaults.js'
 import { handleOperationsAuth } from './routes/operationsAuth.js'
+import { handleAppNotifications } from './routes/appNotifications.js'
 import { handleOperationsData } from './routes/operationsData.js'
 import { handlePublicRequests } from './routes/publicRequests.js'
 import { handleOperationsSecurity } from './routes/operationsSecurity.js'
@@ -12,7 +13,7 @@ import { handleOperationsReviews } from './routes/operationsReviews.js'
 import { handlePublicFeedback } from './routes/publicFeedback.js'
 import { handleClientPortal } from './routes/clientPortal.js'
 import { handleResendWebhook } from './routes/resendWebhooks.js'
-import { consumeQueuedNotification, dispatchPendingNotifications } from './routes/operationsEmail.js'
+import { consumeQueuedNotification, dispatchPendingAppNotifications, dispatchPendingNotifications } from './routes/operationsEmail.js'
 import {
   isLandingRequestApi,
   isLandingRequestButtonEnabled,
@@ -69,6 +70,9 @@ export default {
 
       const operationsAuthResponse = await handleOperationsAuth(request, env)
       if (operationsAuthResponse) return operationsAuthResponse
+
+      const appNotificationResponse = await handleAppNotifications(request, env)
+      if (appNotificationResponse) return appNotificationResponse
 
       const operationsDataResponse = await handleOperationsData(request, env)
       if (operationsDataResponse) return operationsDataResponse
@@ -226,7 +230,7 @@ export default {
     }
   },
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(dispatchPendingNotifications(env))
+    ctx.waitUntil(Promise.all([dispatchPendingNotifications(env), dispatchPendingAppNotifications(env)]))
   },
   async queue(batch, env) {
     for (const message of batch.messages) {
@@ -245,6 +249,8 @@ export default {
     }
   },
 }
+
+export { NotificationHub } from './NotificationHub.js'
 
 async function getCachedLandingContent(request, env) {
   const ttl = getContentCacheTtl(env)

@@ -18,11 +18,14 @@ export async function handleOperationsExpert(request, env) {
     const page = Math.max(Number(url.searchParams.get('page')) || 1, 1)
     const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize')) || 10, 1), 50)
     const search = `%${String(url.searchParams.get('search') || '').trim()}%`
+    const requestId = String(url.searchParams.get('requestId') || '').trim()
+    if (requestId && !/^[0-9a-f-]{36}$/i.test(requestId)) return response({ error: 'Identificador de solicitud inválido.' }, 400)
     const offset = (page - 1) * pageSize
     const [countRows, rows] = await Promise.all([
       sql`SELECT COUNT(*)::int AS total
         FROM operations.requests r
         WHERE r.assigned_expert_id = ${claims.sub}
+          AND (${requestId ? sql`r.id = ${requestId}::uuid` : sql`TRUE`})
           AND (r.reference ILIKE ${search} OR COALESCE(r.consultation_type_name, '') ILIKE ${search}
             OR COALESCE(r.question, '') ILIKE ${search})`,
       sql`SELECT r.id, r.reference, r.status, r.service_type, r.general_service_name,
@@ -40,6 +43,7 @@ export async function handleOperationsExpert(request, env) {
           LIMIT 1
         ) latest ON TRUE
         WHERE r.assigned_expert_id = ${claims.sub}
+          AND (${requestId ? sql`r.id = ${requestId}::uuid` : sql`TRUE`})
           AND (r.reference ILIKE ${search} OR COALESCE(r.consultation_type_name, '') ILIKE ${search}
             OR COALESCE(r.question, '') ILIKE ${search})
         GROUP BY r.id, latest.status, latest.body

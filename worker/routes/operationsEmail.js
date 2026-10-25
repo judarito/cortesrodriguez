@@ -1,4 +1,5 @@
 import { requireOperationsAuth } from './operationsAuth.js'
+import { createEmailAppNotifications, createEmailFailureAlerts } from './appNotifications.js'
 
 export async function handleOperationsEmail(request, env) {
   const url = new URL(request.url)
@@ -92,7 +93,10 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const dynamic = []
   if (!paymentPolicy.adminOnly && shouldNotifyClient(eventCode, audiences)) dynamic.push(request.email)
   if (!paymentPolicy.adminOnly && (audiences.includes('agent') || audiences.includes('all_involved')) && sourceChannel === 'agent_link') dynamic.push(request.agent_email)
-  if (!paymentPolicy.adminOnly && (audiences.includes('expert') || audiences.includes('all_involved'))) dynamic.push(request.expert_email)
+  if (!paymentPolicy.adminOnly && (audiences.includes('expert') || audiences.includes('all_involved'))) {
+    const assignedExpertEmail = assignedExpertRecipient(request)
+    if (assignedExpertEmail) dynamic.push(assignedExpertEmail)
+  }
   if (paymentPolicy.adminOnly || audiences.includes('admin') || audiences.includes('all_involved')) {
     const admins = await sql`
       SELECT DISTINCT u.email
@@ -231,6 +235,30 @@ export async function dispatchPendingNotifications(env, limit = 20) {
   return { dispatched }
 }
 
+export async function dispatchPendingAppNotifications(env, limit = 50) {
+  if (!env.NEON_DATABASE_URL) return { generated: 0 }
+  const { neon } = await import('@neondatabase/serverless')
+  const sql = neon(env.NEON_DATABASE_URL)
+  const pending = await sql`
+    SELECT id, request_id, event_code, resend_email_id
+    FROM operations.notification_outbox
+    WHERE status = 'sent' AND app_notifications_generated_at IS NULL AND resend_email_id IS NOT NULL
+    ORDER BY sent_at, created_at
+    LIMIT ${Math.max(1, Math.min(Number(limit) || 50, 200))}
+  `
+  let generated = 0
+  for (const item of pending) {
+    try {
+      await createEmailAppNotifications(sql, env, item, String(item.resend_email_id))
+      await sql`UPDATE operations.notification_outbox SET app_notifications_generated_at = NOW(), updated_at = NOW() WHERE id = ${item.id} AND app_notifications_generated_at IS NULL`
+      generated += 1
+    } catch {
+      console.warn(JSON.stringify({ event: 'app_notification_materialization_failed', severity: 'warning', outboxId: String(item.id) }))
+    }
+  }
+  return { generated }
+}
+
 export async function consumeQueuedNotification(env, eventId) {
   if (!env.NEON_DATABASE_URL || !eventId) throw new Error('notification_queue_configuration_missing')
   const { neon } = await import('@neondatabase/serverless')
@@ -262,6 +290,8 @@ export async function deliverNotification(sql, env, outboxId) {
           lease_expires_at = NULL, sent_at = NOW(), updated_at = NOW()
       WHERE id = ${item.id}
     `
+    try { await dispatchPendingAppNotifications(env, 1) }
+    catch { console.warn(JSON.stringify({ event: 'app_notification_materialization_failed', severity: 'warning', outboxId: String(item.id) })) }
   } catch (error) {
     const retry = Number(item.attempts) < 8
     const safeCode = error.message === 'mail_configuration_missing' ? error.message : 'resend_delivery_failed'
@@ -279,6 +309,8 @@ export async function deliverNotification(sql, env, outboxId) {
       WHERE id = ${item.request_id}
     `
     console.warn(JSON.stringify({ event: 'notification_retry_scheduled', eventCode: item.event_code, severity: retry ? 'warning' : 'error', outboxId: String(item.id), attempt: Number(item.attempts), errorCode: safeCode }))
+    try { await createEmailFailureAlerts(sql, env, item, safeCode, retry) }
+    catch { console.warn(JSON.stringify({ event: 'app_notification_persist_failed', severity: 'warning', outboxId: String(item.id) })) }
   }
 }
 
@@ -341,6 +373,12 @@ async function sha256(value) {
 
 export function shouldNotifyClient(eventCode, audiences = []) {
   return eventCode === 'payment_approved' || audiences.includes('client') || audiences.includes('all_involved')
+}
+
+export function assignedExpertRecipient(request) {
+  // `expert_email` is joined through requests.assigned_expert_id; do not expand
+  // this to all users linked to the consultation type.
+  return request.assigned_expert_id ? request.expert_email || null : null
 }
 
 export function notificationPolicyForPayment(eventCode, paymentRequired, paid, forceAdminOnly = false) {
