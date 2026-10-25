@@ -17,8 +17,14 @@ export class NotificationHub {
 
     if (url.pathname === '/publish' && request.method === 'POST') {
       const body = await request.json().catch(() => ({}))
-      if (!body.notificationId) return new Response('Bad request', { status: 400 })
-      const message = JSON.stringify({ type: 'notification', id: String(body.notificationId) })
+      let message
+      if (body.type === 'request-updated' && /^[0-9a-f-]{36}$/i.test(String(body.requestId || '')) && /^[a-z_]{1,50}$/.test(String(body.eventCode || ''))) {
+        message = JSON.stringify({ type: 'request-updated', requestId: String(body.requestId), eventCode: String(body.eventCode) })
+      } else if (body.notificationId) {
+        message = JSON.stringify({ type: 'notification', id: String(body.notificationId) })
+      } else {
+        return new Response('Bad request', { status: 400 })
+      }
       for (const socket of this.state.getWebSockets()) {
         try { socket.send(message) } catch { /* Closed connections are removed by the runtime. */ }
       }

@@ -1,5 +1,5 @@
 import { requireOperationsAuth } from './operationsAuth.js'
-import { createEmailAppNotifications, createEmailFailureAlerts } from './appNotifications.js'
+import { createEmailAppNotifications, createEmailFailureAlerts, publishRequestStateUpdate } from './appNotifications.js'
 
 export async function handleOperationsEmail(request, env) {
   const url = new URL(request.url)
@@ -278,6 +278,8 @@ export async function deliverNotification(sql, env, outboxId) {
   `
   if (!claimed[0]) return
   const item = claimed[0]
+  try { await publishRequestStateUpdate(sql, env, item) }
+  catch { console.warn(JSON.stringify({ event: 'request_realtime_publish_failed', severity: 'warning', errorCode: 'realtime_publish_failed' })) }
   try {
     if (!(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.RESEND_FROM_EMAIL) throw new Error('mail_configuration_missing')
     const result = item.event_code === 'expert_response_approved'

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps({ token: { type: String, required: true } })
-const emit = defineEmits(['open'])
+const emit = defineEmits(['open', 'request-updated'])
 const items = ref([])
 const unreadCount = ref(0)
 const nextCursor = ref(null)
@@ -55,9 +55,13 @@ async function connect() {
     if (!ticketResponse.ok) throw new Error(ticketData.error || 'Realtime no disponible.')
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     socket = new WebSocket(`${protocol}//${window.location.host}/api/app/notifications/realtime?ticket=${encodeURIComponent(ticketData.ticket)}`)
-    socket.onopen = () => { reconnectAttempt = 0; socketState.value = 'online' }
+    socket.onopen = () => { reconnectAttempt = 0; socketState.value = 'online'; emit('request-updated', { requestId: '', eventCode: 'reconnected' }) }
     socket.onmessage = (event) => {
-      try { if (JSON.parse(event.data).type === 'notification') load() } catch { /* Ignore malformed push frames. */ }
+      try {
+        const message = JSON.parse(event.data)
+        if (message.type === 'notification') load()
+        if (message.type === 'request-updated') emit('request-updated', message)
+      } catch { /* Ignore malformed push frames. */ }
     }
     socket.onclose = () => scheduleReconnect()
     socket.onerror = () => { socketState.value = 'offline'; socket?.close() }
@@ -97,7 +101,10 @@ watch(() => props.token, async () => { await load(); await connect() })
 onMounted(() => {
   load()
   connect()
-  pollTimer = window.setInterval(load, 60_000)
+  pollTimer = window.setInterval(() => {
+    load()
+    if (socketState.value !== 'online') emit('request-updated', { requestId: '', eventCode: 'poll_fallback' })
+  }, 60_000)
   document.addEventListener('click', onOutsideClick)
 })
 onBeforeUnmount(() => {

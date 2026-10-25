@@ -51,16 +51,24 @@ export async function handleAppNotifications(request, env) {
   if (isCollection) {
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 20, 1), 50)
     const cursor = parseCursor(url.searchParams.get('before'))
+    const visibleToUser = notificationVisibilityFilter(sql, claims.sub)
     const [items, counts] = await Promise.all([
       sql`
-        SELECT id, request_id, event_code, audience_role, title, message, target_path, email_status, read_at, created_at
-        FROM operations.app_notifications
-        WHERE user_id = ${claims.sub}
-          AND (${cursor ? sql`(created_at, id) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)` : sql`TRUE`})
-        ORDER BY created_at DESC, id DESC
+        SELECT notification.id, notification.request_id, notification.event_code, notification.audience_role,
+          notification.title, notification.message, notification.target_path, notification.email_status,
+          notification.read_at, notification.created_at
+        FROM operations.app_notifications notification
+        WHERE notification.user_id = ${claims.sub}
+          AND ${visibleToUser}
+          AND (${cursor ? sql`(notification.created_at, notification.id) < (${cursor.createdAt}::timestamptz, ${cursor.id}::uuid)` : sql`TRUE`})
+        ORDER BY notification.created_at DESC, notification.id DESC
         LIMIT ${limit}
       `,
-      sql`SELECT COUNT(*)::int AS unread_count FROM operations.app_notifications WHERE user_id = ${claims.sub} AND read_at IS NULL`,
+      sql`
+        SELECT COUNT(*)::int AS unread_count
+        FROM operations.app_notifications notification
+        WHERE notification.user_id = ${claims.sub} AND notification.read_at IS NULL AND ${visibleToUser}
+      `,
     ])
     return json({
       items: items.map(serializeNotification),
@@ -69,15 +77,44 @@ export async function handleAppNotifications(request, env) {
     })
   }
 
+  const visibleToUser = notificationVisibilityFilter(sql, claims.sub)
   const updated = await sql`
-    UPDATE operations.app_notifications
+    UPDATE operations.app_notifications AS notification
     SET read_at = COALESCE(read_at, NOW()), updated_at = NOW()
-    WHERE id = ${readMatch[1]} AND user_id = ${claims.sub}
+    WHERE notification.id = ${readMatch[1]} AND notification.user_id = ${claims.sub} AND ${visibleToUser}
     RETURNING id, request_id, event_code, audience_role, title, message, target_path, email_status, read_at, created_at
   `
   if (!updated[0]) return json({ error: 'Notificación no encontrada.' }, 404)
-  const counts = await sql`SELECT COUNT(*)::int AS unread_count FROM operations.app_notifications WHERE user_id = ${claims.sub} AND read_at IS NULL`
+  const counts = await sql`
+    SELECT COUNT(*)::int AS unread_count
+    FROM operations.app_notifications notification
+    WHERE notification.user_id = ${claims.sub} AND notification.read_at IS NULL AND ${visibleToUser}
+  `
   return json({ item: serializeNotification(updated[0]), unreadCount: Number(counts[0]?.unread_count || 0) })
+}
+
+export function notificationVisibilityFilter(sql, userId) {
+  return sql`(
+    (notification.audience_role = 'admin' AND EXISTS (
+      SELECT 1 FROM operations.user_roles ur JOIN operations.roles role ON role.id = ur.role_id
+      WHERE ur.user_id = ${userId} AND role.name = 'admin'
+    )) OR
+    (notification.audience_role = 'agent' AND EXISTS (
+      SELECT 1 FROM operations.user_roles ur JOIN operations.roles role ON role.id = ur.role_id
+      WHERE ur.user_id = ${userId} AND role.name = 'agent'
+    ) AND EXISTS (
+      SELECT 1 FROM operations.requests r
+      WHERE r.id = notification.request_id AND r.agent_id = ${userId}
+        AND (r.source_channel = 'agent_link' OR r.source = 'agent')
+    )) OR
+    (notification.audience_role = 'expert' AND EXISTS (
+      SELECT 1 FROM operations.user_roles ur JOIN operations.roles role ON role.id = ur.role_id
+      WHERE ur.user_id = ${userId} AND role.name = 'expert'
+    ) AND EXISTS (
+      SELECT 1 FROM operations.requests r
+      WHERE r.id = notification.request_id AND r.assigned_expert_id = ${userId}
+    ))
+  )`
 }
 
 export async function createEmailAppNotifications(sql, env, outboxItem, resendEmailId) {
@@ -131,6 +168,47 @@ export async function createEmailAppNotifications(sql, env, outboxItem, resendEm
     inserted.push(...rows)
   }
   await publishRealtime(env, inserted)
+}
+
+export async function publishRequestStateUpdate(sql, env, outboxItem) {
+  if (!env.APP_NOTIFICATION_HUB) return
+  const requests = await sql`
+    SELECT id, source, source_channel, agent_id, assigned_expert_id
+    FROM operations.requests WHERE id = ${outboxItem.request_id} LIMIT 1
+  `
+  const request = requests[0]
+  if (!request) return
+  const recipients = requestUpdateRecipientIds(request)
+  const users = await sql`
+    SELECT DISTINCT u.id
+    FROM operations.users u
+    JOIN operations.user_roles ur ON ur.user_id = u.id
+    JOIN operations.roles role ON role.id = ur.role_id
+    WHERE u.active = TRUE AND (
+      role.name = 'admin' OR
+      (role.name = 'agent' AND u.id = ${recipients.agentId}) OR
+      (role.name = 'expert' AND u.id = ${recipients.expertId})
+    )
+  `
+  for (const user of users) {
+    try {
+      const stub = env.APP_NOTIFICATION_HUB.get(env.APP_NOTIFICATION_HUB.idFromName(String(user.id)))
+      await stub.fetch('https://notifications.internal/publish', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'request-updated', requestId: String(request.id), eventCode: String(outboxItem.event_code) }),
+      })
+    } catch {
+      console.warn(JSON.stringify({ event: 'request_realtime_publish_failed', severity: 'warning', errorCode: 'realtime_publish_failed' }))
+    }
+  }
+}
+
+export function requestUpdateRecipientIds(request) {
+  const fromAgent = request.source_channel === 'agent_link' || request.source === 'agent'
+  return {
+    agentId: fromAgent ? request.agent_id || null : null,
+    expertId: request.assigned_expert_id || null,
+  }
 }
 
 export async function createEmailFailureAlerts(sql, env, outboxItem, errorCode, willRetry) {

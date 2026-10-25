@@ -2,7 +2,7 @@
 import { onMounted, ref, watch } from 'vue'
 import ListView from '../shared/components/ListView.vue'
 
-const props = defineProps({ token: { type: String, required: true }, openRequestId: { type: String, default: '' } })
+const props = defineProps({ token: { type: String, required: true }, openRequestId: { type: String, default: '' }, refreshKey: { type: Number, default: 0 } })
 const emit = defineEmits(['request-opened'])
 const loading = ref(true)
 const saving = ref(false)
@@ -32,6 +32,7 @@ async function load(nextPage = page.value) {
     items.value = data.items || []
     pagination.value = data.pagination || pagination.value
     page.value = pagination.value.page
+    if (selected.value) selected.value = items.value.find((item) => item.id === selected.value.id) || null
     openRequestedItem()
   } catch (loadError) { error.value = loadError.message } finally { loading.value = false }
 }
@@ -75,6 +76,7 @@ watch(() => props.openRequestId, (requestId) => {
   if (items.value.some((item) => item.id === requestId)) openRequestedItem()
   else load(1)
 })
+watch(() => props.refreshKey, () => load())
 onMounted(load)
 </script>
 

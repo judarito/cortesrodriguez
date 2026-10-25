@@ -23,6 +23,14 @@ La plataforma operativa vive en el mismo repositorio y despliegue que la landing
 - `worker/db/`: conexión PostgreSQL/Neon, consultas y migraciones.
 - `worker/db/migrations/`: cambios versionados del esquema operativo.
 
+### Actualización realtime del estado de solicitudes
+
+- Los eventos de negocio del outbox también emiten por `NotificationHub` una señal liviana `request-updated` a los usuarios autorizados: administradores, el agente de origen cuando aplica y el experto actualmente asignado.
+- La señal solo contiene el ID interno de la solicitud y el código del evento; no incluye datos del cliente ni la respuesta. El cliente actualiza la vista consultando de nuevo la API, que mantiene los permisos como fuente de verdad.
+- La API de la campanita vuelve a autorizar cada fila según el rol vigente y la relación actual con la solicitud: un experto solo lista/lee avisos cuyo caso siga asignado a su usuario; un agente solo los de sus propios enlaces. Esto también oculta registros históricos fuera de alcance y limita el contador de no leídas.
+- Si el usuario tiene abierta la lista o el detalle de solicitudes, se refresca esa vista. La bandeja del experto actualiza sus asignaciones. Al reconectar se resincroniza la vista y, si el WebSocket está caído, se usa un refresco de respaldo cada minuto.
+- La actualización realtime es independiente del resultado de Resend: publicar el estado no confirma la entrega del correo ni altera el estado de pago.
+
 ## Rutas previstas
 
 - `/`: landing pública.

@@ -89,6 +89,12 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - En correo y campanita, el experto destinatario se toma exclusivamente de `requests.assigned_expert_id`. No se notifica a todos los expertos elegibles; la prueba unitaria verifica el aislamiento del destinatario.
 - Suite: 11 pruebas aprobadas; build y `git diff --check` correctos. Pendiente: prueba integrada autenticada de campanita y notificaciones con cuentas de admin, agente y experto.
 
+### Corrección del alcance de notificaciones (2026-10-24)
+
+- La API de la campanita filtra lista, contador y lectura por el rol vigente y la relación actual con la solicitud. Un experto solo consulta avisos de casos que siguen asignados a su usuario; los avisos históricos de otro rol/asignación ya no se muestran.
+- Publicado en `cortes-rodriguez-asesores-dev`, versión `4a9327fb-2d9f-446c-a520-33f644655beb`; producción no se modificó.
+- Verificación HTTP posterior: `/` y `/api/public/features` responden 200; `/api/app/notifications` sin sesión responde 401. Suite de 11 pruebas, build y `git diff --check` aprobados.
+
 ## Regla de notificaciones pagadas
 
 Las solicitudes que requieren pago se crean antes de cobrar para conservar su referencia; mientras no exista confirmación, la cola limita el aviso al administrador. El webhook registra `payment_approved` con idempotencia por solicitud y, tras la confirmación, se notifican las partes configuradas. Pagos rechazados/cancelados solo alertan al administrador. Los eventos se persisten antes del envío y se procesan en segundo plano; los fallos reintentan sin cambiar el estado del pago.
