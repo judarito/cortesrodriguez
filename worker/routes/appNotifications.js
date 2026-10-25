@@ -117,18 +117,24 @@ export function notificationVisibilityFilter(sql, userId) {
   )`
 }
 
-export async function createEmailAppNotifications(sql, env, outboxItem, resendEmailId) {
+export async function createEmailAppNotifications(sql, env, outboxItem, resendEmailId = null, initialEmailStatus = 'accepted') {
   const requests = await sql`
-    SELECT r.id, r.reference, r.source_channel, r.source, r.agent_id, r.assigned_expert_id, r.created_by
+    SELECT r.id, r.reference, r.source_channel, r.source, r.agent_id, r.assigned_expert_id, r.created_by, r.payment_required
     FROM operations.requests r WHERE r.id = ${outboxItem.request_id} LIMIT 1
   `
   const request = requests[0]
   if (!request) return
   const eventCode = String(outboxItem.event_code)
-  const audiences = roleAudiences(eventCode, request)
-  const recipientIds = roleRecipientIds(eventCode, request)
-  const emailRows = await sql`SELECT status FROM operations.notification_messages WHERE resend_email_id = ${resendEmailId} LIMIT 1`
-  const emailStatus = String(emailRows[0]?.status || 'accepted')
+  let paymentConfirmed = false
+  if (request.payment_required) {
+    const payments = await sql`SELECT EXISTS (SELECT 1 FROM operations.request_payments WHERE request_id = ${request.id} AND status = 'approved') AS paid`
+    paymentConfirmed = Boolean(payments[0]?.paid)
+  }
+  const adminOnly = Boolean(outboxItem.admin_only) || (Boolean(request.payment_required) && !paymentConfirmed)
+  const audiences = roleAudiences(eventCode, request, adminOnly)
+  const recipientIds = roleRecipientIds(eventCode, request, adminOnly)
+  const emailRows = resendEmailId ? await sql`SELECT status FROM operations.notification_messages WHERE resend_email_id = ${resendEmailId} LIMIT 1` : []
+  const emailStatus = String(emailRows[0]?.status || initialEmailStatus)
   const resolvedFailures = await sql`
     UPDATE operations.app_notifications
     SET message = ${`${request.reference}: el reintento fue aceptado por Resend; la entrega todavía está pendiente.`},
@@ -159,7 +165,7 @@ export async function createEmailAppNotifications(sql, env, outboxItem, resendEm
       INSERT INTO operations.app_notifications
         (user_id, request_id, resend_email_id, idempotency_key, event_code, audience_role, title, message, target_path, email_status)
       VALUES (
-        ${user.id}, ${request.id}, ${resendEmailId}, ${`email/${outboxItem.id}/${role}/${user.id}`}, ${eventCode}, ${role},
+        ${user.id}, ${request.id}, ${resendEmailId}, ${`event/${outboxItem.id}/${role}/${user.id}`}, ${eventCode}, ${role},
         ${copy.title}, ${copy.message}, ${`/app?request=${request.id}`}, ${emailStatus}
       )
       ON CONFLICT (user_id, idempotency_key) DO NOTHING
@@ -273,7 +279,8 @@ async function publishRealtime(env, rows) {
   }
 }
 
-export function roleAudiences(eventCode, request) {
+export function roleAudiences(eventCode, request, adminOnly = false) {
+  if (adminOnly) return { admin: true, agent: false, expert: false }
   const fromAgent = request.source_channel === 'agent_link' || request.source === 'agent'
   const audiences = { admin: true, agent: false, expert: false }
   if (fromAgent && request.agent_id && ['request_created', 'payment_approved', 'expert_assigned', 'status_changed', 'expert_response_approved', 'feedback_received', 'feedback_low'].includes(eventCode)) audiences.agent = true
@@ -282,8 +289,8 @@ export function roleAudiences(eventCode, request) {
   return audiences
 }
 
-export function roleRecipientIds(eventCode, request) {
-  const audiences = roleAudiences(eventCode, request)
+export function roleRecipientIds(eventCode, request, adminOnly = false) {
+  const audiences = roleAudiences(eventCode, request, adminOnly)
   return {
     agentId: audiences.agent ? request.agent_id : null,
     // Deliberately use the persisted assignment, never the consultation's expert pool.

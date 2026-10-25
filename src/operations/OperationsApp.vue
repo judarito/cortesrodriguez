@@ -9,6 +9,7 @@ import ExpertRequestsPanel from './ExpertRequestsPanel.vue'
 import FeedbackPanel from './FeedbackPanel.vue'
 import SimilarQuestionPanel from './SimilarQuestionPanel.vue'
 import NotificationBell from './NotificationBell.vue'
+import PaymentsPanel from './PaymentsPanel.vue'
 
 const token = ref(localStorage.getItem('operationsToken') || '')
 const user = ref(JSON.parse(localStorage.getItem('operationsUser') || 'null'))
@@ -623,6 +624,7 @@ onMounted(restoreSession)
       <ExpertRequestsPanel v-else-if="activeMenu === 'Solicitudes asignadas'" :token="token" :open-request-id="notificationRequestId" :refresh-key="expertRequestRefreshKey" @request-opened="notificationRequestId = ''" />
       <FeedbackPanel v-else-if="activeMenu === 'Feedback de clientes'" :token="token" />
       <SimilarQuestionPanel v-else-if="activeMenu === 'Preguntas similares'" :token="token" />
+      <PaymentsPanel v-else-if="activeMenu === 'Pagos'" :token="token" :can-open-requests="user.permissions?.includes('requests.read')" @open-request="openRequestDetail" />
       <NotificationConfigPanel v-else-if="activeMenu === 'Configuración'" :token="token" />
       <section v-else-if="activeMenu === 'Configuración'" class="module-view security-view">
         <div class="module-heading"><div><p class="eyebrow">Preferencias operativas</p><h1>Configuración</h1><p>Define quién recibe las comunicaciones de cada evento.</p></div><button type="button" class="secondary-button compact" @click="loadNotifications">↻ Actualizar</button></div>

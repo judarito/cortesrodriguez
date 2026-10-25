@@ -47,6 +47,12 @@ test('retries a failed Resend delivery and succeeds idempotently without changin
     if (query.includes('SELECT id, audiences')) return [{ id: 'rule-test', audiences: ['admin', 'client'] }]
     if (query.includes('SELECT nr.email, nr.recipient_type')) return []
     if (query.includes('SELECT DISTINCT u.email')) return [{ email: 'admin@example.test' }]
+    if (query.includes('SELECT DISTINCT ON (u.id)')) return [{ id: 'admin-test', role_name: 'admin' }]
+    if (query.includes('SELECT status FROM operations.notification_messages')) return []
+    if (query.includes('SELECT id, request_id, event_code, resend_email_id')) return []
+    if (query.includes('UPDATE operations.app_notifications')) return []
+    if (query.includes('INSERT INTO operations.app_notifications')) return []
+    if (query.includes('app_notifications_generated_at')) return []
     if (query.includes('INSERT INTO operations.notification_messages')) return []
     if (query.includes('UPDATE operations.requests') && query.includes('notification_status')) {
       notificationStatus = query.includes("notification_status = 'accepted'") ? 'accepted' : values[0]

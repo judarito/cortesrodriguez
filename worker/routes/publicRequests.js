@@ -204,6 +204,9 @@ export async function handlePublicRequests(request, env) {
   // Cliente/agente/experto solo se notifican después de la confirmación del pago.
   {
     try { await enqueueNotification(sql, requestId, 'request_created', { idempotencyKey: `request_created/${requestId}`, adminOnly: Boolean(service.payment_required) }) } catch (error) { console.error('No se pudo encolar la notificación de solicitud creada:', error.message) }
+    if (assignedExpertId && !similarCandidates.length) {
+      try { await enqueueNotification(sql, requestId, 'expert_assigned', { idempotencyKey: `expert_assigned/${requestId}/initial` }) } catch (error) { console.error('No se pudo encolar la notificación de asignación inicial:', error.message) }
+    }
     if (!service.payment_required && similarCandidates.length) {
       try { await enqueueNotification(sql, requestId, 'similar_question_review', { idempotencyKey: `similar_question_review/${requestId}` }) } catch (error) { console.error('No se pudo encolar la revisión de similitud:', error.message) }
     } else if (!service.payment_required && !assignedExpertId) {

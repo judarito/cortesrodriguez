@@ -31,6 +31,14 @@ La plataforma operativa vive en el mismo repositorio y despliegue que la landing
 - Si el usuario tiene abierta la lista o el detalle de solicitudes, se refresca esa vista. La bandeja del experto actualiza sus asignaciones. Al reconectar se resincroniza la vista y, si el WebSocket está caído, se usa un refresco de respaldo cada minuto.
 - La actualización realtime es independiente del resultado de Resend: publicar el estado no confirma la entrega del correo ni altera el estado de pago.
 
+### Pagos y notificaciones por evento
+
+- **Pagos** usa `ListView` y consulta `GET /api/app/payments`, protegido por `payments.read`. El listado pagina intentos individuales (incluidos reintentos), filtra por estado y fechas, busca por cliente/referencias y permite abrir el detalle de la solicitud solo si el usuario también tiene `requests.read`. El estado no se edita desde el listado.
+- Los eventos de la campana se materializan de forma idempotente desde el outbox, independientemente de si se envía correo. Los avisos incluyen su estado de correo (`No aplica`, aceptado, reintento o fallo) y mantienen el alcance por rol/solicitud; la campana y realtime no dependen de Resend.
+- El correo administrativo se limita a confirmación de pago, asignación/alerta de asignación y revisión (pregunta similar o respuesta pendiente). El admin no recibe el correo genérico de solicitud creada ni avisos rutinarios de cambio de estado. Los correos para cliente, experto y agente conservan sus reglas y restricciones de pago.
+- Las asignaciones automáticas iniciales generan `expert_assigned`; si la solicitud exige pago y aún no se ha pagado, el aviso previo queda limitado al admin. El experto recibe notificación después de la confirmación de pago.
+- `031_app_notifications_without_email.sql` agrega `not_sent` a los estados de email de la campana para representar eventos que no deben producir correo.
+
 ## Rutas previstas
 
 - `/`: landing pública.

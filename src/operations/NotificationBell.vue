@@ -18,7 +18,7 @@ let disposed = false
 
 const visibleCount = computed(() => unreadCount.value > 99 ? '99+' : unreadCount.value)
 function emailStatusLabel(status) {
-  return ({ accepted: 'Aceptado por Resend', sent: 'Enviado', delivered: 'Entregado', opened: 'Abierto', failed: 'Fallido', bounced: 'Rebotado', complained: 'Reportado', pending_retry: 'Pendiente de reintento' })[status] || status
+  return ({ not_sent: 'No aplica', accepted: 'Aceptado por Resend', sent: 'Enviado', delivered: 'Entregado', opened: 'Abierto', failed: 'Fallido', bounced: 'Rebotado', complained: 'Reportado', pending_retry: 'Pendiente de reintento' })[status] || status
 }
 
 async function load({ before = null, append = false } = {}) {

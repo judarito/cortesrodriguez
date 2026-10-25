@@ -6,6 +6,7 @@ import { normalizeClientEmail } from '../lib/clientIdentity.js'
 export async function handleOperationsData(request, env) {
   const url = new URL(request.url)
   const isClients = url.pathname === '/api/app/clients' && request.method === 'GET'
+  const isPayments = url.pathname === '/api/app/payments' && request.method === 'GET'
   const isRequests = url.pathname === '/api/app/requests' && request.method === 'GET'
   const createRequest = url.pathname === '/api/app/requests' && request.method === 'POST'
   const requestDetailMatch = url.pathname.match(/^\/api\/app\/requests\/([^/]+)$/)
@@ -15,10 +16,10 @@ export async function handleOperationsData(request, env) {
   const requestPaymentVerifyMatch = url.pathname.match(/^\/api\/app\/requests\/([^/]+)\/payment\/verify$/)
   const isRequestPaymentVerify = Boolean(requestPaymentVerifyMatch) && request.method === 'POST'
   const isDashboard = url.pathname === '/api/app/dashboard' && request.method === 'GET'
-  if (!isClients && !isRequests && !createRequest && !isRequestDetail && !isRequestAssignment && !isRequestPaymentVerify && !isDashboard) return null
+  if (!isClients && !isPayments && !isRequests && !createRequest && !isRequestDetail && !isRequestAssignment && !isRequestPaymentVerify && !isDashboard) return null
 
   const claims = await requireOperationsAuth(request, env)
-  const permission = isClients ? 'clients.read' : createRequest ? 'requests.create' : isRequestAssignment || isRequestPaymentVerify ? 'requests.update' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
+  const permission = isClients ? 'clients.read' : isPayments ? 'payments.read' : createRequest ? 'requests.create' : isRequestAssignment || isRequestPaymentVerify ? 'requests.update' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
   if (!claims?.permissions?.includes(permission)) {
     return response({ error: 'No tienes permisos para consultar este módulo.' }, 403)
   }
@@ -30,6 +31,7 @@ export async function handleOperationsData(request, env) {
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   if (isDashboard) return getDashboard(sql, claims)
+  if (isPayments) return getPayments(sql, url)
   if (isRequestPaymentVerify) {
     if (!claims.roles?.includes('admin')) return response({ error: 'Solo administración puede verificar pagos.' }, 403)
     if (!env.MP_ACCESS_TOKEN) return response({ error: 'La consulta de pagos de Mercado Pago no está configurada.' }, 503)
@@ -149,6 +151,72 @@ export async function handleOperationsData(request, env) {
   ])
   if (isAdmin && env.MP_ACCESS_TOKEN) await refreshPendingRequestPayments(sql, requests, env)
   return response({ items: requests.map(serializeRequest), pagination: pagination(page, pageSize, countRows[0]?.total), filters: { agents: agents.map((row) => ({ id: String(row.id), name: String(row.full_name), email: String(row.email) })) } })
+}
+
+async function getPayments(sql, url) {
+  const page = Math.max(Number(url.searchParams.get('page')) || 1, 1)
+  const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize')) || 10, 1), 50)
+  const offset = (page - 1) * pageSize
+  const search = String(url.searchParams.get('search') || '').trim().slice(0, 200)
+  const searchPattern = `%${search}%`
+  const status = String(url.searchParams.get('status') || '').trim()
+  const allowedStatuses = ['approved', 'pending', 'in_process', 'rejected', 'cancelled', 'refunded', 'charged_back']
+  if (status && !allowedStatuses.includes(status)) return response({ error: 'El estado de pago no es válido.' }, 400)
+
+  const dateFrom = String(url.searchParams.get('dateFrom') || '').trim()
+  const dateTo = String(url.searchParams.get('dateTo') || '').trim()
+  if ((dateFrom && !isValidIsoDate(dateFrom)) || (dateTo && !isValidIsoDate(dateTo))) {
+    return response({ error: 'Usa fechas válidas en formato AAAA-MM-DD.' }, 400)
+  }
+  if (dateFrom && dateTo && dateFrom > dateTo) return response({ error: 'La fecha inicial no puede ser posterior a la fecha final.' }, 400)
+
+  const [countRows, rows] = await Promise.all([
+    sql`
+      SELECT COUNT(*)::int AS total
+      FROM operations.request_payments p
+      JOIN operations.requests r ON r.id = p.request_id
+      JOIN operations.clients c ON c.id = r.client_id
+      WHERE (${search ? sql`p.reference ILIKE ${searchPattern} OR COALESCE(p.mercado_pago_payment_id, '') ILIKE ${searchPattern} OR COALESCE(p.mercado_pago_preference_id, '') ILIKE ${searchPattern} OR r.reference ILIKE ${searchPattern} OR c.full_name ILIKE ${searchPattern}` : sql`TRUE`})
+        AND (${status ? sql`p.status = ${status}` : sql`TRUE`})
+        AND (${dateFrom ? sql`p.created_at >= ${dateFrom}::date` : sql`TRUE`})
+        AND (${dateTo ? sql`p.created_at < (${dateTo}::date + INTERVAL '1 day')` : sql`TRUE`})
+    `,
+    sql`
+      SELECT p.id, p.reference AS payment_reference, p.status AS payment_status,
+        p.usd_amount_cents, p.cop_amount_cents, p.trm_cop_per_usd,
+        p.mercado_pago_preference_id, p.mercado_pago_payment_id, p.created_at,
+        r.id AS request_id, r.reference AS request_reference,
+        COALESCE(r.consultation_type_name, r.service_name, r.service_type) AS service_name,
+        c.full_name AS client_name
+      FROM operations.request_payments p
+      JOIN operations.requests r ON r.id = p.request_id
+      JOIN operations.clients c ON c.id = r.client_id
+      WHERE (${search ? sql`p.reference ILIKE ${searchPattern} OR COALESCE(p.mercado_pago_payment_id, '') ILIKE ${searchPattern} OR COALESCE(p.mercado_pago_preference_id, '') ILIKE ${searchPattern} OR r.reference ILIKE ${searchPattern} OR c.full_name ILIKE ${searchPattern}` : sql`TRUE`})
+        AND (${status ? sql`p.status = ${status}` : sql`TRUE`})
+        AND (${dateFrom ? sql`p.created_at >= ${dateFrom}::date` : sql`TRUE`})
+        AND (${dateTo ? sql`p.created_at < (${dateTo}::date + INTERVAL '1 day')` : sql`TRUE`})
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `,
+  ])
+
+  return response({
+    items: rows.map((row) => ({
+      id: String(row.id), requestId: String(row.request_id), requestReference: String(row.request_reference),
+      paymentReference: String(row.payment_reference), status: String(row.payment_status),
+      usdAmountCents: Number(row.usd_amount_cents), copAmountCents: Number(row.cop_amount_cents),
+      trm: Number(row.trm_cop_per_usd), preferenceId: row.mercado_pago_preference_id ? String(row.mercado_pago_preference_id) : '',
+      paymentId: row.mercado_pago_payment_id ? String(row.mercado_pago_payment_id) : '',
+      serviceName: String(row.service_name || '—'), clientName: String(row.client_name), createdAt: row.created_at,
+    })),
+    pagination: pagination(page, pageSize, countRows[0]?.total),
+  })
+}
+
+function isValidIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value
 }
 
 function paymentDiagnosisMessage(reasonCode) {

@@ -1,6 +1,8 @@
 import { requireOperationsAuth } from './operationsAuth.js'
 import { createEmailAppNotifications, createEmailFailureAlerts, publishRequestStateUpdate } from './appNotifications.js'
 
+const adminEmailEvents = new Set(['payment_approved', 'expert_assigned', 'assignment_failed', 'similar_question_review', 'expert_response_submitted'])
+
 export async function handleOperationsEmail(request, env) {
   const url = new URL(request.url)
   const match = url.pathname.match(/^\/api\/app\/requests\/([^/]+)\/notifications$/)
@@ -97,7 +99,8 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     const assignedExpertEmail = assignedExpertRecipient(request)
     if (assignedExpertEmail) dynamic.push(assignedExpertEmail)
   }
-  if (paymentPolicy.adminOnly || audiences.includes('admin') || audiences.includes('all_involved')) {
+  let adminEmails = []
+  if (audiences.includes('admin') || audiences.includes('all_involved') || paymentPolicy.adminOnly) {
     const admins = await sql`
       SELECT DISTINCT u.email
       FROM operations.users u
@@ -105,14 +108,18 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
       JOIN operations.roles role ON role.id = ur.role_id AND role.name = 'admin'
       WHERE u.active = TRUE
     `
-    dynamic.push(...admins.map((row) => row.email))
+    adminEmails = admins.map((row) => String(row.email).toLowerCase())
+    if (adminEmailAllowedForEvent(eventCode) && (paymentPolicy.adminOnly || audiences.includes('admin') || audiences.includes('all_involved'))) dynamic.push(...admins.map((row) => row.email))
   }
-  const configured = !paymentPolicy.adminOnly && (audiences.includes('configured') || audiences.includes('admin') || audiences.includes('all_involved')) ? recipients : []
+  const configured = !paymentPolicy.adminOnly && (audiences.includes('configured') || audiences.includes('admin') || audiences.includes('all_involved'))
+    ? recipients.filter((recipient) => adminEmailAllowedForEvent(eventCode) || !adminEmails.includes(String(recipient.email).toLowerCase()))
+    : []
   const unique = (values) => [...new Set(values.filter((value) => value && /^\S+@\S+\.\S+$/.test(String(value))).map(String))]
   const to = unique([...configured.filter((item) => item.recipient_type === 'to').map((item) => item.email), ...dynamic])
   const cc = unique(configured.filter((item) => item.recipient_type === 'cc').map((item) => item.email)).filter((email) => !to.includes(email))
   const bcc = unique(configured.filter((item) => item.recipient_type === 'bcc').map((item) => item.email)).filter((email) => !to.includes(email) && !cc.includes(email))
-  if (!to.length) throw new Error('La regla no tiene un destinatario principal tipo Para.')
+  if (!to.length) return { sent: false, reason: 'email_not_required' }
+  if (!(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.RESEND_FROM_EMAIL) throw new Error('mail_configuration_missing')
 
   const eventLabel = { payment_approved: 'Pago recibido', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida', expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', similar_question_review: 'Pregunta similar pendiente de validación', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
   const subject = `${eventLabel} · ${request.reference}`
@@ -281,11 +288,25 @@ export async function deliverNotification(sql, env, outboxId) {
   try { await publishRequestStateUpdate(sql, env, item) }
   catch { console.warn(JSON.stringify({ event: 'request_realtime_publish_failed', severity: 'warning', errorCode: 'realtime_publish_failed' })) }
   try {
-    if (!(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.RESEND_FROM_EMAIL) throw new Error('mail_configuration_missing')
+    await createEmailAppNotifications(sql, env, item, null, 'not_sent')
+    await sql`UPDATE operations.notification_outbox SET app_notifications_generated_at = COALESCE(app_notifications_generated_at, NOW()), updated_at = NOW() WHERE id = ${item.id}`
     const result = item.event_code === 'expert_response_approved'
       ? await sendApprovedResponseNotification(sql, env, item)
       : await sendRequestNotification(sql, env, item.request_id, item.event_code, item.actor_id, { idempotencyKey: `cra-${item.id}`, forceAdminOnly: Boolean(item.admin_only) })
+    if (!result.sent && result.reason === 'email_not_required') {
+      await sql`
+        UPDATE operations.notification_outbox
+        SET status = 'sent', last_error_code = NULL, lease_expires_at = NULL, sent_at = NOW(), updated_at = NOW()
+        WHERE id = ${item.id}
+      `
+      return
+    }
     if (!result.sent) throw new Error(result.reason || 'notification_not_sent')
+    await sql`
+      UPDATE operations.app_notifications
+      SET resend_email_id = ${result.emailId}, email_status = 'accepted', updated_at = NOW()
+      WHERE request_id = ${item.request_id} AND idempotency_key LIKE ${`event/${item.id}/%`}
+    `
     await sql`
       UPDATE operations.notification_outbox
       SET status = 'sent', resend_email_id = ${result.emailId}, last_error_code = NULL,
@@ -297,6 +318,11 @@ export async function deliverNotification(sql, env, outboxId) {
   } catch (error) {
     const retry = Number(item.attempts) < 8
     const safeCode = error.message === 'mail_configuration_missing' ? error.message : 'resend_delivery_failed'
+    await sql`
+      UPDATE operations.app_notifications
+      SET email_status = ${retry ? 'pending_retry' : 'failed'}, updated_at = NOW()
+      WHERE request_id = ${item.request_id} AND idempotency_key LIKE ${`event/${item.id}/%`}
+    `
     await sql`
       UPDATE operations.notification_outbox
       SET status = ${retry ? 'pending' : 'failed'},
@@ -317,6 +343,7 @@ export async function deliverNotification(sql, env, outboxId) {
 }
 
 async function sendApprovedResponseNotification(sql, env, item) {
+  if (!(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.RESEND_FROM_EMAIL) throw new Error('mail_configuration_missing')
   const payload = typeof item.event_payload === 'string' ? JSON.parse(item.event_payload) : item.event_payload
   const responseId = String(payload?.responseId || '')
   if (!responseId || !env.JWT_SECRET) throw new Error('notification_payload_invalid')
@@ -389,6 +416,10 @@ export function notificationPolicyForPayment(eventCode, paymentRequired, paid, f
   }
   if (eventCode === 'payment_rejected' || forceAdminOnly || (paymentRequired && !paid)) return { send: true, adminOnly: true, reason: null }
   return { send: true, adminOnly: false, reason: null }
+}
+
+export function adminEmailAllowedForEvent(eventCode) {
+  return adminEmailEvents.has(eventCode)
 }
 
 export function notificationDescription(eventCode) {

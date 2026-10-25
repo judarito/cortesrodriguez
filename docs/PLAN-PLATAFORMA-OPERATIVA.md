@@ -78,6 +78,7 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - [x] Mostrar confirmación al usuario con referencia de solicitud; si el servicio requiere pago, iniciar Checkout Pro desde `/solicitud` sin notificar al experto hasta la confirmación del webhook.
 - [x] Mostrar clientes y solicitudes reales en el panel `/app`, protegidos por sesión y permisos.
 - [x] Implementar paginación server-side y búsqueda por texto para los listados de clientes y solicitudes.
+- [x] Crear el listado de pagos reutilizando `ListView`, con paginación, búsqueda, filtros de estado/fecha y acceso autorizado al detalle de la solicitud.
 - [ ] Crear entidades de contactos, documentos, tareas, comentarios, eventos e historial de actividad.
 - [ ] Registrar en cada solicitud `source_type`, `source_reference`, `source_metadata` y `created_by` para identificar su origen.
 - [ ] Ampliar el formulario `/solicitud` con origen, destino, modalidad, fechas, documentos y observaciones.
@@ -105,6 +106,10 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - [x] Conectar el envío operativo con reglas de destinatarios y guardar el identificador devuelto por Resend.
 - [x] Persistir eventos de dominio en un outbox transaccional e idempotente en Neon; entregar los identificadores mediante Cloudflare Queues en dev, con consumidor, reintentos y DLQ.
 - [x] Separar el resultado del pago del envío: un fallo de Resend programa reintento sin revertir el pago; mantener la misma clave idempotente al volver a enviar.
+- [x] Separar la campana del correo: persistir notificaciones de aplicación por evento aunque no corresponda enviar email o Resend falle.
+- [x] Limitar el correo administrativo a pago confirmado, asignación/alerta de asignación y revisiones; mantener los avisos de campana para todos los eventos autorizados.
+- [x] Emitir `expert_assigned` para la asignación automática inicial, respetando la barrera de pago antes de notificar al experto.
+- [x] Registrar `not_sent` en la campana cuando un evento no requiere correo (`031_app_notifications_without_email.sql`).
 - [x] Probar con Resend simulado la selección de destinatarios de pago aprobado, fallo → `pending_retry` → éxito y reutilización de clave; no se enviaron correos reales.
 - [ ] Completar prueba E2E de solicitud y pago en sandbox con una solicitud/destinatarios de prueba aislados, y verificar la DLQ mediante un fallo controlado.
 - [x] Configurar `RESEND_WEBHOOK_SECRET`, activar open tracking en el dominio y registrar el webhook dev.

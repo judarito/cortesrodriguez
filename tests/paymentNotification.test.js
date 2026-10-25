@@ -1,6 +1,22 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { enqueueNotification, notificationDescription, notificationPolicyForPayment, shouldNotifyClient } from '../worker/routes/operationsEmail.js'
+import { adminEmailAllowedForEvent, enqueueNotification, notificationDescription, notificationPolicyForPayment, shouldNotifyClient } from '../worker/routes/operationsEmail.js'
+import { roleAudiences, roleRecipientIds } from '../worker/routes/appNotifications.js'
+
+test('administrative email is limited to assignment and review events', () => {
+  assert.equal(adminEmailAllowedForEvent('expert_assigned'), true)
+  assert.equal(adminEmailAllowedForEvent('payment_approved'), true)
+  assert.equal(adminEmailAllowedForEvent('expert_response_submitted'), true)
+  assert.equal(adminEmailAllowedForEvent('similar_question_review'), true)
+  assert.equal(adminEmailAllowedForEvent('request_created'), false)
+  assert.equal(adminEmailAllowedForEvent('status_changed'), false)
+})
+
+test('admin-only events stay in the admin bell and do not leak to an assigned expert', () => {
+  const request = { source: 'landingpage', source_channel: 'direct_web', agent_id: null, assigned_expert_id: 'expert-1' }
+  assert.deepEqual(roleAudiences('request_created', request, true), { admin: true, agent: false, expert: false })
+  assert.deepEqual(roleRecipientIds('request_created', request, true), { agentId: null, expertId: null })
+})
 
 test('always includes the client in payment approval notifications', () => {
   assert.equal(shouldNotifyClient('payment_approved', ['admin', 'expert']), true)

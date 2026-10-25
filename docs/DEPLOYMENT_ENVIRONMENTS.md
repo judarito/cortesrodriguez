@@ -97,7 +97,7 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 
 ## Regla de notificaciones pagadas
 
-Las solicitudes que requieren pago se crean antes de cobrar para conservar su referencia; mientras no exista confirmación, la cola limita el aviso al administrador. El webhook registra `payment_approved` con idempotencia por solicitud y, tras la confirmación, se notifican las partes configuradas. Pagos rechazados/cancelados solo alertan al administrador. Los eventos se persisten antes del envío y se procesan en segundo plano; los fallos reintentan sin cambiar el estado del pago.
+Las solicitudes que requieren pago se crean antes de cobrar para conservar su referencia. Mientras no exista confirmación, el experto no recibe asignación por correo ni campana; administración sí conserva los avisos operativos aplicables. El webhook registra `payment_approved` con idempotencia por solicitud y, tras la confirmación, se notifican las partes configuradas. Los eventos se persisten antes del envío y se procesan en segundo plano; los fallos reintentan sin cambiar el estado del pago.
 
 ### Destinatarios y alcance de las reglas
 
@@ -106,6 +106,10 @@ Las solicitudes que requieren pago se crean antes de cobrar para conservar su re
 - Las reglas aplicables se combinan por evento, servicio, consulta y origen. Sus audiencias y direcciones adicionales se agregan a los destinatarios base del evento; una regla no puede quitar las notificaciones base al cliente o al experto asignado.
 - Para solicitudes que requieren pago, `request_created` avisa solo a administración hasta que el pago sea aprobado. Los pagos rechazados o cancelados también avisan solo a administración.
 - En `payment_approved`, el cliente recibe confirmación de que el pago fue recibido y que el equipo pronto lo contactará; la entrega de este correo sigue la cola idempotente y no cambia el estado del pago si Resend falla.
+- La confirmación de pago también se conserva por correo para el admin. Correos administrativos permitidos: pago aprobado, experto asignado/asignación fallida y revisiones (similitud o respuesta pendiente). Se suprime para admin el correo redundante de `request_created` y los avisos rutinarios; cliente/agente/experto siguen sus reglas.
+- La campana es independiente de Resend: se materializa desde cada evento idempotente aunque el email no aplique o falle. `email_status = 'not_sent'` se muestra como “No aplica”; los correos fallidos siguen mostrando reintento/fallo. Aplicar `031_app_notifications_without_email.sql` antes de desplegar esta versión.
+- Las asignaciones automáticas iniciales también generan `expert_assigned`. Si la solicitud requiere pago, el experto no recibe la asignación antes de confirmarse el pago; administración sí puede recibir el aviso de asignación.
+- `/app` → **Pagos** presenta un listado paginado de intentos, con búsqueda, filtros por estado/fecha y vínculo al detalle de solicitud cuando el usuario cuenta con `requests.read`; el endpoint requiere `payments.read`.
 
 ### Reconciliación de pagos
 
@@ -134,3 +138,11 @@ La acción administrativa **Verificar pago** consulta el recurso de pago en Merc
 - Worker `cortes-rodriguez-asesores-dev` desplegado correctamente; versión activa `3d4fa4cb-ad9a-4d20-9059-2f6f5d81563e`.
 - Incluye la revisión de respuesta en el detalle de la solicitud, el menú de Feedback de clientes separado y mejoras léxicas de detección de similitud. Producción no se modificó.
 - Pruebas: 10 suites aprobadas; `npm run build` y `git diff --check` correctos.
+
+### Listado de pagos y separación correo/campana (2026-10-24)
+
+- Se aplicó `031_app_notifications_without_email.sql` en Neon dev.
+- Worker `cortes-rodriguez-asesores-dev` desplegado con versión `9ecdf39a-44bb-4ee8-bc3f-e75eed84ae84`; producción no se modificó.
+- Incluye listado paginado de pagos, correos administrativos limitados a pago confirmado/asignación/revisión y materialización independiente de notificaciones de campana para todos los eventos autorizados.
+- Smoke test HTTP: `/` y `/api/public/features` responden 200; `/api/app/payments` sin sesión no concede acceso (403) y `/api/app/notifications` exige sesión (401).
+- Build y 11 suites aprobados.
