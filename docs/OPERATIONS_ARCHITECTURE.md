@@ -9,6 +9,14 @@ La plataforma operativa vive en el mismo repositorio y despliegue que la landing
 - `src/shared/`: componentes, autenticación, cliente API y utilidades compartidas.
 - `src/shared/components/ListView.vue`: componente común de listados con encabezado, barra de herramientas, tabla, paginación y estados de carga/vacío. Su contenedor visual debe ser autocontenido (no depender de estilos scoped del padre); en móvil presenta filas como tarjetas para evitar scroll horizontal.
 
+### Revisión de respuestas
+
+- La aprobación o devolución de una respuesta del experto se realiza dentro de **Solicitudes → detalle de la solicitud → Respuestas del experto**. El administrador puede agregar una nota opcional y aprobar/enviar al cliente o devolver al experto.
+- La bandeja independiente **Revisión de respuestas** se retiró para evitar duplicar acciones y contexto. **Feedback de clientes** permanece como vista administrativa separada.
+- Los controles de aprobación solo se muestran a administración y usan el endpoint protegido `PUT /api/app/reviews/responses/:responseId`; la API vuelve a validar permisos y estado pendiente. Antes de aprobar, verifica que el cliente tenga correo para no dejar una respuesta aprobada sin posibilidad de notificación.
+- El panel de detalle ocupa la mitad del viewport en escritorio y el ancho completo en pantallas pequeñas.
+- **Preguntas similares** sigue siendo un flujo separado: administración revisa candidatos antes de asignar la solicitud o adaptar una respuesta previa.
+
 ## Backend
 
 - `worker/routes/`: endpoints agrupados por dominio.

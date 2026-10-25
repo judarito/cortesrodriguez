@@ -83,7 +83,7 @@ onMounted(() => load(1))
       <p class="request-error">Confirma que la respuesta aplica al caso nuevo y no contiene datos ni documentos del cliente anterior.</p>
       <div class="similar-candidates"><h3>Respuestas anteriores</h3><p v-if="!selected.candidates.length" class="empty-row">No hay respuestas candidatas disponibles; deriva la solicitud a un experto.</p>
         <button v-for="candidate in selected.candidates" :key="candidate.responseId" type="button" :class="['similar-candidate', { active: candidate.responseId === selectedResponseId }]" @click="chooseCandidate(candidate)">
-          <span class="similar-candidate-heading"><strong>{{ candidate.sourceReference }} · {{ percent(candidate.score) }} de similitud</strong><small>Coincide: {{ candidate.sharedTerms.join(', ') }}</small></span>
+          <span class="similar-candidate-heading"><strong>{{ candidate.sourceReference }} · {{ candidate.matchLevel === 'high' ? 'Coincidencia alta' : 'Coincidencia posible' }} · {{ percent(candidate.score) }}</strong><small>Coincide: {{ candidate.sharedTerms.join(', ') }}</small></span>
           <span class="similar-source-question">{{ candidate.sourceQuestion }}</span><span class="similar-source-answer">{{ candidate.responseBody }}</span>
         </button>
       </div>

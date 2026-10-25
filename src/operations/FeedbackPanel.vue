@@ -1,0 +1,48 @@
+<script setup>
+import { onMounted, ref } from 'vue'
+import ListView from '../shared/components/ListView.vue'
+
+const props = defineProps({ token: { type: String, required: true } })
+const loading = ref(true)
+const error = ref('')
+const items = ref([])
+const pagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
+
+async function load(page = pagination.value.page) {
+  loading.value = true
+  error.value = ''
+  try {
+    const response = await fetch(`/api/app/reviews/feedback?page=${page}&pageSize=${pagination.value.pageSize}`, {
+      headers: { Authorization: `Bearer ${props.token}` },
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || 'No se pudo cargar el feedback.')
+    items.value = data.items || []
+    pagination.value = data.pagination || pagination.value
+  } catch (loadError) {
+    error.value = loadError.message
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(load)
+</script>
+
+<template>
+  <section class="module-view feedback-view">
+    <div class="module-heading">
+      <div><p class="eyebrow">Experiencia del cliente</p><h1>Feedback de clientes</h1><p>Consulta las calificaciones y comentarios asociados a las respuestas enviadas.</p></div>
+      <button type="button" class="secondary-button compact" @click="load">↻ Actualizar</button>
+    </div>
+    <p v-if="error" class="request-error">{{ error }}</p>
+    <ListView title="Feedback recibido" description="Las calificaciones bajas quedan marcadas para seguimiento administrativo." :count="pagination.totalItems" :page="pagination.page" :total-pages="pagination.totalPages" :loading="loading" :empty="!items.length && !loading" empty-text="Aún no hay feedback recibido." @previous="load(pagination.page - 1)" @next="load(pagination.page + 1)">
+      <template #columns><th>Solicitud</th><th>Cliente</th><th>Consulta</th><th>Experto</th><th>Calificación</th><th>Comentario</th><th>Estado</th></template>
+      <template #rows><tr v-for="item in items" :key="item.id"><td><strong class="request-id">{{ item.reference }}</strong></td><td>{{ item.clientName }}</td><td>{{ item.consultationType || '—' }}</td><td>{{ item.expertName || '—' }}</td><td><span :class="['feedback-rating', { low: item.rating <= 3 }]">{{ item.rating }} / 5</span></td><td class="feedback-comment">{{ item.comment || 'Sin comentario' }}</td><td><span :class="['security-status', { inactive: item.status === 'escalated' }]">{{ item.status === 'escalated' ? 'Requiere atención' : 'Recibido' }}</span></td></tr></template>
+    </ListView>
+  </section>
+</template>
+
+<style scoped>
+.feedback-view .module-heading{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:24px}.feedback-view .module-heading h1{margin:0 0 8px;color:#142c43;font-size:28px;letter-spacing:-.045em}.feedback-view .module-heading p:last-child{margin:0;color:#7d8999;font-size:13px}.feedback-rating{display:inline-flex;padding:4px 7px;border-radius:5px;color:#348267;background:#e9f7f0;font-size:10px;font-weight:800}.feedback-rating.low{color:#b54747;background:#fff0f1}.feedback-comment{max-width:260px;white-space:normal!important;line-height:1.4}@media(max-width:720px){.feedback-view .module-heading{display:block}.feedback-view .module-heading .secondary-button{margin-top:16px}}
+</style>

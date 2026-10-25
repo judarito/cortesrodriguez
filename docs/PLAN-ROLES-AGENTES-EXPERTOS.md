@@ -145,16 +145,17 @@ Asignación aleatoria entre expertos activos
 
 El “caché” es un índice interno para encontrar precedentes y una cola de revisión; no responde al cliente ni asigna una respuesta automáticamente. La solicitud nueva conserva su propio expediente, fuente y notificaciones durante todo el proceso.
 
-- [x] Normalizar texto en español (minúsculas, tildes, puntuación y palabras vacías) y comparar términos con Jaccard. La búsqueda queda acotada al mismo servicio general y tipo de consulta; se revisan hasta 500 respuestas anteriores enviadas.
+- [x] Normalizar texto en español (minúsculas, tildes, puntuación y palabras vacías) y combinar similitud de términos tolerante a erratas con similitud de bigramas en la secuencia. Empareja una palabra significativa desde 5 caracteres cuando hay hasta 1 edición (hasta 2 desde 9 caracteres), incluyendo transposiciones. La búsqueda queda acotada al mismo servicio general y tipo de consulta; se revisan hasta 500 respuestas anteriores enviadas.
 - [x] Usar solo precedentes con respuesta aprobada y enviada. Borradores, respuestas rechazadas y solicitudes de otras especialidades no son elegibles.
-- [x] Con el umbral inicial de Jaccard ≥ 0,30 y al menos 3 términos significativos en común, pausar la asignación automática y abrir una revisión para administración. El umbral es una señal de revisión, no una decisión de equivalencia.
+- [x] Con el umbral inicial de similitud ≥ 0,30 y al menos 3 términos coincidentes (exactos o tolerantes a erratas), pausar la asignación automática y abrir una revisión para administración; mostrar niveles “coincidencia alta” y “coincidencia posible”. El puntaje es una señal de revisión, no una decisión de equivalencia.
 - [x] Mostrar en la bandeja administrativa la pregunta actual y hasta cinco precedentes, incluyendo texto de respuesta, fecha, puntuación y términos coincidentes. Esta vista y sus endpoints son exclusivos de administración; cliente, agente y experto no reciben los candidatos.
 - [x] Dar a administración dos salidas explícitas: adaptar la respuesta anterior a la pregunta actual y aprobarla como una respuesta nueva, o descartar la coincidencia y asignar aleatoriamente a un experto elegible.
+- [x] Revisar y aprobar/devolver respuestas de expertos desde el detalle de su solicitud; retirar la bandeja de revisión duplicada del menú y conservar feedback como una vista administrativa independiente.
 - [x] Al reutilizar, crear una respuesta nueva asociada a la solicitud actual; nunca alterar el precedente. La revisión registra candidato, similitud, decisión, actor, fecha, respuesta derivada y nota administrativa.
 - [x] Notificar a administración cuando la solicitud quede en revisión. No avisar ni asignar a un experto hasta que administración descarte la coincidencia; al derivarla, conservar el origen directo/agente y disparar las reglas correspondientes.
 - [ ] Antes de reutilizar, advertir y revisar que la respuesta no incluya datos personales, identificadores, adjuntos, hechos únicos del expediente ni asesoría dependiente de documentos del cliente anterior. El administrador debe adaptar y aprobar el contenido para el nuevo caso.
 - [ ] Incorporar configuración para activar/desactivar, cambiar umbral y revisar decisiones. Registrar falsos positivos/negativos para calibración; nunca enviar respuesta solo por coincidencia automática.
-- [ ] Evaluar en dev precisión y falsos positivos con preguntas reales anonimizadas. La coincidencia léxica no detecta bien paráfrasis o sinónimos; IA/embeddings quedan fuera de esta etapa.
+- [ ] Evaluar en dev precisión y falsos positivos con preguntas reales anonimizadas. La coincidencia léxica tolerante a erratas no detecta bien paráfrasis o sinónimos; IA/embeddings quedan fuera de esta etapa.
 
 ### 5.2. Portal inicial para clientes y acceso passwordless
 
@@ -314,6 +315,8 @@ Todos los listados administrativos deben usar el componente común `ListView` y 
 - [ ] Revisar de forma transversal botones, formularios, paneles contextuales, estados de carga/vacío/error y controles de paginación; registrar y resolver discrepancias por módulo.
 
 **Estado del arreglo puntual (2026-10-24):** cambio local en `src/shared/components/ListView.vue`; `npm run build` y `git diff --check` pasan. Aún no desplegado ni publicado.
+
+**Actualización funcional (2026-10-24):** la detección de preguntas similares combina términos tolerantes a erratas y secuencia de bigramas, muestra coincidencia alta/posible y siempre requiere validación humana. La revisión de respuestas del experto se concentra en el detalle de la solicitud; se quitó el menú duplicado y se conservó una vista separada de feedback. Validación local: 10 suites y build correctos; publicación pendiente.
 
 La configuración se divide en secciones cortas mediante pestañas o módulos independientes:
 

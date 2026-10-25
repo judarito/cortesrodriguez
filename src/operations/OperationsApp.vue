@@ -6,7 +6,7 @@ import ListView from '../shared/components/ListView.vue'
 import NotificationConfigPanel from './NotificationConfigPanel.vue'
 import SecurityPanel from './SecurityPanel.vue'
 import ExpertRequestsPanel from './ExpertRequestsPanel.vue'
-import ResponseReviewPanel from './ResponseReviewPanel.vue'
+import FeedbackPanel from './FeedbackPanel.vue'
 import SimilarQuestionPanel from './SimilarQuestionPanel.vue'
 
 const token = ref(localStorage.getItem('operationsToken') || '')
@@ -28,6 +28,9 @@ const paymentVerifying = ref(false)
 const paymentVerificationResult = ref(null)
 const assignmentExpertId = ref('')
 const assignmentSaving = ref(false)
+const responseReviewSavingId = ref('')
+const responseAdminNotes = ref({})
+const responseReviewNotice = ref('')
 const requestCount = ref(0)
 const clientSearch = ref('')
 const requestSearch = ref('')
@@ -74,7 +77,7 @@ const menuItems = [
   { label: 'Servicios y consultas', permission: 'services.manage', icon: 'SV' },
   { label: 'Enlaces de agentes', permission: 'agent_links.manage', icon: 'AG' },
   { label: 'Solicitudes asignadas', permission: 'expert_requests.read', icon: 'EX' },
-  { label: 'Revisión de respuestas', permission: 'responses.review', icon: 'RV' },
+  { label: 'Feedback de clientes', permission: 'responses.review', icon: 'FB' },
   { label: 'Preguntas similares', permission: 'responses.similarity.review', icon: 'QS' },
 ]
 const visibleMenu = computed(() => menuItems.filter((item) => user.value?.permissions?.includes(item.permission) || (item.label === 'Preguntas similares' && user.value?.roles?.includes('admin'))))
@@ -255,6 +258,8 @@ async function createNotificationRule() {
 async function openRequestDetail(item) {
   requestDetail.value = null
   requestDetailError.value = ''
+  responseReviewNotice.value = ''
+  responseAdminNotes.value = {}
   paymentVerificationResult.value = null
   requestDetailLoading.value = true
   try {
@@ -267,6 +272,35 @@ async function openRequestDetail(item) {
     requestDetailError.value = detailError.message
   } finally {
     requestDetailLoading.value = false
+  }
+}
+
+async function reviewRequestResponse(expertResponse, action) {
+  if (!isAdmin.value || !requestDetail.value) return
+  const requestId = requestDetail.value.request.id
+  responseReviewSavingId.value = expertResponse.id
+  requestDetailError.value = ''
+  responseReviewNotice.value = ''
+  try {
+    const response = await appFetch(`/api/app/reviews/responses/${expertResponse.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token.value}` },
+      body: JSON.stringify({ action, adminNote: responseAdminNotes.value[expertResponse.id] || '' }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || 'No se pudo revisar la respuesta.')
+    responseReviewNotice.value = action === 'approve'
+      ? (data.queued ? 'Respuesta aprobada; el correo quedó en la cola de envío.' : 'Respuesta aprobada.')
+      : 'Respuesta devuelta al experto para corrección.'
+    await openRequestDetail({ id: requestId })
+    responseReviewNotice.value = action === 'approve'
+      ? (data.queued ? 'Respuesta aprobada; el correo quedó en la cola de envío.' : 'Respuesta aprobada.')
+      : 'Respuesta devuelta al experto para corrección.'
+    await loadModule('Solicitudes', requestPagination.value.page)
+  } catch (reviewError) {
+    requestDetailError.value = reviewError.message
+  } finally {
+    responseReviewSavingId.value = ''
   }
 }
 
@@ -562,7 +596,7 @@ onMounted(restoreSession)
       </section>
       <OperationsCatalogPanel v-else-if="activeMenu === 'Servicios y consultas' || activeMenu === 'Enlaces de agentes'" :token="token" :user="user" :section="activeMenu === 'Servicios y consultas' ? 'catalog' : 'links'" />
       <ExpertRequestsPanel v-else-if="activeMenu === 'Solicitudes asignadas'" :token="token" />
-      <ResponseReviewPanel v-else-if="activeMenu === 'Revisión de respuestas'" :token="token" />
+      <FeedbackPanel v-else-if="activeMenu === 'Feedback de clientes'" :token="token" />
       <SimilarQuestionPanel v-else-if="activeMenu === 'Preguntas similares'" :token="token" />
       <NotificationConfigPanel v-else-if="activeMenu === 'Configuración'" :token="token" />
       <section v-else-if="activeMenu === 'Configuración'" class="module-view security-view">
@@ -584,7 +618,7 @@ onMounted(restoreSession)
           <section class="detail-section"><h3>Datos de la operación</h3><dl class="detail-grid"><div><dt>Servicio</dt><dd>{{ requestDetail.request.serviceName }}</dd></div><div><dt>Tipo de servicio</dt><dd>{{ labelValue(requestDetail.request.serviceType) }}</dd></div><div><dt>Producto</dt><dd>{{ labelValue(requestDetail.request.productType) }}</dd></div><div><dt>Agente de carga</dt><dd>{{ requestDetail.request.freightAgent || 'No registrado' }}</dd></div><div><dt>Fuente</dt><dd>{{ requestDetail.request.source }}</dd></div><div><dt>Agente responsable</dt><dd>{{ requestDetail.request.agentName || 'Landingpage' }}</dd></div><div><dt>Creada</dt><dd>{{ formatDate(requestDetail.request.createdAt) }}</dd></div></dl></section>
           <section class="detail-section"><h3>Pago</h3><dl class="detail-grid" v-if="requestDetail.request.payment"><div><dt>Estado</dt><dd><span :class="['status-pill', statusClass(requestDetail.request.payment.status)]"><i></i>{{ paymentLabel(requestDetail.request.payment.status) }}</span></dd></div><div><dt>Referencia Mercado Pago</dt><dd>{{ requestDetail.request.payment.paymentId || 'Pendiente' }}</dd></div><div><dt>Preferencia</dt><dd>{{ requestDetail.request.payment.preferenceId || '—' }}</dd></div><div><dt>Valor USD</dt><dd>{{ (requestDetail.request.payment.usdAmountCents / 100).toFixed(2) }} USD</dd></div><div><dt>Valor COP</dt><dd>{{ (requestDetail.request.payment.copAmountCents / 100).toLocaleString('es-CO') }} COP</dd></div><div><dt>TRM</dt><dd>{{ requestDetail.request.payment.trm.toLocaleString('es-CO') }}</dd></div><div><dt>Actualizado</dt><dd>{{ formatDate(requestDetail.request.payment.updatedAt) }}</dd></div></dl><p v-else class="detail-empty">No se ha iniciado un pago para esta solicitud.</p><button v-if="isAdmin && requestDetail.request.paymentRequired" type="button" class="secondary-button compact" :disabled="paymentVerifying" @click="verifyRequestPayment">{{ paymentVerifying ? 'Verificando con Mercado Pago…' : 'Verificar pago' }}</button><p v-if="paymentVerificationResult" :class="['payment-diagnosis', paymentVerificationResult.error ? 'is-error' : '']">{{ paymentVerificationResult.error || paymentVerificationResult.message || paymentDiagnosisLabel(paymentVerificationResult.reasonCode) }}<template v-if="paymentVerificationResult.payment"> Estado: {{ paymentLabel(paymentVerificationResult.payment.status) }} · Recibido: {{ paymentVerificationResult.payment.currency }} {{ (paymentVerificationResult.payment.amountCents / 100).toLocaleString('es-CO') }}<template v-if="paymentVerificationResult.payment.expectedAmountCents != null"> · Esperado: COP {{ (paymentVerificationResult.payment.expectedAmountCents / 100).toLocaleString('es-CO') }}</template></template></p><div v-else-if="requestDetail.paymentDiagnostic" class="payment-diagnosis">Última verificación: {{ paymentDiagnosisLabel(requestDetail.paymentDiagnostic.reasonCode) }} · {{ formatDate(requestDetail.paymentDiagnostic.createdAt) }}<span v-if="requestDetail.paymentDiagnostic.paymentId"> · Pago {{ requestDetail.paymentDiagnostic.paymentId }}</span><span v-if="requestDetail.paymentDiagnostic.amountCents != null"> · {{ requestDetail.paymentDiagnostic.currency }} {{ (requestDetail.paymentDiagnostic.amountCents / 100).toLocaleString('es-CO') }}</span></div><p v-if="requestDetail.paymentNotification" class="payment-delivery-status">Correo del pago: {{ requestDetail.paymentNotification.status === 'sent' ? 'enviado a Resend' : requestDetail.paymentNotification.status === 'pending' ? `pendiente de reintento (${requestDetail.paymentNotification.attempts} intentos)` : requestDetail.paymentNotification.status === 'failed' ? 'requiere revisión administrativa' : 'en proceso' }}</p></section>
           <section v-if="isAdmin" class="detail-section"><h3>Asignación del experto</h3><p class="assignment-current">{{ requestDetail.assignment?.expertName ? `Asignada a ${requestDetail.assignment.expertName}` : 'En cola administrativa: todavía no hay experto asignado.' }}</p><div v-if="requestDetail.eligibleExperts?.length" class="assignment-controls"><label>Experto<select v-model="assignmentExpertId"><option value="" disabled>Selecciona un experto</option><option v-for="expert in requestDetail.eligibleExperts" :key="expert.id" :value="expert.id">{{ expert.name }}</option></select></label><button type="button" class="primary-button compact" :disabled="!assignmentExpertId || assignmentSaving || assignmentExpertId === requestDetail.assignment?.expertId" @click="assignRequestExpert">{{ assignmentSaving ? 'Asignando…' : requestDetail.assignment?.expertId ? 'Reasignar' : 'Asignar experto' }}</button></div><p v-else class="detail-empty">No hay expertos activos asociados a este tipo de consulta. La solicitud queda pendiente hasta que se configure uno.</p><ul v-if="requestDetail.assignment?.history?.length" class="assignment-history"><li v-for="item in requestDetail.assignment.history" :key="item.id"><strong>{{ item.expertName || 'Sin asignar' }}</strong><span>{{ item.status === 'failed' ? 'Sin expertos disponibles' : item.status === 'reassigned' ? 'Reasignada' : 'Asignada' }} · {{ formatDate(item.assignedAt) }}</span></li></ul></section>
-          <section class="detail-section"><h3>Respuestas del experto</h3><div v-if="!requestDetail.responses?.length" class="detail-empty">Aún no hay respuestas registradas.</div><div v-for="expertResponse in requestDetail.responses" :key="expertResponse.id" class="request-response-item"><div class="request-response-heading"><div><strong>Versión {{ expertResponse.version }}</strong><span>{{ expertResponse.expertName }} · {{ formatDate(expertResponse.createdAt) }}</span></div><span :class="['status-pill', statusClass(expertResponse.status)]"><i></i>{{ labelValue(expertResponse.status) }}</span></div><p v-if="expertResponse.bodyVisible" class="request-response-body">{{ expertResponse.body }}</p><p v-else class="request-response-pending">La respuesta está pendiente de aprobación administrativa.</p><p v-if="expertResponse.adminNote" class="request-response-note"><strong>Nota administrativa:</strong> {{ expertResponse.adminNote }}</p></div></section>
+          <section class="detail-section"><h3>Respuestas del experto</h3><p v-if="responseReviewNotice" class="security-notice">{{ responseReviewNotice }}</p><div v-if="!requestDetail.responses?.length" class="detail-empty">Aún no hay respuestas registradas.</div><div v-for="expertResponse in requestDetail.responses" :key="expertResponse.id" class="request-response-item"><div class="request-response-heading"><div><strong>Versión {{ expertResponse.version }}</strong><span>{{ expertResponse.expertName }} · {{ formatDate(expertResponse.createdAt) }}</span></div><span :class="['status-pill', statusClass(expertResponse.status)]"><i></i>{{ labelValue(expertResponse.status) }}</span></div><p v-if="expertResponse.bodyVisible" class="request-response-body">{{ expertResponse.body }}</p><p v-else class="request-response-pending">La respuesta está pendiente de aprobación administrativa.</p><p v-if="expertResponse.adminNote" class="request-response-note"><strong>Nota administrativa:</strong> {{ expertResponse.adminNote }}</p><div v-if="isAdmin && expertResponse.status === 'pending_admin_review'" class="detail-response-review"><label>Nota para el cliente o indicaciones para el experto<textarea v-model="responseAdminNotes[expertResponse.id]" rows="3" maxlength="5000" placeholder="Opcional"></textarea></label><div class="detail-response-actions"><button type="button" class="danger-link" :disabled="responseReviewSavingId === expertResponse.id" @click="reviewRequestResponse(expertResponse, 'reject')">Devolver al experto</button><button type="button" class="primary-button compact" :disabled="responseReviewSavingId === expertResponse.id" @click="reviewRequestResponse(expertResponse, 'approve')">{{ responseReviewSavingId === expertResponse.id ? 'Procesando…' : 'Aprobar y enviar' }}</button></div></div></div></section>
           <section class="detail-section"><h3>Historial del cliente</h3><div class="request-history"><div v-for="historyItem in requestDetail.history" :key="historyItem.id" class="request-history-item"><div><strong>{{ historyItem.reference }}</strong><span>{{ labelValue(historyItem.serviceType) }} · {{ labelValue(historyItem.productType) }}</span></div><span :class="['status-pill', statusClass(historyItem.status)]"><i></i>{{ labelValue(historyItem.status) }}</span></div></div></section>
         </template>
       </section>
@@ -621,4 +655,7 @@ onMounted(restoreSession)
 .detail-empty{padding:14px;border:1px dashed #dce5ed;border-radius:8px;color:#98a2b3;font-size:10px}.request-response-item{display:grid;gap:10px;padding:14px;border:1px solid #e5eaf0;border-radius:8px;background:#fbfcfe}.request-response-item+.request-response-item{margin-top:10px}.request-response-heading{display:flex;align-items:start;justify-content:space-between;gap:10px}.request-response-heading>div{display:grid;gap:4px}.request-response-heading strong{color:#344b60;font-size:11px}.request-response-heading span:not(.status-pill){color:#7d8999;font-size:10px}.request-response-body{margin:0;padding:12px;border-radius:7px;color:#344b60;background:#fff;font-size:11px;line-height:1.6;white-space:pre-wrap}.request-response-pending{margin:0;color:#98a2b3;font-size:10px}.request-response-note{margin:0;padding-top:10px;border-top:1px solid #e5eaf0;color:#526174;font-size:10px;line-height:1.5}.request-response-note strong{color:#344b60}.assignment-controls{display:flex;align-items:end;gap:10px;max-width:520px}.assignment-controls label{display:grid;flex:1;gap:6px;color:#526174;font-size:10px;font-weight:700}.assignment-controls select{min-height:38px;padding:0 10px;border:1px solid #d8e0ea;border-radius:6px;color:#344b60;background:#fff;font-size:11px}.assignment-current{margin:0 0 12px;color:#526174;font-size:11px}.assignment-history{display:grid;gap:8px;margin:14px 0 0;padding:0;list-style:none}.assignment-history li{display:grid;gap:3px;padding:9px 11px;border:1px solid #edf1f5;border-radius:7px}.assignment-history strong{color:#344b60;font-size:10px}.assignment-history span{color:#98a2b3;font-size:9px}@media(max-width:520px){.assignment-controls{align-items:stretch;flex-direction:column}}
 .payment-diagnosis,.payment-delivery-status{margin:12px 0 0;padding:11px 12px;border:1px solid #dce7ef;border-radius:7px;color:#526174;background:#f7fafc;font-size:10px;line-height:1.5}.payment-diagnosis.is-error{border-color:#f3c6c6;color:#a33a3a;background:#fff6f6}.payment-delivery-status{color:#397aa2}
 .brand-logo{display:block;width:44px;height:44px;flex:0 0 44px;border:1px solid rgba(255,255,255,.26);border-radius:10px;background:#fff;object-fit:contain}.brand-logo-login{width:58px;height:58px;padding:3px;border-color:#e4e9ef;border-radius:12px}
+.request-detail-panel{width:50vw}
+.detail-response-review{display:grid;gap:12px;padding-top:10px;border-top:1px solid #e5eaf0}.detail-response-review label{display:grid;gap:6px;color:#526174;font-size:10px;font-weight:700}.detail-response-review textarea{width:100%;padding:10px;border:1px solid #d8e0ea;border-radius:7px;resize:vertical;color:#344b60;background:#fff;font:inherit;font-size:11px}.detail-response-actions{display:flex;justify-content:flex-end;align-items:center;gap:9px}.detail-response-actions .primary-button{min-height:36px;padding:0 13px}.detail-response-actions .danger-link{min-height:36px;padding:0 12px;border:1px solid #f0c5c5;border-radius:7px;color:#b54747;background:#fff;font-size:11px;font-weight:700;cursor:pointer}.detail-response-actions button:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:720px){.request-detail-panel{width:100%;max-width:none;padding:36px 20px}}
 </style>

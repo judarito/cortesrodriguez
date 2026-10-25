@@ -76,6 +76,7 @@ export async function handleOperationsReviews(request, env) {
   `
   if (!rows[0]) return response({ error: 'Respuesta no encontrada.' }, 404)
   if (rows[0].status !== 'pending_admin_review') return response({ error: 'La respuesta ya fue revisada.' }, 409)
+  if (action === 'approve' && !rows[0].email) return response({ error: 'El cliente no tiene correo registrado.' }, 409)
 
   if (action === 'reject') {
     const updated = await sql`
@@ -94,7 +95,6 @@ export async function handleOperationsReviews(request, env) {
     WHERE id = ${match[1]}
     RETURNING id, status, admin_note
   `
-  if (!rows[0].email) return response({ error: 'El cliente no tiene correo registrado.' }, 409)
   await enqueueNotification(sql, rows[0].request_id, 'expert_response_approved', {
     idempotencyKey: `expert_response_approved/${approved[0].id}`,
     actorId: claims.sub,
