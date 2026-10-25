@@ -46,6 +46,8 @@ La plataforma operativa vive en el mismo repositorio y despliegue que la landing
 - El correo administrativo se limita a confirmación de pago, asignación/alerta de asignación y revisión (pregunta similar o respuesta pendiente). El admin no recibe el correo genérico de solicitud creada ni avisos rutinarios de cambio de estado. Los correos para cliente, experto y agente conservan sus reglas y restricciones de pago.
 - Las asignaciones automáticas iniciales generan `expert_assigned`; si la solicitud exige pago y aún no se ha pagado, el aviso previo queda limitado al admin. El experto recibe notificación después de la confirmación de pago.
 - `031_app_notifications_without_email.sql` agrega `not_sent` a los estados de email de la campana para representar eventos que no deben producir correo.
+- Al detectar una notificación nueva, la campanita presenta un aviso emergente temporal con su título y mensaje, además del contador. El aviso permite abrir la solicitud (y marcar la notificación como leída), cerrarse manualmente o desaparecer a los siete segundos.
+- La carga inicial solo registra los IDs ya existentes para no generar avisos retroactivos. Las cargas posteriores comparan IDs conocidos para evitar duplicados por refrescos o reconexión; el polling de respaldo también detecta novedades. La bandeja persistida sigue siendo la fuente de verdad.
 
 ## Rutas previstas
 

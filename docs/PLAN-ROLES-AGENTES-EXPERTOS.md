@@ -239,6 +239,7 @@ La campanita del encabezado debe convertirse en una bandeja persistente de notif
 - [x] Reutilizar el WebSocket para invalidar/refrescar estados de solicitudes cuando el outbox procesa eventos; refrescar lista/detalle abiertos, bandeja de experto y dashboard, con destinatarios limitados al admin, agente de origen y experto asignado. La señal no lleva PII y la API vuelve a validar permisos; al perder realtime se resincroniza al reconectar y con fallback de 60 s.
 - [x] Revalidar en servidor el alcance de cada notificación histórica, el contador y la acción de lectura contra el rol vigente y la asignación/origen actual; evita que un experto vea avisos globales, antiguos de admin o de otras asignaciones.
 - [x] Implementar campanita, contador, estado/fecha del correo, lectura, carga de avisos anteriores y apertura de solicitud con autorización del rol.
+- [x] Mostrar un aviso emergente accesible al recibir notificaciones nuevas, con enlace al caso y cierre automático/manual; no repetirlo al inicializar, refrescar o reconectar.
 - [x] Añadir pruebas unitarias para contenido por rol, privacidad del experto, atribución del agente y enrutamiento exclusivo al experto asignado.
 - [ ] Completar pruebas integrales de permisos de API, reconexión/WebSocket caído, lectura, idempotencia en Neon y entrega/reintento de Resend en dev.
 - [x] Registrar las cuotas gratuitas consultadas de Queues y Durable Objects y habilitar fallback sin WebSocket. **Pendiente:** instrumentar métricas/alertas de consumo y confirmar cuotas en la cuenta antes de producción.

@@ -10,18 +10,22 @@ const open = ref(false)
 const loading = ref(false)
 const error = ref('')
 const socketState = ref('offline')
+const toastNotification = ref(null)
 let socket
 let reconnectTimer
 let pollTimer
+let toastTimer
 let reconnectAttempt = 0
 let disposed = false
+let notificationsInitialized = false
+const knownNotificationIds = new Set()
 
 const visibleCount = computed(() => unreadCount.value > 99 ? '99+' : unreadCount.value)
 function emailStatusLabel(status) {
   return ({ not_sent: 'No aplica', accepted: 'Aceptado por Resend', sent: 'Enviado', delivered: 'Entregado', opened: 'Abierto', failed: 'Fallido', bounced: 'Rebotado', complained: 'Reportado', pending_retry: 'Pendiente de reintento' })[status] || status
 }
 
-async function load({ before = null, append = false } = {}) {
+async function load({ before = null, append = false, announce = !before && !append } = {}) {
   if (!props.token) return
   loading.value = true
   try {
@@ -30,9 +34,20 @@ async function load({ before = null, append = false } = {}) {
     const response = await fetch(`/api/app/notifications?${params}`, { headers: { Authorization: `Bearer ${props.token}` }, cache: 'no-store' })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.error || 'No se pudieron cargar las notificaciones.')
+    const incoming = data.items || []
+    if (!notificationsInitialized) {
+      incoming.forEach((item) => knownNotificationIds.add(item.id))
+      notificationsInitialized = true
+    } else if (announce) {
+      const fresh = incoming.filter((item) => !item.readAt && !knownNotificationIds.has(item.id))
+      incoming.forEach((item) => knownNotificationIds.add(item.id))
+      if (fresh.length) showToast(fresh[0])
+    } else {
+      incoming.forEach((item) => knownNotificationIds.add(item.id))
+    }
     items.value = append
-      ? [...items.value, ...(data.items || []).filter((item) => !items.value.some((existing) => existing.id === item.id))]
-      : data.items || []
+      ? [...items.value, ...incoming.filter((item) => !items.value.some((existing) => existing.id === item.id))]
+      : incoming
     unreadCount.value = Number(data.unreadCount || 0)
     nextCursor.value = data.nextCursor || null
     error.value = ''
@@ -41,6 +56,23 @@ async function load({ before = null, append = false } = {}) {
   } finally {
     loading.value = false
   }
+}
+
+function showToast(item) {
+  toastNotification.value = item
+  window.clearTimeout(toastTimer)
+  toastTimer = window.setTimeout(() => { toastNotification.value = null }, 7000)
+}
+
+function dismissToast() {
+  toastNotification.value = null
+  window.clearTimeout(toastTimer)
+}
+
+function openToast() {
+  const item = toastNotification.value
+  if (item) markRead(item)
+  dismissToast()
 }
 
 function loadMore() {
@@ -110,6 +142,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposed = true
   window.clearTimeout(reconnectTimer)
+  window.clearTimeout(toastTimer)
   window.clearInterval(pollTimer)
   document.removeEventListener('click', onOutsideClick)
   socket?.close()
@@ -134,10 +167,19 @@ onBeforeUnmount(() => {
       </button>
       <button v-if="nextCursor" class="notification-more" type="button" :disabled="loading" @click="loadMore">{{ loading ? 'Cargando…' : 'Cargar anteriores' }}</button>
     </section>
+    <Transition name="notification-toast">
+      <div v-if="toastNotification" class="notification-toast" role="status" aria-live="polite">
+        <span class="notification-toast-icon" aria-hidden="true">♢</span>
+        <button class="notification-toast-content" type="button" @click="openToast"><strong>{{ toastNotification.title }}</strong><span>{{ toastNotification.message }}</span><small>Ver solicitud</small></button>
+        <button class="notification-toast-close" type="button" aria-label="Cerrar aviso" @click="dismissToast">×</button>
+      </div>
+    </Transition>
   </div>
 </template>
 
 <style scoped>
 .notification-bell{position:relative}.bell-trigger{position:relative;display:grid;place-items:center;width:36px;height:36px;border:1px solid transparent;border-radius:8px;color:#526174;background:transparent;cursor:pointer}.bell-trigger:hover,.bell-trigger[aria-expanded=true]{border-color:#e2e8f0;background:#fff}.bell-trigger svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.bell-count{position:absolute;top:-3px;right:-5px;display:grid;place-items:center;min-width:17px;height:17px;padding:0 4px;border:2px solid #f6f8fb;border-radius:10px;color:#fff;background:#e44d55;font-size:8px;font-weight:800}.connection-dot{position:absolute;right:2px;bottom:2px;width:6px;height:6px;border:1px solid #fff;border-radius:50%;background:#aab3bf}.connection-dot.online{background:#45ad84}.notification-popover{position:absolute;z-index:50;top:44px;right:-54px;width:min(380px,calc(100vw - 28px));max-height:min(520px,calc(100vh - 120px));overflow:auto;border:1px solid #e3e9ef;border-radius:11px;background:#fff;box-shadow:0 14px 40px rgba(20,44,67,.18)}.notification-popover>header{position:sticky;top:0;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #edf1f5;background:#fff}.notification-popover>header div{display:grid;gap:3px}.notification-popover>header strong{color:#223b53;font-size:13px}.notification-popover>header small,.notification-popover>header button{color:#8693a2;font-size:10px}.notification-popover>header button{padding:5px 8px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;cursor:pointer}.notification-item{display:flex;width:100%;align-items:start;gap:12px;padding:13px 16px;border:0;border-bottom:1px solid #f0f2f5;color:inherit;background:#fff;text-align:left;cursor:pointer}.notification-item:hover,.notification-item.unread{background:#f6fafc}.notification-copy{display:grid;gap:5px;min-width:0;flex:1}.notification-copy strong{color:#344b60;font-size:11px}.notification-copy>span{color:#637387;font-size:10px;line-height:1.45}.notification-copy small{color:#98a2b3;font-size:9px}.notification-item>i{width:7px;height:7px;flex:0 0 7px;margin-top:4px;border-radius:50%;background:#3c91b4}.notification-empty,.notification-error{padding:24px 16px;color:#8794a3;font-size:11px;text-align:center}.notification-error{color:#a33a3a}
 .notification-more{display:block;width:calc(100% - 28px);margin:10px 14px 14px;padding:8px;border:1px solid #e2e8f0;border-radius:7px;color:#315b78;background:#fff;font-size:10px;font-weight:700;cursor:pointer}.notification-more:disabled{opacity:.6;cursor:wait}
+.notification-toast{position:fixed;z-index:1000;right:24px;bottom:24px;display:flex;width:min(390px,calc(100vw - 32px));align-items:flex-start;gap:12px;padding:15px;border:1px solid #dce7ef;border-radius:12px;background:#fff;box-shadow:0 16px 44px rgba(20,44,67,.2)}.notification-toast-icon{display:grid;width:34px;height:34px;flex:0 0 34px;place-items:center;border-radius:10px;color:#176084;background:#e9f5fa;font-size:22px}.notification-toast-content{display:grid;flex:1;gap:5px;padding:0;border:0;background:transparent;text-align:left;cursor:pointer}.notification-toast-content strong{color:#223b53;font-size:12px}.notification-toast-content span{color:#637387;font-size:11px;line-height:1.45}.notification-toast-content small{margin-top:2px;color:#176084;font-size:10px;font-weight:800}.notification-toast-close{padding:0;border:0;color:#8491a0;background:transparent;font-size:20px;line-height:1;cursor:pointer}.notification-toast-enter-active,.notification-toast-leave-active{transition:opacity .2s ease,transform .2s ease}.notification-toast-enter-from,.notification-toast-leave-to{opacity:0;transform:translateY(10px)}
+@media(max-width:600px){.notification-toast{right:12px;bottom:12px}}
 </style>
