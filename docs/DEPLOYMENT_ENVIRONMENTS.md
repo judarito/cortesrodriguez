@@ -23,6 +23,13 @@
 - `npm run build`, 11 suites (`node --test tests/*.test.js`) y `git diff --check` pasaron.
 - Producción no fue modificada. Pendiente: validación manual autenticada con cuentas de admin y experto.
 
+### Aviso emergente de notificaciones (2026-10-24)
+
+- Commit de aplicación y documentación: `b22d88e` (`Show toast for incoming app notifications`), subido a `origin/dev`.
+- Worker dev: `cortes-rodriguez-asesores-dev`; versión `a5a32561-56ab-4357-8718-efb0a09fe566`.
+- El toast muestra título y mensaje durante siete segundos; al abrirlo marca como leída la notificación y navega a la solicitud. La comparación de IDs evita avisos retroactivos/duplicados; el sondeo detecta novedades si realtime no está conectado.
+- Verificación: build y 11 suites aprobados; `/` y `/api/public/features` respondieron HTTP 200. Producción no se modificó.
+
 ## Protección requerida en GitHub
 
 En `main` se debe activar:
