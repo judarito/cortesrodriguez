@@ -48,6 +48,7 @@ const agentFormNotice = ref('')
 const agentForm = ref({ fullName: '', legalEntityType: '', email: '', phone: '', whatsapp: '', serviceType: '', freightAgent: '', productType: '' })
 const clientPagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
 const requestPagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
+const requestTab = ref('all')
 const dashboardLoading = ref(false)
 const dashboardError = ref('')
 const securityLoading = ref(false)
@@ -80,11 +81,10 @@ const menuItems = [
   { label: 'Configuración', permission: 'settings.manage', icon: '⚙' },
   { label: 'Servicios y consultas', permission: 'services.manage', icon: 'SV' },
   { label: 'Enlaces de agentes', permission: 'agent_links.manage', icon: 'AG' },
-  { label: 'Solicitudes asignadas', permission: 'expert_requests.read', icon: 'EX' },
   { label: 'Feedback de clientes', permission: 'responses.review', icon: 'FB' },
   { label: 'Preguntas similares', permission: 'responses.similarity.review', icon: 'QS' },
 ]
-const visibleMenu = computed(() => menuItems.filter((item) => user.value?.permissions?.includes(item.permission) || (item.label === 'Preguntas similares' && user.value?.roles?.includes('admin'))))
+const visibleMenu = computed(() => menuItems.filter((item) => user.value?.permissions?.includes(item.permission) || (item.label === 'Solicitudes' && isExpert.value && user.value?.permissions?.includes('expert_requests.read')) || (item.label === 'Preguntas similares' && user.value?.roles?.includes('admin'))))
 const isAuthenticated = computed(() => Boolean(token.value && user.value))
 const isAgent = computed(() => user.value?.roles?.includes('agent'))
 const isAdmin = computed(() => user.value?.roles?.includes('admin'))
@@ -179,6 +179,7 @@ async function loadModule(module, page = 1) {
     const path = isClients ? '/api/app/clients' : '/api/app/requests'
     const params = new URLSearchParams({ page: String(page), pageSize: String(pagination.pageSize), search })
     if (!isClients) Object.entries(requestFilters.value).forEach(([key, value]) => { if (value) params.set(key, value) })
+    if (!isClients && isAdmin.value && requestTab.value === 'assigned') params.set('assignedOnly', 'true')
     const response = await appFetch(`${path}?${params.toString()}`, { headers: { Authorization: `Bearer ${token.value}` } })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.error || 'No se pudieron cargar los datos.')
@@ -202,7 +203,7 @@ async function selectMenu(item) {
   activeMenu.value = item.label
   mobileMenuOpen.value = false
   if (item.label === 'Inicio') await loadDashboard()
-  if (item.label === 'Clientes' || item.label === 'Solicitudes') await loadModule(item.label, 1)
+  if (item.label === 'Clientes' || (item.label === 'Solicitudes' && !isExpert.value)) await loadModule(item.label, 1)
   if (item.label === 'Usuarios y roles') await loadSecurity()
   if (item.label === 'Configuración') await loadNotifications()
 }
@@ -283,7 +284,7 @@ async function openNotification(item) {
   if (!item.requestId) return
   if (isExpert.value) {
     notificationRequestId.value = item.requestId
-    activeMenu.value = 'Solicitudes asignadas'
+    activeMenu.value = 'Solicitudes'
     return
   }
   const targetMenu = visibleMenu.value.find((entry) => entry.label === 'Solicitudes')
@@ -296,8 +297,8 @@ async function refreshRequestViews(event = {}) {
   if (requestDetail.value?.request?.id && (!requestId || requestDetail.value.request.id === requestId)) {
     await openRequestDetail({ id: requestDetail.value.request.id })
   }
-  if (activeMenu.value === 'Solicitudes') await loadModule('Solicitudes', requestPagination.value.page)
-  if (activeMenu.value === 'Solicitudes asignadas') expertRequestRefreshKey.value += 1
+  if (activeMenu.value === 'Solicitudes' && isExpert.value) expertRequestRefreshKey.value += 1
+  else if (activeMenu.value === 'Solicitudes') await loadModule('Solicitudes', requestPagination.value.page)
   if (activeMenu.value === 'Inicio') await loadDashboard()
 }
 
@@ -456,6 +457,7 @@ async function createAgentRequest() {
 
 async function openAgentForm() {
   activeMenu.value = 'Solicitudes'
+  requestTab.value = 'all'
   agentFormOpen.value = true
   await loadModule('Solicitudes', 1)
 }
@@ -464,6 +466,13 @@ async function changePage(module, page) {
   const pagination = module === 'Clientes' ? clientPagination.value : requestPagination.value
   if (page < 1 || page > pagination.totalPages || page === pagination.page) return
   await loadModule(module, page)
+}
+
+async function setRequestTab(tab) {
+  if (!isAdmin.value || !['all', 'assigned'].includes(tab)) return
+  requestTab.value = tab
+  requestPagination.value = { ...requestPagination.value, page: 1 }
+  await loadModule('Solicitudes', 1)
 }
 
 const metrics = ref([
@@ -607,10 +616,12 @@ onMounted(restoreSession)
         <form class="module-search" @submit.prevent="searchModule('Clientes')"><span>⌕</span><input v-model="clientSearch" type="search" placeholder="Buscar por nombre..." /><button type="submit">Buscar</button></form>
         <div v-if="moduleLoading" class="module-state panel">Cargando clientes…</div><div v-else-if="moduleError" class="module-state module-state-error panel">{{ moduleError }}</div><ListView v-else title="Clientes registrados" description="Personas y empresas que han registrado solicitudes." :count="clientPagination.totalItems" :page="clientPagination.page" :total-pages="clientPagination.totalPages" :empty="!clients.length" empty-text="No encontramos clientes con ese criterio." @previous="changePage('Clientes', clientPagination.page - 1)" @next="changePage('Clientes', clientPagination.page + 1)"><template #columns><th>Cliente</th><th>Solicitudes</th><th>Registro</th><th>Identificador</th></template><template #rows><tr v-for="client in clients" :key="client.id"><td><div class="table-person"><span class="avatar avatar-table">{{ client.fullName.slice(0, 2).toUpperCase() }}</span><strong>{{ client.fullName }}</strong></div></td><td><span class="count-badge">{{ client.requestCount }}</span></td><td>{{ formatDate(client.createdAt) }}</td><td class="muted-cell">{{ client.id.slice(0, 8) }}…</td></tr></template></ListView>
       </section>
+      <ExpertRequestsPanel v-else-if="activeMenu === 'Solicitudes' && isExpert" :token="token" :open-request-id="notificationRequestId" :refresh-key="expertRequestRefreshKey" @request-opened="notificationRequestId = ''" />
       <section v-else-if="activeMenu === 'Solicitudes'" class="module-view">
         <div class="module-heading"><div><p class="eyebrow">Seguimiento operativo</p><h1>Solicitudes</h1><p>Consulta el estado y los datos de cada requerimiento recibido.</p></div><button type="button" class="secondary-button compact" @click="selectMenu({ label: 'Solicitudes' })">↻ Actualizar</button></div>
+        <div v-if="isAdmin" class="security-tabs request-tabs" role="tablist" aria-label="Vista de solicitudes"><button type="button" role="tab" :aria-selected="requestTab === 'all'" :class="{ active: requestTab === 'all' }" @click="setRequestTab('all')">Todas</button><button type="button" role="tab" :aria-selected="requestTab === 'assigned'" :class="{ active: requestTab === 'assigned' }" @click="setRequestTab('assigned')">Asignadas</button></div>
         <form class="module-search" @submit.prevent="searchModule('Solicitudes')"><span>⌕</span><input v-model="requestSearch" type="search" placeholder="Buscar por referencia, cliente, servicio o estado..." /><button type="submit">Buscar</button></form><div class="advanced-filter-toolbar"><button type="button" class="secondary-button compact" @click="requestFiltersOpen = !requestFiltersOpen">⚙ Filtros avanzados</button><span v-if="requestFilters.status || requestFilters.serviceType || requestFilters.source || requestFilters.agentId || requestFilters.dateFrom || requestFilters.dateTo" class="filter-active-note">Filtros activos</span></div><div v-if="requestFiltersOpen" class="advanced-filters panel"><label>Estado<select v-model="requestFilters.status"><option value="">Todos</option><option value="pending">Pendiente</option><option value="in_review">En revisión</option><option value="in_progress">En gestión</option><option value="closed">Cerrada</option><option value="cancelled">Cancelada</option></select></label><label>Tipo de servicio<select v-model="requestFilters.serviceType"><option value="">Todos</option><option value="exportacion">Exportación</option><option value="importacion">Importación</option><option value="agente_carga">Agente de carga</option></select></label><label>Fuente<select v-model="requestFilters.source"><option value="">Todas</option><option value="direct_web">Página web</option><option value="agent_link">Agente</option></select></label><label v-if="user.permissions?.includes('users.manage')">Agente<select v-model="requestFilters.agentId"><option value="">Todos</option><option v-for="agent in requestAgents" :key="agent.id" :value="agent.id">{{ agent.name }}</option></select></label><label>Desde<input v-model="requestFilters.dateFrom" type="date" /></label><label>Hasta<input v-model="requestFilters.dateTo" type="date" /></label><div class="advanced-filter-actions"><button type="button" class="secondary-button compact" @click="clearRequestFilters">Limpiar</button><button type="button" class="primary-button compact" @click="searchModule('Solicitudes')">Aplicar filtros</button></div></div>
-        <div v-if="agentFormOpen" class="agent-request-card panel"><div class="panel-heading"><div><p class="eyebrow">Solicitud interna</p><h2>Nueva solicitud sin cobro</h2><p>Registra una solicitud de tu cliente y quedará asociada a tu usuario.</p></div><button type="button" class="request-detail-close" @click="agentFormOpen = false">×</button></div><form class="agent-request-form" @submit.prevent="createAgentRequest"><label>Nombre completo<input v-model="agentForm.fullName" required placeholder="Nombre del cliente" /></label><label>Constitución legal<select v-model="agentForm.legalEntityType" required><option value="" disabled>Selecciona una opción</option><option value="natural">Persona natural</option><option value="juridica">Persona jurídica</option></select></label><label>Correo electrónico<input v-model="agentForm.email" type="email" placeholder="nombre@empresa.com" /></label><label>Teléfono<input v-model="agentForm.phone" placeholder="+57 300 000 0000" /></label><label>WhatsApp<input v-model="agentForm.whatsapp" placeholder="+57 300 000 0000" /></label><label>Tipo de servicio<select v-model="agentForm.serviceType" required><option value="" disabled>Selecciona una opción</option><option value="exportacion">Exportación</option><option value="importacion">Importación</option><option value="agente_carga">Agente de carga</option></select></label><label>Tipo de producto<select v-model="agentForm.productType" required><option value="" disabled>Selecciona una opción</option><option value="vehiculos">Vehículos</option><option value="mercancias">Mercancías</option></select></label><p v-if="agentFormError" class="request-error">{{ agentFormError }}</p><div class="form-actions"><button type="button" class="secondary-button compact" @click="agentFormOpen = false">Cancelar</button><button type="submit" class="primary-button" :disabled="agentFormLoading">{{ agentFormLoading ? 'Creando…' : 'Crear solicitud' }} <span>→</span></button></div></form></div><div v-if="moduleLoading" class="module-state panel">Cargando solicitudes…</div><div v-else-if="moduleError" class="module-state module-state-error panel">{{ moduleError }}</div><ListView v-else title="Solicitudes" description="Consulta el estado y los datos de cada requerimiento recibido." :count="requestPagination.totalItems" :page="requestPagination.page" :total-pages="requestPagination.totalPages" :empty="!requests.length" empty-text="No encontramos solicitudes con ese criterio." @previous="changePage('Solicitudes', requestPagination.page - 1)" @next="changePage('Solicitudes', requestPagination.page + 1)"><template #actions><button v-if="isAdmin" type="button" class="primary-button compact" @click="openAgentForm()">+ Crear solicitud</button></template><template #columns><th>Referencia</th><th>Cliente</th><th>Servicio</th><th>Producto</th><th>Estado</th><th>Pago</th><th>Correos</th><th>Fuente</th><th>Agente</th><th>Fecha</th></template><template #rows><tr v-for="request in requests" :key="request.id"><td><button class="request-link" type="button" @click="openRequestDetail(request)">{{ request.reference }}</button></td><td><button class="client-link" type="button" @click="openRequestDetail(request)">{{ request.clientName }}</button></td><td>{{ labelValue(request.serviceType) }}</td><td>{{ labelValue(request.productType) }}</td><td><span :class="['status-pill', statusClass(request.status)]"><i></i>{{ labelValue(request.status) }}</span></td><td><span :class="['status-pill', request.payment ? statusClass(request.payment.status) : 'status-blue']"><i></i>{{ request.payment ? paymentLabel(request.payment.status) : request.paymentRequired ? 'Sin iniciar' : 'No requerido' }}</span></td><td><span :class="['status-pill', notificationClass(request.notificationStatus)]"><i></i>{{ notificationLabel(request.notificationStatus) }}</span></td><td><span class="source-badge">{{ request.source }}</span></td><td>{{ request.agentName || 'Landingpage' }}</td><td>{{ formatDate(request.createdAt) }}</td></tr></template></ListView>
+        <div v-if="agentFormOpen" class="agent-request-card panel"><div class="panel-heading"><div><p class="eyebrow">Solicitud interna</p><h2>Nueva solicitud sin cobro</h2><p>Registra una solicitud de tu cliente y quedará asociada a tu usuario.</p></div><button type="button" class="request-detail-close" @click="agentFormOpen = false">×</button></div><form class="agent-request-form" @submit.prevent="createAgentRequest"><label>Nombre completo<input v-model="agentForm.fullName" required placeholder="Nombre del cliente" /></label><label>Constitución legal<select v-model="agentForm.legalEntityType" required><option value="" disabled>Selecciona una opción</option><option value="natural">Persona natural</option><option value="juridica">Persona jurídica</option></select></label><label>Correo electrónico<input v-model="agentForm.email" type="email" placeholder="nombre@empresa.com" /></label><label>Teléfono<input v-model="agentForm.phone" placeholder="+57 300 000 0000" /></label><label>WhatsApp<input v-model="agentForm.whatsapp" placeholder="+57 300 000 0000" /></label><label>Tipo de servicio<select v-model="agentForm.serviceType" required><option value="" disabled>Selecciona una opción</option><option value="exportacion">Exportación</option><option value="importacion">Importación</option><option value="agente_carga">Agente de carga</option></select></label><label>Tipo de producto<select v-model="agentForm.productType" required><option value="" disabled>Selecciona una opción</option><option value="vehiculos">Vehículos</option><option value="mercancias">Mercancías</option></select></label><p v-if="agentFormError" class="request-error">{{ agentFormError }}</p><div class="form-actions"><button type="button" class="secondary-button compact" @click="agentFormOpen = false">Cancelar</button><button type="submit" class="primary-button" :disabled="agentFormLoading">{{ agentFormLoading ? 'Creando…' : 'Crear solicitud' }} <span>→</span></button></div></form></div><div v-if="moduleLoading" class="module-state panel">Cargando solicitudes…</div><div v-else-if="moduleError" class="module-state module-state-error panel">{{ moduleError }}</div><ListView v-else title="Solicitudes" :description="requestTab === 'assigned' ? 'Solicitudes que ya tienen un experto asignado.' : 'Consulta el estado y los datos de cada requerimiento recibido.'" :count="requestPagination.totalItems" :page="requestPagination.page" :total-pages="requestPagination.totalPages" :empty="!requests.length" empty-text="No encontramos solicitudes con ese criterio." @previous="changePage('Solicitudes', requestPagination.page - 1)" @next="changePage('Solicitudes', requestPagination.page + 1)"><template #actions><button v-if="isAdmin" type="button" class="primary-button compact" @click="openAgentForm()">+ Crear solicitud</button></template><template #columns><th>Referencia</th><th>Cliente</th><th>Servicio</th><th>Producto</th><th v-if="requestTab === 'assigned'">Experto</th><th>Estado</th><th>Pago</th><th>Correos</th><th>Fuente</th><th>Agente</th><th>Fecha</th></template><template #rows><tr v-for="request in requests" :key="request.id"><td><button class="request-link" type="button" @click="openRequestDetail(request)">{{ request.reference }}</button></td><td><button class="client-link" type="button" @click="openRequestDetail(request)">{{ request.clientName }}</button></td><td>{{ labelValue(request.serviceType) }}</td><td>{{ labelValue(request.productType) }}</td><td v-if="requestTab === 'assigned'">{{ request.expertName || 'Sin nombre' }}</td><td><span :class="['status-pill', statusClass(request.status)]"><i></i>{{ labelValue(request.status) }}</span></td><td><span :class="['status-pill', request.payment ? statusClass(request.payment.status) : 'status-blue']"><i></i>{{ request.payment ? paymentLabel(request.payment.status) : request.paymentRequired ? 'Sin iniciar' : 'No requerido' }}</span></td><td><span :class="['status-pill', notificationClass(request.notificationStatus)]"><i></i>{{ notificationLabel(request.notificationStatus) }}</span></td><td><span class="source-badge">{{ request.source }}</span></td><td>{{ request.agentName || 'Landingpage' }}</td><td>{{ formatDate(request.createdAt) }}</td></tr></template></ListView>
       </section>
       <SecurityPanel v-else-if="activeMenu === 'Usuarios y roles'" :token="token" />
       <section v-else-if="false && activeMenu === 'Usuarios y roles'" class="module-view security-view">
@@ -621,7 +632,6 @@ onMounted(restoreSession)
         </template>
       </section>
       <OperationsCatalogPanel v-else-if="activeMenu === 'Servicios y consultas' || activeMenu === 'Enlaces de agentes'" :token="token" :user="user" :section="activeMenu === 'Servicios y consultas' ? 'catalog' : 'links'" />
-      <ExpertRequestsPanel v-else-if="activeMenu === 'Solicitudes asignadas'" :token="token" :open-request-id="notificationRequestId" :refresh-key="expertRequestRefreshKey" @request-opened="notificationRequestId = ''" />
       <FeedbackPanel v-else-if="activeMenu === 'Feedback de clientes'" :token="token" />
       <SimilarQuestionPanel v-else-if="activeMenu === 'Preguntas similares'" :token="token" />
       <PaymentsPanel v-else-if="activeMenu === 'Pagos'" :token="token" :can-open-requests="user.permissions?.includes('requests.read')" @open-request="openRequestDetail" />
@@ -655,6 +665,7 @@ onMounted(restoreSession)
 
 <style scoped>
 .advanced-filter-toolbar{display:flex;align-items:center;gap:12px;margin:0 0 12px}.filter-active-note{color:#397aa2;font-size:10px;font-weight:700}.advanced-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:16px;padding:17px}.advanced-filters label{display:grid;gap:6px;color:#526174;font-size:10px;font-weight:700}.advanced-filters select,.advanced-filters input{min-height:36px;padding:0 9px;border:1px solid #d8e0ea;border-radius:6px;color:#344b60;background:#fff;font-size:11px}.advanced-filter-actions{display:flex;align-items:end;justify-content:flex-end;gap:8px;grid-column:1/-1}
+.request-tabs{margin:0 0 16px}.request-tabs button{font-size:12px}
 .agent-list-action{display:flex;justify-content:flex-end;margin-bottom:12px}.agent-list-action .primary-button{min-height:36px}.requests-panel .primary-button{display:none}
 .agent-actions{display:flex;align-items:center;gap:15px;margin:-4px 0 16px}.agent-actions .primary-button{min-height:36px}.agent-request-card{position:relative;margin-bottom:16px;padding:22px}.agent-request-card .panel-heading{margin-bottom:18px}.agent-request-card h2{margin:0 0 6px;color:#223b53;font-size:16px}.agent-request-card .request-detail-close{position:static;flex-shrink:0}.agent-request-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.agent-request-form label{display:grid;gap:6px;color:#526174;font-size:11px;font-weight:700}.agent-request-form input,.agent-request-form select{min-height:39px;padding:0 10px;border:1px solid #d8e0ea;border-radius:7px;color:#1d2939;background:#fff;font-size:11px}.agent-request-form .request-error,.agent-request-form .form-actions{grid-column:1/-1}.agent-request-form .form-actions{margin-top:3px}.agent-request-form .primary-button{min-height:38px}.agent-actions .security-notice{margin:0;padding:8px 10px;font-size:10px}
 .operations-loading{display:grid;place-items:center;min-height:100vh;color:#31516c;background:#f7f9fc;font-size:14px;font-weight:700}

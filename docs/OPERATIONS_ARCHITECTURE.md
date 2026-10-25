@@ -31,6 +31,14 @@ La plataforma operativa vive en el mismo repositorio y despliegue que la landing
 - Si el usuario tiene abierta la lista o el detalle de solicitudes, se refresca esa vista. La bandeja del experto actualiza sus asignaciones. Al reconectar se resincroniza la vista y, si el WebSocket está caído, se usa un refresco de respaldo cada minuto.
 - La actualización realtime es independiente del resultado de Resend: publicar el estado no confirma la entrega del correo ni altera el estado de pago.
 
+### Navegación y listado de solicitudes
+
+- El menú tiene una sola entrada **Solicitudes**; se elimina la opción separada **Solicitudes asignadas**.
+- Administración ve las pestañas **Todas** y **Asignadas**. La segunda pagina y filtra en el servidor únicamente solicitudes con `assigned_expert_id`; incluye el nombre del experto responsable.
+- La API aplica `assignedOnly=true` solo cuando el usuario tiene rol administrador. Los demás roles no pueden usar el parámetro para ampliar el alcance de sus solicitudes.
+- El experto conserva su bandeja dentro de **Solicitudes**, reutilizando `ExpertRequestsPanel` y sus endpoints con autorización propia; no se le muestran las pestañas administrativas.
+- Agentes y otros roles mantienen su listado normal según sus permisos. Las notificaciones que abren un caso experto navegan a la entrada unificada y enfocan la solicitud correspondiente.
+
 ### Pagos y notificaciones por evento
 
 - **Pagos** usa `ListView` y consulta `GET /api/app/payments`, protegido por `payments.read`. El listado pagina intentos individuales (incluidos reintentos), filtra por estado y fechas, busca por cliente/referencias y permite abrir el detalle de la solicitud solo si el usuario también tiene `requests.read`. El estado no se edita desde el listado.

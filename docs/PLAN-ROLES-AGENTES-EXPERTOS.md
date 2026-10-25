@@ -338,6 +338,15 @@ Todos los listados administrativos deben usar el componente común `ListView` y 
 - [ ] Auditar los listados de los módulos (incluidos experto, administración, usuarios y configuración) para confirmar uso real de `ListView`, estilos coherentes y presentación responsive sin scroll horizontal.
 - [ ] Revisar de forma transversal botones, formularios, paneles contextuales, estados de carga/vacío/error y controles de paginación; registrar y resolver discrepancias por módulo.
 
+### Navegación unificada de solicitudes
+
+- [x] Eliminar la entrada de menú duplicada **Solicitudes asignadas** y consolidar el acceso bajo **Solicitudes**.
+- [x] Mostrar a administración las pestañas **Todas** y **Asignadas**, con paginación desde el servidor y nombre del experto en la pestaña de asignadas.
+- [x] Mantener la bandeja exclusiva del experto dentro de **Solicitudes**, sin exponerle la pestaña administrativa; conservar la autorización y el refresco realtime.
+- [x] Restringir el filtro `assignedOnly` en el backend al rol administrador.
+- [x] Verificar compilación y pruebas automatizadas; 11 suites aprobadas.
+- [ ] Publicar en dev y confirmar el acceso con cuentas de administrador y experto.
+
 **Estado del arreglo puntual (2026-10-24):** cambio local en `src/shared/components/ListView.vue`; `npm run build` y `git diff --check` pasan. Aún no desplegado ni publicado.
 
 **Actualización funcional (2026-10-24):** la detección de preguntas similares combina términos tolerantes a erratas y secuencia de bigramas, muestra coincidencia alta/posible y siempre requiere validación humana. La revisión de respuestas del experto se concentra en el detalle de la solicitud; se quitó el menú duplicado y se conservó una vista separada de feedback. Validación local: 10 suites y build correctos; publicación pendiente.

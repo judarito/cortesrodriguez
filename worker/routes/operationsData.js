@@ -58,6 +58,7 @@ export async function handleOperationsData(request, env) {
   const searchPattern = `%${search}%`
   const offset = (page - 1) * pageSize
   const isAdmin = claims.roles?.includes('admin')
+  const assignedOnly = isRequests && isAdmin && url.searchParams.get('assignedOnly') === 'true'
 
   if (isClients) {
     const [countRows, clients] = await Promise.all([
@@ -94,6 +95,7 @@ export async function handleOperationsData(request, env) {
         OR r.notification_status ILIKE ${searchPattern}
         OR r.source ILIKE ${searchPattern})
         AND ${requestAccess}
+        AND (${assignedOnly ? sql`r.assigned_expert_id IS NOT NULL` : sql`TRUE`})
         AND (${requestStatus ? sql`r.status = ${requestStatus}` : sql`TRUE`})
         AND (${requestServiceType ? sql`r.service_type = ${requestServiceType}` : sql`TRUE`})
         AND (${requestSource ? sql`COALESCE(r.source_channel, CASE WHEN r.source = 'agent' THEN 'agent_link' ELSE 'direct_web' END) = ${requestSource}` : sql`TRUE`})
@@ -106,12 +108,14 @@ export async function handleOperationsData(request, env) {
         r.service_name, r.service_amount_cents, r.service_currency, r.service_type, r.freight_agent, r.product_type, r.status, r.created_at, r.updated_at,
         r.notification_status, r.notification_last_event_at, r.notification_last_opened_at,
         c.id AS client_id, c.full_name AS client_name, u.full_name AS agent_name, u.email AS agent_email,
+        expert.full_name AS expert_name,
         payment.status AS payment_status, payment.mercado_pago_payment_id, payment.mercado_pago_preference_id,
         payment.usd_amount_cents, payment.cop_amount_cents, payment.trm_cop_per_usd, payment.trm_effective_date,
         payment.updated_at AS payment_updated_at
       FROM operations.requests r
       JOIN operations.clients c ON c.id = r.client_id
       LEFT JOIN operations.users u ON u.id = COALESCE(r.agent_id, r.created_by)
+      LEFT JOIN operations.users expert ON expert.id = r.assigned_expert_id
       LEFT JOIN LATERAL (
         SELECT * FROM operations.request_payments p
         WHERE p.request_id = r.id
@@ -131,6 +135,7 @@ export async function handleOperationsData(request, env) {
         OR r.notification_status ILIKE ${searchPattern}
         OR r.source ILIKE ${searchPattern})
         AND ${requestAccess}
+        AND (${assignedOnly ? sql`r.assigned_expert_id IS NOT NULL` : sql`TRUE`})
         AND (${requestStatus ? sql`r.status = ${requestStatus}` : sql`TRUE`})
         AND (${requestServiceType ? sql`r.service_type = ${requestServiceType}` : sql`TRUE`})
         AND (${requestSource ? sql`COALESCE(r.source_channel, CASE WHEN r.source = 'agent' THEN 'agent_link' ELSE 'direct_web' END) = ${requestSource}` : sql`TRUE`})
@@ -581,6 +586,7 @@ function serializeRequest(row) {
     clientName: String(row.client_name),
     agentName: row.agent_name ? String(row.agent_name) : '',
     agentEmail: row.agent_email ? String(row.agent_email) : '',
+    expertName: row.expert_name ? String(row.expert_name) : '',
     payment: row.payment_status ? {
       status: String(row.payment_status),
       paymentId: row.mercado_pago_payment_id ? String(row.mercado_pago_payment_id) : '',
