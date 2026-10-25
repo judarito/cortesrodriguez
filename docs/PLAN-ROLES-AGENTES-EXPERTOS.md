@@ -345,7 +345,8 @@ Todos los listados administrativos deben usar el componente común `ListView` y 
 - [x] Mantener la bandeja exclusiva del experto dentro de **Solicitudes**, sin exponerle la pestaña administrativa; conservar la autorización y el refresco realtime.
 - [x] Restringir el filtro `assignedOnly` en el backend al rol administrador.
 - [x] Verificar compilación y pruebas automatizadas; 11 suites aprobadas.
-- [ ] Publicar en dev y confirmar el acceso con cuentas de administrador y experto.
+- [x] Publicar en dev (`f3d9559c-bbdd-4dcc-b87c-e58002a05f18`) y verificar `/` y `/api/public/features` con HTTP 200.
+- [ ] Validar manualmente el acceso autenticado con cuentas de administrador y experto.
 
 **Estado del arreglo puntual (2026-10-24):** cambio local en `src/shared/components/ListView.vue`; `npm run build` y `git diff --check` pasan. Aún no desplegado ni publicado.
 

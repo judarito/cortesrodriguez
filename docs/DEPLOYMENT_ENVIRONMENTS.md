@@ -15,6 +15,14 @@
 - Base operativa: Neon desarrollo para la plataforma operativa
 - Configuración: `wrangler.dev.jsonc`
 
+### Navegación unificada de solicitudes (2026-10-24)
+
+- Commit: `74d216e` (`Unify requests navigation with admin tabs`), rama `dev` publicada en `origin/dev`.
+- Worker dev: `cortes-rodriguez-asesores-dev`; versión `f3d9559c-bbdd-4dcc-b87c-e58002a05f18`.
+- Verificación HTTP posterior al despliegue: `/` y `/api/public/features` respondieron 200.
+- `npm run build`, 11 suites (`node --test tests/*.test.js`) y `git diff --check` pasaron.
+- Producción no fue modificada. Pendiente: validación manual autenticada con cuentas de admin y experto.
+
 ## Protección requerida en GitHub
 
 En `main` se debe activar:
