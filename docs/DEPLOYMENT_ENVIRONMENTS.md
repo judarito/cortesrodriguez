@@ -93,6 +93,13 @@ Las solicitudes que requieren pago se crean antes de cobrar para conservar su re
 
 La acción administrativa **Verificar pago** consulta el recurso de pago en Mercado Pago y valida la referencia externa, moneda COP y monto contra el intento guardado. Si Mercado Pago devuelve `preference_id`, este debe coincidir con la preferencia local. Algunos recursos de pago aprobados no incluyen ese campo; su ausencia no bloquea la conciliación cuando la consulta autenticada del pago y las demás validaciones coinciden. Un `preference_id` presente pero distinto sí se rechaza. El diagnóstico guarda el motivo sin almacenar tokens ni datos de tarjeta.
 
+### Retorno de Checkout e identidad de clientes
+
+- Los tres retornos de Mercado Pago (aprobado, pendiente y fallido) llevan a `/solicitud/resultado-pago`, una vista separada del formulario. Cuando el proveedor devuelve ID de pago y referencia, la vista verifica el resultado con el backend y presenta el código de seguimiento; nunca declara el pago aprobado solo por el retorno del navegador.
+- La migración `029_unique_clients_by_email.sql` agrega el correo normalizado al cliente, vincula nuevas solicitudes al cliente existente sin distinguir mayúsculas/minúsculas y crea una restricción única en base de datos. El correo continúa guardándose en cada solicitud como dato de contacto histórico.
+- La migración agrupa clientes históricos duplicados por email, conserva todas sus solicitudes bajo el registro canónico más antiguo y guarda el nombre/identificador de los registros absorbidos en `operations.client_identity_merges` para trazabilidad.
+- Aplicar la migración 029 en Neon dev antes de desplegar código que use `email_normalized`; producción requiere la misma migración en una publicación separada.
+
 ### Estado de despliegue y validación (2026-10-24)
 
 - Worker dev `cortes-rodriguez-asesores-dev`, versión activa `0420f649-3c4c-4e3e-8123-029c000881fe`; producción no se modificó.

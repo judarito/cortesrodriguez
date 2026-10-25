@@ -1,5 +1,6 @@
 import { enqueueNotification } from './operationsEmail.js'
 import { rankSimilarQuestions } from '../lib/questionSimilarity.js'
+import { normalizeClientEmail } from '../lib/clientIdentity.js'
 
 export async function handlePublicRequests(request, env) {
   const url = new URL(request.url)
@@ -134,8 +135,10 @@ export async function handlePublicRequests(request, env) {
   const payloadHash = await sha256(JSON.stringify({ input, attachmentHashes }))
   const insertedRequest = await sql`
     WITH new_client AS (
-      INSERT INTO operations.clients (id, full_name)
-      VALUES (${clientId}, ${input.fullName})
+      INSERT INTO operations.clients (id, full_name, email_normalized)
+      VALUES (${clientId}, ${input.fullName}, ${normalizeClientEmail(input.email)})
+      ON CONFLICT (email_normalized) DO UPDATE
+        SET email_normalized = EXCLUDED.email_normalized
       RETURNING id
     )
     INSERT INTO operations.requests (
@@ -156,7 +159,7 @@ export async function handlePublicRequests(request, env) {
     RETURNING id, reference
   `
   if (!insertedRequest[0]) {
-    await sql`DELETE FROM operations.clients WHERE id = ${clientId}`
+    await sql`DELETE FROM operations.clients WHERE id = ${clientId} AND NOT EXISTS (SELECT 1 FROM operations.requests WHERE client_id = ${clientId})`
     const existing = await sql`
       SELECT id, reference, payment_required, public_payload_hash, public_submission_completed_at
       FROM operations.requests WHERE public_idempotency_key_hash = ${keyHash} LIMIT 1
@@ -250,12 +253,13 @@ async function createPaymentPreference(request, env) {
   const copCents = copPesos * 100
   const paymentId = crypto.randomUUID()
   const origin = env.PUBLIC_APP_URL || new URL(request.url).origin
+  const paymentReturnUrl = (status) => `${origin}/solicitud/resultado-pago?payment=${status}&reference=${encodeURIComponent(reference)}`
   let preference
   try {
     preference = await mercadoPago('/checkout/preferences', env.MP_ACCESS_TOKEN, {
       items: [{ id: reference, title: `Asesoría ${reference}`, quantity: 1, currency_id: 'COP', unit_price: copPesos }],
       external_reference: reference,
-      back_urls: { success: `${origin}/solicitud?payment=success`, failure: `${origin}/solicitud?payment=failure`, pending: `${origin}/solicitud?payment=pending` },
+      back_urls: { success: paymentReturnUrl('success'), failure: paymentReturnUrl('failure'), pending: paymentReturnUrl('pending') },
       auto_return: 'approved',
       notification_url: `${origin}/api/public/payments/webhook`,
     })

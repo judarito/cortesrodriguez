@@ -41,6 +41,7 @@ test('feature flag reads the expected Flagship boolean and preserves enabled sta
 test('only the new request routes are gated; landing quote and client feedback remain outside the flag', () => {
   assert.equal(isLandingRequestPage('/solicitud'), true)
   assert.equal(isLandingRequestPage('/solicitud/agente/opaque-token'), true)
+  assert.equal(isLandingRequestPage('/solicitud/resultado-pago'), false)
   assert.equal(isLandingRequestPage('/'), false)
   assert.equal(isLandingRequestApi('/api/public/requests'), true)
   assert.equal(isLandingRequestApi('/api/public/agent-links/token'), true)
@@ -53,6 +54,12 @@ test('request page falls back to the existing landing URL while the flag is off'
   assert.equal(response.status, 302)
   assert.equal(response.headers.get('location'), 'https://example.test/')
   assert.equal(response.headers.get('cache-control'), 'no-store')
+})
+
+test('payment return page remains available even if the public request flag is off', async () => {
+  const response = await worker.fetch(new Request('https://example.test/solicitud/resultado-pago?payment=success'), mockEnv())
+  assert.equal(response.status, 200)
+  assert.equal(await response.text(), '/solicitud/resultado-pago')
 })
 
 test('request API is unavailable while the flag is off', async () => {

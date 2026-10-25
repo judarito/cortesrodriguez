@@ -1,6 +1,7 @@
 import { requireOperationsAuth } from './operationsAuth.js'
 import { enqueueNotification } from './operationsEmail.js'
 import { refreshRequestPayment, verifyRequestPayment } from './publicRequests.js'
+import { normalizeClientEmail } from '../lib/clientIdentity.js'
 
 export async function handleOperationsData(request, env) {
   const url = new URL(request.url)
@@ -197,6 +198,7 @@ async function createAgentRequest(sql, request, claims, env) {
   const fullName = text(input.fullName)
   const legalEntityType = text(input.legalEntityType)
   const email = text(input.email)
+  const normalizedEmail = normalizeClientEmail(email)
   const phone = text(input.phone)
   const whatsapp = text(input.whatsapp)
   const serviceType = text(input.serviceType)
@@ -214,14 +216,21 @@ async function createAgentRequest(sql, request, claims, env) {
   const clientId = crypto.randomUUID()
   const requestId = crypto.randomUUID()
   const reference = `CRA-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`
-  await sql`INSERT INTO operations.clients (id, full_name) VALUES (${clientId}, ${fullName})`
+  const clientRows = await sql`
+    INSERT INTO operations.clients (id, full_name, email_normalized)
+    VALUES (${clientId}, ${fullName}, ${normalizedEmail})
+    ON CONFLICT (email_normalized) DO UPDATE
+      SET email_normalized = EXCLUDED.email_normalized
+    RETURNING id
+  `
+  const resolvedClientId = String(clientRows[0].id)
   await sql`
     INSERT INTO operations.requests (
       id, client_id, reference, source, legal_entity_type, email, phone, whatsapp,
       service_name, service_amount_cents, service_currency, service_type, freight_agent,
       product_type, status, created_by, payment_required
     ) VALUES (
-      ${requestId}, ${clientId}, ${reference}, 'agent', ${legalEntityType}, ${email || null},
+      ${requestId}, ${resolvedClientId}, ${reference}, 'agent', ${legalEntityType}, ${email || null},
       ${phone || null}, ${whatsapp || null}, ${serviceName}, 0, 'COP', ${serviceType},
       ${freightAgent || null}, ${productType}, 'pending', ${claims.sub}, FALSE
     )
