@@ -289,13 +289,23 @@ Alertar por umbrales configurables y por ausencia de consumidores; reducir el cr
 - [ ] Verificar backlog, DLQ y latencia antes de cualquier cambio de entorno. No tocar configuración de producción.
 - [ ] No promover a producción ni integrar en `main` dentro de este trabajo; cualquier cambio futuro de alcance requerirá instrucción expresa.
 
-### Fase 4: portal del cliente y recuperación de pagos
+### Fase 4: portal del cliente y recuperación de pagos — en curso
 
-- [ ] Implementar PORT-01 a PORT-08 de la sección 17 reutilizando autenticación y listado existentes.
-- [ ] Publicar «Consultar mis solicitudes» en landing, confirmación de solicitud, retorno de pasarela y correos correspondientes.
-- [ ] Completar detalle autorizado, estados separados de pago y atención y acciones por estado.
-- [ ] Implementar conciliación y exclusión mutua de reintentos con una sola solicitud y múltiples intentos trazables.
-- [ ] Ejecutar pruebas funcionales y de seguridad de la sección 17.10 antes de habilitar el recorrido.
+- [x] Agregar «Consultar mis solicitudes» en la landing, el formulario público, la confirmación de solicitud y el retorno de pago.
+- [x] Reutilizar en el portal el acceso passwordless existente por código de correo, con listado paginado limitado al correo autenticado.
+- [x] Añadir detalle de solicitud con respuestas aprobadas, adjuntos privados y estados independientes de pago y atención.
+- [x] Añadir al portal acciones para iniciar/reanudar checkout y consultar el historial de intentos sin crear otra solicitud.
+- [x] Registrar primero el intento local y serializar la creación de preferencias por solicitud; bloquear un nuevo cobro mientras el estado sea incierto.
+- [x] Evitar registrar dos intentos como aprobados para la misma solicitud; dejar un segundo pago aprobado en estado `duplicate_approved` y diagnóstico para revisión administrativa.
+- [x] Limitar de forma atómica la solicitud de códigos por correo; serializar envíos y conservar el código anterior si Resend falla.
+- [x] Reservar cada intento de validación del código bajo bloqueo de fila; el quinto intento fallido consume el código.
+- [x] Aplicar migraciones 038, 039 y 040 en la base operativa dev.
+- [x] Desplegar el portal en Worker dev; página del portal 200, APIs de sesión/listado sin autenticar 401 y feature flags 200.
+- [ ] Completar conciliación administrativa para intentos de preferencia cuyo resultado sea incierto.
+- [ ] Publicar acceso al portal en los correos de pago y de respuesta que correspondan.
+- [x] Agregar pruebas de sesión, titularidad, respuestas visibles, intentos de código concurrentes y fallo de Resend.
+- [x] Ejecutar suite automatizada (24 archivos de pruebas), build y `git diff --check`.
+- [ ] Ejecutar pruebas integradas autenticadas en dev con Mercado Pago sandbox; confirmar doble clic, retorno y conciliación.
 
 ### Fase 5: imágenes y reportes
 

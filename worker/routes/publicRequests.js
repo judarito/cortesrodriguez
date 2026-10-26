@@ -282,7 +282,11 @@ async function enforcePublicRateLimit(request, env, action, limit, windowSeconds
   return null
 }
 
-async function createPaymentPreference(request, env) {
+export async function createClientPaymentPreference(request, env, verifiedEmail) {
+  return createPaymentPreference(request, env, String(verifiedEmail || '').trim().toLowerCase())
+}
+
+async function createPaymentPreference(request, env, verifiedEmail = null) {
   if (!env.NEON_DATABASE_URL || !env.MP_ACCESS_TOKEN) return response({ error: 'El pago no está configurado.' }, 503)
   const body = await request.json().catch(() => ({}))
   const reference = text(body.reference)
@@ -292,9 +296,15 @@ async function createPaymentPreference(request, env) {
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   await ensurePaymentSchema(sql)
-  const rows = await sql`SELECT id, reference, service_amount_cents, service_currency, payment_required FROM operations.requests WHERE reference = ${reference} LIMIT 1`
+  const rows = await sql`SELECT id, reference, service_amount_cents, service_currency, payment_required, status
+    FROM operations.requests WHERE reference = ${reference}
+      AND (${verifiedEmail}::text IS NULL OR lower(trim(email)) = ${verifiedEmail}) LIMIT 1`
+  if (!rows[0] && verifiedEmail) return response({ error: 'Solicitud no encontrada.' }, 404)
   if (!rows[0] || String(rows[0].service_currency).toUpperCase() !== 'USD') return response({ error: 'La solicitud no tiene un precio USD válido.' }, 400)
   if (!rows[0].payment_required) return response({ error: 'Esta solicitud no requiere pago.' }, 409)
+  if (['closed', 'cancelled'].includes(String(rows[0].status))) return response({ error: 'Esta solicitud ya no admite pagos.' }, 409)
+  const approved = await sql`SELECT 1 FROM operations.request_payments WHERE request_id = ${rows[0].id} AND status = 'approved' LIMIT 1`
+  if (approved.length) return response({ error: 'Esta solicitud ya tiene un pago confirmado.' }, 409)
   const previousAttempt = await sql`
     SELECT init_point, usd_amount_cents, cop_amount_cents, trm_cop_per_usd, trm_effective_date
     FROM operations.request_payments
@@ -303,7 +313,17 @@ async function createPaymentPreference(request, env) {
   `
   if (previousAttempt[0]) {
     if (previousAttempt[0].init_point) return paymentPreferenceResponse(previousAttempt[0])
-    return response({ error: 'Este intento de pago ya fue registrado y no puede reutilizarse. Inicia un nuevo intento.' }, 409)
+    return response({ error: 'Este intento está en verificación y todavía no se puede reemplazar.' }, 409)
+  }
+  const latestAttempts = await sql`SELECT id, status, init_point, usd_amount_cents, cop_amount_cents, trm_cop_per_usd, trm_effective_date
+    FROM operations.request_payments WHERE request_id = ${rows[0].id} ORDER BY created_at DESC LIMIT 1`
+  const latestAttempt = latestAttempts[0]
+  if (latestAttempt && ['pending', 'in_process'].includes(String(latestAttempt.status))) {
+    if (latestAttempt.init_point) return paymentPreferenceResponse(latestAttempt)
+    return response({ error: 'Hay un intento de pago en curso. Espera la confirmación antes de crear otro.' }, 409)
+  }
+  if (latestAttempt && ['creating', 'creation_uncertain'].includes(String(latestAttempt.status))) {
+    return response({ error: 'Estamos verificando si Mercado Pago creó el intento anterior. No inicies otro pago todavía.' }, 409)
   }
   let trm
   try {
@@ -319,6 +339,25 @@ async function createPaymentPreference(request, env) {
   const copPesos = Math.round((usdCents / 100) * trm.value)
   const copCents = copPesos * 100
   const paymentId = crypto.randomUUID()
+  const leaseToken = crypto.randomUUID()
+  const lease = await sql`UPDATE operations.requests request
+    SET payment_preference_lease_token = ${leaseToken}::uuid,
+        payment_preference_lease_expires_at = NOW() + INTERVAL '5 minutes', updated_at = NOW()
+    WHERE request.id = ${rows[0].id}
+      AND (request.payment_preference_lease_expires_at IS NULL OR request.payment_preference_lease_expires_at < NOW())
+      AND NOT EXISTS (SELECT 1 FROM operations.request_payments p WHERE p.request_id = request.id AND p.status = 'approved')
+      AND NOT EXISTS (SELECT 1 FROM operations.request_payments p WHERE p.request_id = request.id AND p.status IN ('pending', 'in_process', 'creating', 'creation_uncertain'))
+    RETURNING request.id`
+  if (!lease.length) return response({ error: 'Ya se está preparando un intento de pago para esta solicitud. Espera un momento y actualiza el estado.' }, 409)
+  try {
+    await sql`INSERT INTO operations.request_payments
+      (id, request_id, reference, idempotency_key, usd_amount_cents, trm_cop_per_usd, cop_amount_cents, trm_effective_date, status)
+      VALUES (${paymentId}, ${rows[0].id}, ${reference}, ${idempotencyKey}, ${usdCents}, ${trm.value}, ${copCents}, ${trm.date}, 'creating')`
+  } catch (error) {
+    await sql`UPDATE operations.requests SET payment_preference_lease_token = NULL, payment_preference_lease_expires_at = NULL
+      WHERE id = ${rows[0].id} AND payment_preference_lease_token = ${leaseToken}::uuid`
+    throw error
+  }
   const origin = env.PUBLIC_APP_URL || new URL(request.url).origin
   const paymentReturnUrl = (status) => `${origin}/solicitud/resultado-pago?payment=${status}&reference=${encodeURIComponent(reference)}`
   let preference
@@ -331,11 +370,28 @@ async function createPaymentPreference(request, env) {
       notification_url: `${origin}/api/public/payments/webhook`,
     })
   } catch (error) {
+    const providerStatus = Number(error.status)
+    const creationStatus = providerStatus >= 400 && providerStatus < 500 && ![408, 429].includes(providerStatus)
+      ? 'creation_failed'
+      : 'creation_uncertain'
+    await sql`UPDATE operations.request_payments SET status = ${creationStatus}, updated_at = NOW() WHERE id = ${paymentId} AND status = 'creating'`
+    await sql`UPDATE operations.requests SET payment_preference_lease_token = NULL, payment_preference_lease_expires_at = NULL, updated_at = NOW()
+      WHERE id = ${rows[0].id} AND payment_preference_lease_token = ${leaseToken}::uuid`
     console.error('Mercado Pago no pudo crear la preferencia:', error.message)
     return response({ error: 'No fue posible iniciar el checkout. Puedes volver a intentarlo.' }, 502)
   }
-  if (!preference.id || !preference.init_point) return response({ error: 'Mercado Pago devolvió una preferencia incompleta.' }, 502)
-  await sql`INSERT INTO operations.request_payments (id, request_id, reference, idempotency_key, usd_amount_cents, trm_cop_per_usd, cop_amount_cents, trm_effective_date, mercado_pago_preference_id, init_point) VALUES (${paymentId}, ${rows[0].id}, ${reference}, ${idempotencyKey}, ${usdCents}, ${trm.value}, ${copCents}, ${trm.date}, ${preference.id}, ${preference.init_point})`
+  if (!preference.id || !preference.init_point) {
+    await sql`UPDATE operations.request_payments SET status = 'creation_uncertain', updated_at = NOW() WHERE id = ${paymentId} AND status = 'creating'`
+    await sql`UPDATE operations.requests SET payment_preference_lease_token = NULL, payment_preference_lease_expires_at = NULL, updated_at = NOW()
+      WHERE id = ${rows[0].id} AND payment_preference_lease_token = ${leaseToken}::uuid`
+    return response({ error: 'Mercado Pago devolvió un intento incompleto; validaremos el estado antes de reintentar.' }, 502)
+  }
+  const saved = await sql`UPDATE operations.request_payments
+    SET mercado_pago_preference_id = ${preference.id}, init_point = ${preference.init_point}, status = 'pending', updated_at = NOW()
+    WHERE id = ${paymentId} AND status = 'creating' RETURNING id`
+  await sql`UPDATE operations.requests SET payment_preference_lease_token = NULL, payment_preference_lease_expires_at = NULL, updated_at = NOW()
+    WHERE id = ${rows[0].id} AND payment_preference_lease_token = ${leaseToken}::uuid`
+  if (!saved.length) return response({ error: 'Se creó el intento, pero estamos verificando su registro. Actualiza el estado antes de continuar.' }, 409)
   return response({ initPoint: preference.init_point, usdAmountCents: usdCents, copAmountCents: copCents, trm: trm.value, trmDate: trm.date })
 }
 
@@ -489,6 +545,32 @@ async function recordVerifiedPayment(payment, paymentId, env, database = null, s
   const status = ['approved', 'rejected', 'cancelled', 'refunded', 'charged_back', 'in_process', 'pending'].includes(normalizedStatus)
     ? normalizedStatus
     : 'pending'
+  if (status === 'approved') {
+    const claimed = await sql`UPDATE operations.requests
+      SET confirmed_payment_attempt_id = ${record.id}::uuid, updated_at = NOW()
+      WHERE id = ${record.request_id}
+        AND (confirmed_payment_attempt_id IS NULL OR confirmed_payment_attempt_id = ${record.id}::uuid)
+      RETURNING id`
+    if (!claimed.length) {
+      await sql`UPDATE operations.request_payments
+        SET mercado_pago_payment_id = ${paymentId}, status = 'duplicate_approved', updated_at = NOW()
+        WHERE id = ${record.id} AND status <> 'approved'`
+      await writePaymentDiagnostic(sql, {
+        requestId: record.request_id, actorId, source, reference, paymentId,
+        preferenceId: payment.preference_id, paymentStatus: payment.status,
+        currency: payment.currency_id,
+        amountCents: Number.isFinite(Number(payment.transaction_amount)) ? Math.round(Number(payment.transaction_amount) * 100) : null,
+        expectedAmountCents: record.cop_amount_cents,
+        matchStatus: 'mismatch', reasonCode: 'duplicate_approved_attempt',
+      })
+      return {
+        matched: true, approved: false, reconciled: false, status: 'duplicate_approved',
+        reasonCode: 'duplicate_approved_attempt',
+        payment: safePaymentSummary(payment, record.cop_amount_cents),
+        expectedAmountCents: Number(record.cop_amount_cents),
+      }
+    }
+  }
   const updated = await sql`
     UPDATE operations.request_payments
     SET mercado_pago_payment_id = ${paymentId},
@@ -635,9 +717,9 @@ function paymentPreferenceResponse(attempt) {
 }
 
 async function mercadoPago(path, token, body) {
-  const result = await fetch(`https://api.mercadopago.com${path}`, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+  const result = await fetch(`https://api.mercadopago.com${path}`, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) })
   const data = await result.json().catch(() => ({}))
-  if (!result.ok) throw new Error(data.message || 'Mercado Pago rechazó la operación.')
+  if (!result.ok) { const error = new Error(data.message || 'Mercado Pago rechazó la operación.'); error.status = result.status; throw error }
   return data
 }
 

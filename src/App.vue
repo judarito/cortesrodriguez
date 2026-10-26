@@ -2338,6 +2338,7 @@ watch(site, (newSite) => {
           <div>
             <h3>{{ site.footer.quickLinksTitle }}</h3>
             <a v-for="(item, index) in navItems" :key="item" :href="navHref(index, item)">{{ item }}</a>
+            <a href="/portal-cliente">Consultar mis solicitudes</a>
           </div>
           <div>
             <h3>{{ site.footer.servicesTitle }}</h3>

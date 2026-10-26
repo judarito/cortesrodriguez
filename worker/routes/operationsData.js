@@ -174,7 +174,7 @@ async function getPayments(sql, url) {
   const search = String(url.searchParams.get('search') || '').trim().slice(0, 200)
   const searchPattern = `%${search}%`
   const status = String(url.searchParams.get('status') || '').trim()
-  const allowedStatuses = ['approved', 'pending', 'in_process', 'rejected', 'cancelled', 'refunded', 'charged_back']
+  const allowedStatuses = ['approved', 'duplicate_approved', 'pending', 'in_process', 'rejected', 'cancelled', 'refunded', 'charged_back']
   if (status && !allowedStatuses.includes(status)) return response({ error: 'El estado de pago no es válido.' }, 400)
 
   const dateFrom = String(url.searchParams.get('dateFrom') || '').trim()

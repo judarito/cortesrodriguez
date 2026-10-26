@@ -16,6 +16,7 @@ const pagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
 
 const paymentStatuses = [
   { value: 'approved', label: 'Pagado' },
+  { value: 'duplicate_approved', label: 'Pago duplicado · revisar' },
   { value: 'pending', label: 'Pendiente' },
   { value: 'in_process', label: 'En proceso' },
   { value: 'rejected', label: 'Rechazado' },

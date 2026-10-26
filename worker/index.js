@@ -234,7 +234,9 @@ export default {
       return env.ASSETS.fetch(request)
     } catch (error) {
       console.error(error)
-      return json({ error: error.message || 'Error interno.' }, request, error.status || 500)
+      const status = Number.isInteger(error.status) ? error.status : 500
+      const message = status >= 500 ? 'Ocurrió un error interno. Intenta nuevamente.' : (error.message || 'Solicitud no válida.')
+      return json({ error: message }, request, status)
     }
   },
   async scheduled(_controller, env, ctx) {

@@ -108,7 +108,7 @@ function labelValue(value) {
 }
 
 function paymentLabel(status) {
-  return { approved: 'Pagado', pending: 'Pendiente', in_process: 'En proceso', rejected: 'Rechazado', cancelled: 'Cancelado', refunded: 'Reembolsado', charged_back: 'Contracargo' }[status] || labelValue(status)
+  return { approved: 'Pagado', duplicate_approved: 'Pago duplicado · revisar', pending: 'Pendiente', in_process: 'En proceso', rejected: 'Rechazado', cancelled: 'Cancelado', refunded: 'Reembolsado', charged_back: 'Contracargo' }[status] || labelValue(status)
 }
 
 function paymentDiagnosisLabel(reasonCode) {
@@ -147,6 +147,7 @@ function statusClass(status) {
   if (status === 'closed' || status === 'approved') return 'status-green'
   if (status === 'in_progress') return 'status-blue'
   if (['cancelled', 'rejected', 'refunded', 'charged_back'].includes(status)) return 'status-red'
+  if (status === 'duplicate_approved') return 'status-orange'
   return 'status-amber'
 }
 
@@ -692,6 +693,7 @@ onMounted(restoreSession)
 <style scoped>
 .detail-empty{padding:14px;border:1px dashed #dce5ed;border-radius:8px;color:#98a2b3;font-size:10px}.request-response-item{display:grid;gap:10px;padding:14px;border:1px solid #e5eaf0;border-radius:8px;background:#fbfcfe}.request-response-item+.request-response-item{margin-top:10px}.request-response-heading{display:flex;align-items:start;justify-content:space-between;gap:10px}.request-response-heading>div{display:grid;gap:4px}.request-response-heading strong{color:#344b60;font-size:11px}.request-response-heading span:not(.status-pill){color:#7d8999;font-size:10px}.request-response-body{margin:0;padding:12px;border-radius:7px;color:#344b60;background:#fff;font-size:11px;line-height:1.6;white-space:pre-wrap}.request-response-pending{margin:0;color:#98a2b3;font-size:10px}.request-response-note{margin:0;padding-top:10px;border-top:1px solid #e5eaf0;color:#526174;font-size:10px;line-height:1.5}.request-response-note strong{color:#344b60}.assignment-controls{display:flex;align-items:end;gap:10px;max-width:520px}.assignment-controls label{display:grid;flex:1;gap:6px;color:#526174;font-size:10px;font-weight:700}.assignment-controls select{min-height:38px;padding:0 10px;border:1px solid #d8e0ea;border-radius:6px;color:#344b60;background:#fff;font-size:11px}.assignment-current{margin:0 0 12px;color:#526174;font-size:11px}.assignment-history{display:grid;gap:8px;margin:14px 0 0;padding:0;list-style:none}.assignment-history li{display:grid;gap:3px;padding:9px 11px;border:1px solid #edf1f5;border-radius:7px}.assignment-history strong{color:#344b60;font-size:10px}.assignment-history span{color:#98a2b3;font-size:9px}@media(max-width:520px){.assignment-controls{align-items:stretch;flex-direction:column}}
 .payment-diagnosis,.payment-delivery-status{margin:12px 0 0;padding:11px 12px;border:1px solid #dce7ef;border-radius:7px;color:#526174;background:#f7fafc;font-size:10px;line-height:1.5}.payment-diagnosis.is-error{border-color:#f3c6c6;color:#a33a3a;background:#fff6f6}.payment-delivery-status{color:#397aa2}
+.status-orange{color:#9a5c12;background:#fff0dc}.status-orange i{background:#dd8c2f}
 .brand-logo{display:block;width:44px;height:44px;flex:0 0 44px;border:1px solid rgba(255,255,255,.26);border-radius:10px;background:#fff;object-fit:contain}.brand-logo-login{width:58px;height:58px;padding:3px;border-color:#e4e9ef;border-radius:12px}
 .request-detail-panel{width:min(72vw,1100px)}
 .detail-response-review{display:grid;gap:12px;padding-top:10px;border-top:1px solid #e5eaf0}.detail-response-review label{display:grid;gap:6px;color:#526174;font-size:10px;font-weight:700}.detail-response-review textarea{width:100%;padding:10px;border:1px solid #d8e0ea;border-radius:7px;resize:vertical;color:#344b60;background:#fff;font:inherit;font-size:11px}.detail-response-actions{display:flex;justify-content:flex-end;align-items:center;gap:9px}.detail-response-actions .primary-button{min-height:36px;padding:0 13px}.detail-response-actions .danger-link{min-height:36px;padding:0 12px;border:1px solid #f0c5c5;border-radius:7px;color:#b54747;background:#fff;font-size:11px;font-weight:700;cursor:pointer}.detail-response-actions button:disabled{opacity:.55;cursor:not-allowed}
