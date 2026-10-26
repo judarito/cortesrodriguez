@@ -307,6 +307,8 @@ Alertar por umbrales configurables y por ausencia de consumidores; reducir el cr
 - [x] Ejecutar suite automatizada (24 archivos de pruebas), build y `git diff --check`.
 - [ ] Ejecutar pruebas integradas autenticadas en dev con Mercado Pago sandbox; confirmar doble clic, retorno y conciliación.
 
+**Estado publicado (2026-10-25):** commit `3a8da30` en `origin/dev`; Worker dev versión `2988635d-5844-4e94-98a0-fe5cd83fb6a5`. Se comprobó `/portal-cliente` (200), `/api/client/session` sin sesión (401), `/api/client/requests` sin sesión (401) y `/api/public/features` (200). La prueba de APIs protegidas no sustituye el acceso con correo real ni el checkout sandbox.
+
 ### Fase 5: imágenes y reportes
 
 - [ ] Seleccionar y presupuestar procesador de imágenes.
@@ -382,7 +384,7 @@ Estos controles no se presupuestan como desarrollos desde cero. Su presencia en 
 | Idempotencia del formulario | Clave UUID, hash del contenido y adjuntos y tratamiento de duplicados; extender a efectos según sección 5. |
 | Restricciones de imágenes | Máximo 5, 10 MB por archivo y 25 MB total; inspección de bytes y dimensiones. Completar protección de carga y privacidad. |
 | Turnstile | Validación servidor si existe `TURNSTILE_SECRET_KEY`; falta garantizar su obligatoriedad en producción. |
-| Portal de clientes | Código de un uso, vencimiento de 10 minutos, límite de 5 intentos, límite de solicitudes de código por correo y cookie `HttpOnly; Secure; SameSite=Lax`; sesiones revocables. |
+| Portal de clientes | Código de un uso, vencimiento de 10 minutos, límite atómico de 5 intentos, 4 solicitudes por correo/15 min y 12 por IP/15 min; IP almacenada como HMAC; cookie `HttpOnly; Secure; SameSite=Lax`; sesiones revocables. Ver despliegue dev del 2026-10-25. |
 | Canal WebSocket | Ticket de un uso de 90 segundos, control de origen y sesión activa al conectar; falta revocar conexiones ya abiertas. |
 | Restricción de agentes | `operationsData.js`: rechaza creación de solicitudes por agente sin rol admin y filtra solicitudes por vínculo; conservar y probar rutas alternativas. |
 | Roles y auditoría | Existen permisos y tabla de auditoría; completar aplicación uniforme y cobertura de eventos sensibles. |
@@ -396,7 +398,7 @@ Estos controles no se presupuestan como desarrollos desde cero. Su presencia en 
 | SEC-03 / P0 | Implementado localmente. `operationsEmail.js` envía un correo por destinatario; la audiencia del experto recibe contenido fijo y mínimo, sin identidad/datos del cliente, reply-to ni destinatarios compartidos. Clave Resend estable por evento, versión y hash del destinatario. | Mantener esta allowlist al añadir eventos y confirmar configuración de reglas con pruebas. | Correo del experto no expone datos del cliente ni audiencias cruzadas incluso con reglas configuradas incorrectamente. |
 | SEC-04 / P0 | Desplegado en dev. `publicRequests.js` exige token opaco y válido; se guarda hash, audiencia, vencimiento y revocación; atribución de agente se resuelve en backend. Smoke checks dev: landing, configuración Turnstile y emisión de token respondieron 200. Se mantiene el feature flag de Cloudflare. | Completar pruebas funcionales con formulario/enlace de agente en dev; no confiar en `agentId` del navegador. | Token ausente, manipulado, expirado o revocado bloquea la creación; landing y enlace de agente válidos mantienen atribución. |
 | SEC-05 / P0 | Implementado localmente. Transición condicional; aprobación, evento outbox y cierre se escriben en una sentencia, con versión aprobada y nota pública separada de la interna. Rechazo también usa transición condicional. | Validar concurrencia real contra PostgreSQL de desarrollo y verificar el consumidor de la versión aprobada. | Dos administradores simultáneos: una aprobación efectiva; otro recibe conflicto; fallo de escritura no deja caso cerrado sin evento durable. |
-| SEC-06 / P0 | Implementado y desplegado en dev. Login registra fallos con contadores atómicos por cuenta/IP y espera progresiva; el formulario público limita tokens y solicitudes por IP de Cloudflare. Migraciones 034–035 aplicadas en dev y `PUBLIC_RATE_LIMIT_SECRET` configurado como secreto del Worker dev. | Probar límites funcionales y recuperación en dev; agregar límites a creación de pagos/códigos del portal donde corresponda. Hacer obligatorio Turnstile en producción, validar integración y fallar de forma cerrada si no está configurado. | Ataques paralelos no eluden límites; respuesta 429 y recuperación controlada; producción no acepta solicitudes sin Turnstile. |
+| SEC-06 / P0 | Implementado y desplegado en dev. Login operativo registra fallos con contadores atómicos por cuenta/IP y espera progresiva; formulario público limita tokens/solicitudes por IP; portal limita códigos atómicamente por correo e IP hasheada. Migraciones 034–035 y 038–040 aplicadas en dev. | Probar límites funcionales y recuperación en dev; evaluar límite de frecuencia para creación de preferencias de pago. Hacer obligatorio Turnstile en producción, validar integración y fallar de forma cerrada si no está configurado. | Ataques paralelos no eluden límites; respuesta controlada y recuperación; producción no acepta solicitudes sin Turnstile. |
 | SEC-07 / P1 | Implementado localmente. `NotificationHub.js` asocia el socket al usuario, hash de sesión y snapshot de permisos; valida sesión/usuario/permisos al publicar y cada 60 s mediante alarma. | Probar logout, desactivación, expiración y cambio de rol en Cloudflare; revisar la política fail-closed ante indisponibilidad temporal de Neon. | Socket deja de recibir eventos tras revocación; la alarma cierra conexiones inválidas en un máximo aproximado de 60 s; no hay suscripción entre usuarios. |
 | SEC-08 / P1 | Desplegado en dev: leases con fencing, validación del contrato y asignación vigente en consumidor, destinatario experto específico, DLQ persistida sin payload, redrive/ignorado administrativo auditado y conciliación de efectos inciertos. Migración 037 aplicada; prueba local de recuperación agregada. | Ejecutar prueba real de cola, envíos parciales, DLQ/redrive y recuperación en Cloudflare dev. Revisar atomicidad de productores restantes. | Redrive exige permiso y motivo; asignación sustituida no recibe el evento; efectos completados no se repiten; evidencia de prueba Cloudflare dev. |
 | SEC-09 / P1 | El listado público de imágenes permite solo `gallery/`; adjuntos de solicitudes tienen endpoint privado con sesión, permiso, asignación y pago aprobado. | Desplegar en dev y completar revisión de tamaños, decodificación y metadatos de las imágenes. | URL pública o ID de adjunto ajeno no entrega archivos; experto asignado con pago aprobado sí los descarga. |
@@ -547,19 +549,21 @@ Consultar estado desde el portal debe tener límites y caché breve donde sea se
 
 ### 17.10 Pruebas de aceptación del portal
 
-- [ ] Cliente con tres solicitudes, de landing y agentes diferentes, accede con un código y ve las tres; otro correo no ve ninguna de ellas.
+- [ ] Cliente con tres solicitudes, de landing y agentes diferentes, accede con un código y ve las tres; otro correo no ve ninguna de ellas. La titularidad del detalle se probó con DB simulada; falta probar múltiples solicitudes y cuentas reales en dev.
 - [ ] «Consultar mis solicitudes» siempre llega al listado completo; un enlace de correo puede resaltar su referencia sin limitar el listado.
 - [ ] Sesión vigente evita pedir código; vencida lo exige; código expirado, usado o reemplazado se rechaza.
 - [ ] Solicitud sin pagar queda visible tras cerrar navegador e iniciar sesión; pregunta e imágenes se conservan.
 - [ ] Rechazo confirmado permite reintento sobre la misma solicitud; quedan dos intentos trazables y una sola solicitud.
 - [ ] Doble clic/dos pestañas no crean intentos externos simultáneos; resultado incierto de creación impide reintento ciego.
 - [ ] Pendiente, consulta fallida o proveedor caído no habilitan otro cobro; aprobado elimina acción de pagar.
-- [ ] Falsificar resultado de retorno, referencia, importe o propietario no confirma pago ni permite acceder a datos ajenos.
+- [ ] Falsificar resultado de retorno, referencia, importe o propietario no confirma pago ni permite acceder a datos ajenos. La ruta de detalle devuelve 404 para una solicitud ajena en prueba unitaria; falta probar pago y retorno en sandbox.
 - [ ] Webhook y consulta coincidentes generan una sola habilitación; aprobación tardía de otro pago genera alerta financiera.
 - [ ] Cliente con pago pendiente puede pedir código y entrar, sin notificar atención al agente/experto/admin antes de pago confirmado.
 - [ ] Cambio de TRM o recotización informa nuevo importe antes de pagar y conserva histórico.
 - [ ] Portal muestra solo respuesta aprobada y nota pública; fallo de correo no oculta respuesta disponible.
 - [ ] Notificaciones de pago/atención respetan reglas después de confirmación; no se envían códigos no solicitados.
+
+**Pruebas ya ejecutadas:** `tests/clientPortal.test.js` cubre sesión requerida, filtro por titular, respuestas aprobadas/enviadas, reserva atómica de intentos de código y conservación del código anterior si Resend falla. La suite completa reportó 24 archivos aprobados; build y `git diff --check` también pasaron. El smoke HTTP de dev está documentado en `docs/DEPLOYMENT_ENVIRONMENTS.md`.
 
 ## Referencias internas
 

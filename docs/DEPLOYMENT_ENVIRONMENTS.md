@@ -73,14 +73,16 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - No guardar tokens en el repositorio ni documentar su valor; usar `wrangler secret`.
 - `MP_WEBHOOK_SECRET` debe contener la firma secreta configurada para el webhook sandbox; no es el Access Token.
 
-### Portal de clientes — preparación en dev (2026-10-25)
+### Portal de clientes — despliegue y estado actual en dev (2026-10-25)
 
 - Se inició el detalle autenticado de solicitudes, el historial de pago y el inicio/reanudación del checkout sobre la solicitud existente.
 - Las migraciones `038_client_portal_payment_safety.sql`, `039_client_portal_access_rate_limit.sql` y `040_client_portal_ip_rate_limit.sql` se aplicaron en Neon dev mediante el script que carga `.env.dev`.
 - El backend serializa la emisión y validación de códigos passwordless; los errores internos del Worker responden con texto genérico.
 - Un segundo pago aprobado para una misma solicitud queda como `duplicate_approved` con diagnóstico, sin habilitar una segunda atención pagada.
 - Worker `cortes-rodriguez-asesores-dev` publicado desde local, versión `2988635d-5844-4e94-98a0-fe5cd83fb6a5`.
+- Código subido a `origin/dev` en el commit `3a8da30` (`Build secure client portal flows`).
 - Verificación HTTP posterior: `/portal-cliente` 200, `/api/client/session` sin sesión 401, `/api/client/requests` sin sesión 401 y `/api/public/features` 200. Suite automatizada (24 archivos), build y `git diff --check` aprobados.
+- Pendiente: login con código en buzón real, compra/reintento/retorno con Mercado Pago sandbox, conciliación administrativa de preferencia incierta y agregar enlaces del portal a los correos aplicables.
 - No se desplegó este cambio a producción ni se modificó `main`.
 
 ### Refuerzo del flujo de pagos (2026-10-24)
