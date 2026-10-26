@@ -4,6 +4,16 @@ import { normalizeClientEmail } from '../lib/clientIdentity.js'
 
 export async function handlePublicRequests(request, env) {
   const url = new URL(request.url)
+  if (url.pathname === '/api/public/request-attribution-token' && request.method === 'GET') {
+    if (!env.NEON_DATABASE_URL) return response({ error: 'La base de datos operativa no está configurada.' }, 500)
+    const limited = await enforcePublicRateLimit(request, env, 'token', 20, 60)
+    if (limited) return limited
+    const { neon } = await import('@neondatabase/serverless')
+    const sql = neon(env.NEON_DATABASE_URL)
+    const token = createOpaqueToken()
+    await sql`INSERT INTO operations.public_request_attribution_tokens (token_hash, attribution_type, expires_at) VALUES (${await sha256(token)}, 'direct_web', NOW() + INTERVAL '2 hours')`
+    return response({ token, type: 'direct_web' }, 200, { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' })
+  }
   if (url.pathname === '/api/public/turnstile-config' && request.method === 'GET') {
     const siteKey = typeof env.TURNSTILE_SITE_KEY === 'string' && /^[A-Za-z0-9_-]{20,64}$/.test(env.TURNSTILE_SITE_KEY)
       ? env.TURNSTILE_SITE_KEY
@@ -32,6 +42,13 @@ export async function handlePublicRequests(request, env) {
   if (contentLength > MAX_REQUEST_BODY_BYTES) return response({ error: 'La solicitud supera el tamaño máximo permitido.' }, 413)
 
   const parsed = await parseInput(request)
+  const attributionToken = text(parsed.fields.attributionToken || parsed.fields.agentToken)
+  if (!/^[A-Za-z0-9_-]{40,60}$/.test(attributionToken)) {
+    return response({ error: 'El enlace de origen no es válido. Recarga el formulario e inténtalo de nuevo.' }, 400)
+  }
+  const limited = await enforcePublicRateLimit(request, env, 'request', 5, 3600)
+  if (limited) return limited
+
   const input = validate(parsed.fields)
   const idempotencyKey = text(parsed.fields.idempotencyKey)
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey)) {
@@ -45,6 +62,22 @@ export async function handlePublicRequests(request, env) {
   }
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
+  const attributionRows = await sql`
+    SELECT t.attribution_type, t.agent_link_id, l.agent_id
+    FROM operations.public_request_attribution_tokens t
+    LEFT JOIN operations.agent_links l ON l.id = t.agent_link_id
+    LEFT JOIN operations.users u ON u.id = l.agent_id
+    WHERE t.token_hash = ${await sha256(attributionToken)}
+      AND t.revoked_at IS NULL AND t.expires_at > NOW()
+      AND ((t.attribution_type = 'direct_web' AND t.agent_link_id IS NULL)
+        OR (t.attribution_type = 'agent_link' AND l.active = TRUE AND l.revoked_at IS NULL AND (l.expires_at IS NULL OR l.expires_at > NOW()) AND u.active = TRUE))
+    LIMIT 1
+  `
+  if (!attributionRows[0]) return response({ error: 'El enlace de origen es inválido o venció. Recarga el formulario e inténtalo de nuevo.' }, 400)
+  const sourceChannel = String(attributionRows[0].attribution_type)
+  const source = sourceChannel === 'agent_link' ? 'agent' : 'landingpage'
+  const agentId = attributionRows[0].agent_id || null
+  const agentLinkId = attributionRows[0].agent_link_id || null
   const serviceRows = await sql`
     SELECT s.code AS service_code, s.name AS service_name, s.description AS service_description,
       c.id AS consultation_type_id, c.code AS consultation_code, c.name AS consultation_name,
@@ -94,27 +127,6 @@ export async function handlePublicRequests(request, env) {
   const assignedExpertId = !similarCandidates.length && expertRows.length
     ? expertRows[crypto.getRandomValues(new Uint32Array(1))[0] % expertRows.length].id
     : null
-  let source = 'landingpage'
-  let sourceChannel = 'direct_web'
-  let agentId = null
-  let agentLinkId = null
-  if (input.agentToken) {
-    const agentRows = await sql`
-      SELECT l.id, l.agent_id
-      FROM operations.agent_links l
-      JOIN operations.users u ON u.id = l.agent_id
-      WHERE l.token_hash = ${await sha256(input.agentToken)}
-        AND l.active = TRUE AND l.revoked_at IS NULL
-        AND (l.expires_at IS NULL OR l.expires_at > NOW())
-        AND u.active = TRUE
-      LIMIT 1
-    `
-    if (!agentRows[0]) return response({ error: 'El enlace de agente es inválido o venció.' }, 400)
-    source = 'agent'
-    sourceChannel = 'agent_link'
-    agentId = agentRows[0].agent_id
-    agentLinkId = agentRows[0].id
-  }
   if (parsed.files.length > 5) return response({ error: 'Puedes adjuntar máximo 5 imágenes.' }, 400)
   const verifiedFiles = []
   let totalAttachmentBytes = 0
@@ -185,9 +197,10 @@ export async function handlePublicRequests(request, env) {
       `
     }
   }
-  await sql`
+  const assignmentRows = await sql`
     INSERT INTO operations.request_assignments (request_id, expert_id, consultation_type_id, candidate_count, strategy, status, reason)
     VALUES (${requestId}, ${assignedExpertId}, ${service.consultation_type_id}, ${expertRows.length}, ${similarCandidates.length ? 'lexical_similarity' : 'random_pool'}, ${similarCandidates.length ? 'similarity_review' : assignedExpertId ? 'assigned' : 'failed'}, ${similarCandidates.length ? 'possible_similar_question' : assignedExpertId ? null : 'no_active_expert'})
+    RETURNING id
   `
 
   if (similarCandidates.length) {
@@ -203,19 +216,70 @@ export async function handlePublicRequests(request, env) {
   // Si requiere pago y aún está pendiente, la política limita el aviso al admin.
   // Cliente/agente/experto solo se notifican después de la confirmación del pago.
   {
-    try { await enqueueNotification(sql, requestId, 'request_created', { idempotencyKey: `request_created/${requestId}`, adminOnly: Boolean(service.payment_required) }) } catch (error) { console.error('No se pudo encolar la notificación de solicitud creada:', error.message) }
+    try { await enqueueNotification(sql, requestId, 'request_created', { env, idempotencyKey: `request_created/${requestId}`, adminOnly: Boolean(service.payment_required) }) } catch (error) { console.error('No se pudo encolar la notificación de solicitud creada:', error.message) }
     if (assignedExpertId && !similarCandidates.length) {
-      try { await enqueueNotification(sql, requestId, 'expert_assigned', { idempotencyKey: `expert_assigned/${requestId}/initial` }) } catch (error) { console.error('No se pudo encolar la notificación de asignación inicial:', error.message) }
+      try { await enqueueNotification(sql, requestId, 'expert_assigned', { env, idempotencyKey: `expert_assigned/${assignmentRows[0].id}` }) } catch (error) { console.error('No se pudo encolar la notificación de asignación inicial:', error.message) }
     }
     if (!service.payment_required && similarCandidates.length) {
-      try { await enqueueNotification(sql, requestId, 'similar_question_review', { idempotencyKey: `similar_question_review/${requestId}` }) } catch (error) { console.error('No se pudo encolar la revisión de similitud:', error.message) }
+      try { await enqueueNotification(sql, requestId, 'similar_question_review', { env, idempotencyKey: `similar_question_review/${requestId}` }) } catch (error) { console.error('No se pudo encolar la revisión de similitud:', error.message) }
     } else if (!service.payment_required && !assignedExpertId) {
-      try { await enqueueNotification(sql, requestId, 'assignment_failed', { idempotencyKey: `assignment_failed/${requestId}` }) } catch (error) { console.error('No se pudo encolar la asignación fallida:', error.message) }
+      try { await enqueueNotification(sql, requestId, 'assignment_failed', { env, idempotencyKey: `assignment_failed/${requestId}` }) } catch (error) { console.error('No se pudo encolar la asignación fallida:', error.message) }
     }
   }
 
   await sql`UPDATE operations.requests SET public_submission_completed_at = NOW() WHERE id = ${requestId}`
   return response({ ok: true, reference, status: 'pending', paymentRequired: Boolean(service.payment_required) }, 201)
+}
+
+async function enforcePublicRateLimit(request, env, action, limit, windowSeconds) {
+  const ip = request.headers.get('CF-Connecting-IP')?.trim()
+  if (!ip || ip.length > 64 || !env.PUBLIC_RATE_LIMIT_SECRET) {
+    return response({ error: 'El servicio de solicitudes no está disponible.' }, 503)
+  }
+  const keyHash = await sha256(`${env.PUBLIC_RATE_LIMIT_SECRET}:${ip}`)
+  const { neon } = await import('@neondatabase/serverless')
+  const sql = neon(env.NEON_DATABASE_URL)
+  const rows = await sql`
+    WITH expired_rate_rows AS (
+      SELECT ctid
+      FROM operations.public_request_rate_limits
+      WHERE window_started_at < NOW() - INTERVAL '2 hours'
+      ORDER BY window_started_at
+      LIMIT 100
+    ), cleanup AS (
+      DELETE FROM operations.public_request_rate_limits limits
+      USING expired_rate_rows
+      WHERE limits.ctid = expired_rate_rows.ctid
+    ), expired_token_rows AS (
+      SELECT id
+      FROM operations.public_request_attribution_tokens
+      WHERE attribution_type = 'direct_web' AND (expires_at <= NOW() OR revoked_at IS NOT NULL)
+      ORDER BY expires_at, id
+      LIMIT 100
+    ), cleanup_tokens AS (
+      DELETE FROM operations.public_request_attribution_tokens tokens
+      USING expired_token_rows
+      WHERE tokens.id = expired_token_rows.id
+    ), updated AS (
+      INSERT INTO operations.public_request_rate_limits (ip_hash, action, window_started_at, request_count)
+      VALUES (${keyHash}, ${action}, date_trunc('minute', NOW()), 1)
+      ON CONFLICT (ip_hash, action) DO UPDATE SET
+        request_count = CASE
+          WHEN operations.public_request_rate_limits.window_started_at <= NOW() - (${windowSeconds} * INTERVAL '1 second') THEN 1
+          ELSE operations.public_request_rate_limits.request_count + 1
+        END,
+        window_started_at = CASE
+          WHEN operations.public_request_rate_limits.window_started_at <= NOW() - (${windowSeconds} * INTERVAL '1 second') THEN date_trunc('minute', NOW())
+          ELSE operations.public_request_rate_limits.window_started_at
+        END,
+        updated_at = NOW()
+      RETURNING request_count
+    ) SELECT request_count FROM updated
+  `
+  if (Number(rows[0]?.request_count) > limit) {
+    return response({ error: 'Has realizado demasiados intentos. Espera antes de volver a intentarlo.' }, 429, { 'retry-after': String(windowSeconds) })
+  }
+  return null
 }
 
 async function createPaymentPreference(request, env) {
@@ -434,10 +498,10 @@ async function recordVerifiedPayment(payment, paymentId, env, database = null, s
     RETURNING request_id, status
   `
   if (updated[0]?.request_id && status === 'approved') {
-    try { await enqueueNotification(sql, updated[0].request_id, 'payment_approved', { idempotencyKey: `payment_approved/${updated[0].request_id}`, actorId, retryFailed: source === 'admin_verify' }) }
+    try { await enqueueNotification(sql, updated[0].request_id, 'payment_approved', { env, idempotencyKey: `payment_approved/${updated[0].request_id}`, actorId, retryFailed: source === 'admin_verify' }) }
     catch (error) { console.error(JSON.stringify({ event: 'payment_approval_email_enqueue_failed', severity: 'error', requestId: String(updated[0].request_id), errorCode: 'outbox_enqueue_failed' })) }
   } else if (updated[0]?.request_id && ['rejected', 'cancelled'].includes(status) && record.status !== status) {
-    try { await enqueueNotification(sql, updated[0].request_id, 'payment_rejected', { idempotencyKey: `payment_rejected/${paymentId}` }) }
+    try { await enqueueNotification(sql, updated[0].request_id, 'payment_rejected', { env, idempotencyKey: `payment_rejected/${paymentId}` }) }
     catch (error) { console.error(JSON.stringify({ event: 'payment_failure_email_enqueue_failed', severity: 'error', requestId: String(updated[0].request_id), errorCode: 'outbox_enqueue_failed' })) }
   }
   return {
@@ -600,7 +664,7 @@ export function validate(payload) {
   const consultationType = text(payload.consultationType)
   const productType = text(payload.productType)
   const question = text(payload.question)
-  const agentToken = text(payload.agentToken)
+  const agentToken = text(payload.attributionToken || payload.agentToken)
 
   if (!fullName) throw new RequestError('El nombre completo es obligatorio.')
   if (fullName.length < 2 || fullName.length > 120 || !/^[\p{L}\p{M}][\p{L}\p{M}\s.'’-]*$/u.test(fullName)) throw new RequestError('El nombre debe tener entre 2 y 120 caracteres y solo puede contener letras, espacios, puntos o guiones.')
@@ -614,6 +678,18 @@ export function validate(payload) {
   if (question.length < 20 || question.length > 3000 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(question)) throw new RequestError('La consulta debe tener entre 20 y 3000 caracteres.')
 
   return { fullName, legalEntityType, email, phone, whatsapp, serviceType, consultationType, freightAgent: null, productType, question, agentToken }
+}
+
+function createOpaqueToken() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return base64Url(bytes)
+}
+
+function base64Url(bytes) {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '')
 }
 
 async function parseInput(request) {

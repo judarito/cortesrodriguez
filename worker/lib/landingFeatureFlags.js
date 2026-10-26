@@ -22,6 +22,7 @@ export function isLandingRequestApi(pathname) {
   return pathname === '/api/public/catalog'
     || pathname === '/api/public/service'
     || pathname === '/api/public/turnstile-config'
+    || pathname === '/api/public/request-attribution-token'
     || pathname === '/api/public/requests'
     || /^\/api\/public\/agent-links\/[^/]+$/.test(pathname)
 }

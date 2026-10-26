@@ -30,7 +30,7 @@ export async function handlePublicFeedback(request, env) {
   await sql`UPDATE operations.client_feedback SET rating = ${rating}, comment = ${comment || null}, status = ${status}, received_at = NOW() WHERE id = ${rows[0].id}`
   try {
     await enqueueNotification(sql, rows[0].request_id, status === 'escalated' ? 'feedback_low' : 'feedback_received', {
-      idempotencyKey: `${status === 'escalated' ? 'feedback_low' : 'feedback_received'}/${rows[0].id}`,
+      env, idempotencyKey: `${status === 'escalated' ? 'feedback_low' : 'feedback_received'}/${rows[0].id}`,
     })
   } catch (error) { console.error('No se pudo encolar la notificación del feedback:', error.message) }
   return response({ ok: true, status })

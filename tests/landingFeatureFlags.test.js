@@ -44,6 +44,7 @@ test('only the new request routes are gated; landing quote and client feedback r
   assert.equal(isLandingRequestPage('/solicitud/resultado-pago'), false)
   assert.equal(isLandingRequestPage('/'), false)
   assert.equal(isLandingRequestApi('/api/public/requests'), true)
+  assert.equal(isLandingRequestApi('/api/public/request-attribution-token'), true)
   assert.equal(isLandingRequestApi('/api/public/agent-links/token'), true)
   assert.equal(isLandingRequestApi('/api/public/feedback'), false)
   assert.equal(isLandingRequestApi('/api/quote-requests'), false)

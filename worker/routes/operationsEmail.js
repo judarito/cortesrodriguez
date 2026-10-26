@@ -9,7 +9,8 @@ export async function handleOperationsEmail(request, env) {
   if (!match || request.method !== 'POST') return null
 
   const claims = await requireOperationsAuth(request, env)
-  if (!claims?.permissions?.includes('requests.update')) return response({ error: 'No tienes permisos para enviar notificaciones.' }, 403)
+  if (!claims) return response({ error: 'Sesión requerida.' }, 401)
+  if (!claims.permissions?.includes('requests.update')) return response({ error: 'No tienes permisos para enviar notificaciones.' }, 403)
   if (!env.NEON_DATABASE_URL || !(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.RESEND_FROM_EMAIL) return response({ error: 'Falta configurar Neon, RESEND_OPERATIONS_API_KEY o RESEND_FROM_EMAIL.' }, 500)
 
   const body = await request.json().catch(() => ({}))
@@ -20,7 +21,7 @@ export async function handleOperationsEmail(request, env) {
   const sql = neon(env.NEON_DATABASE_URL)
   try {
     const idempotencyKey = request.headers.get('Idempotency-Key') || `manual/${match[1]}/${eventCode}/${crypto.randomUUID()}`
-    const result = await enqueueNotification(sql, match[1], eventCode, { idempotencyKey, actorId: claims.sub })
+    const result = await enqueueNotification(sql, match[1], eventCode, { env, idempotencyKey, actorId: claims.sub })
     if (!result.queued) return response({ ok: true, queued: false, reason: result.reason }, 200)
     return response({ ok: true, queued: true, eventId: result.eventId, status: result.status }, 202)
   } catch (error) {
@@ -114,11 +115,19 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const configured = !paymentPolicy.adminOnly && (audiences.includes('configured') || audiences.includes('admin') || audiences.includes('all_involved'))
     ? recipients.filter((recipient) => adminEmailAllowedForEvent(eventCode) || !adminEmails.includes(String(recipient.email).toLowerCase()))
     : []
-  const unique = (values) => [...new Set(values.filter((value) => value && /^\S+@\S+\.\S+$/.test(String(value))).map(String))]
-  const to = unique([...configured.filter((item) => item.recipient_type === 'to').map((item) => item.email), ...dynamic])
-  const cc = unique(configured.filter((item) => item.recipient_type === 'cc').map((item) => item.email)).filter((email) => !to.includes(email))
-  const bcc = unique(configured.filter((item) => item.recipient_type === 'bcc').map((item) => item.email)).filter((email) => !to.includes(email) && !cc.includes(email))
-  if (!to.length) return { sent: false, reason: 'email_not_required' }
+  const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
+  const validEmails = (values) => [...new Set(values.filter((value) => /^\S+@\S+\.\S+$/.test(normalizeEmail(value))).map(normalizeEmail))]
+  const expertEmail = normalizeEmail(assignedExpertRecipient(request))
+  const expertIsRecipient = Boolean(expertEmail && dynamic.some((email) => normalizeEmail(email) === expertEmail))
+  const generalRecipients = validEmails([
+    ...configured.map((recipient) => recipient.email),
+    ...dynamic.filter((email) => normalizeEmail(email) !== expertEmail),
+  ]).filter((email) => email !== expertEmail)
+  const deliveries = [
+    ...generalRecipients.map((email) => ({ email, expert: false })),
+    ...(expertIsRecipient ? [{ email: expertEmail, expert: true }] : []),
+  ]
+  if (!deliveries.length) return { sent: false, reason: 'email_not_required' }
   if (!(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.RESEND_FROM_EMAIL) throw new Error('mail_configuration_missing')
 
   const eventLabel = { payment_approved: 'Pago recibido', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida', expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', similar_question_review: 'Pregunta similar pendiente de validación', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
@@ -139,26 +148,154 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     'Este mensaje fue enviado automáticamente. Por favor, no compartas este correo.',
   ].join('\n')
   const html = notificationTemplate(eventLabel, request.reference, description)
-  const resendResponse = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-      ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
-    },
-    body: JSON.stringify({ from: env.RESEND_FROM_EMAIL, to, ...(cc.length ? { cc } : {}), ...(bcc.length ? { bcc } : {}), ...(request.email ? { reply_to: request.email } : {}), subject, text, html }),
-  })
-  const resendBody = await resendResponse.json().catch(() => ({}))
-  if (!resendResponse.ok || !resendBody.id) throw new Error(resendBody.message || 'Resend no aceptó el envío.')
+  let lastEmailId = null
+  for (const delivery of deliveries) {
+    // Expert messages use only this fixed allowlist: organization name and a
+    // generic operational notice. They contain no request, client, or event data.
+    const expertText = 'CORTÉS RODRÍGUEZ ASESORES\n\nTienes una notificación operativa. Ingresa al panel autorizado para consultarla.'
+    const expertHtml = '<!doctype html><html lang="es"><body><p>CORTÉS RODRÍGUEZ ASESORES</p><p>Tienes una notificación operativa. Ingresa al panel autorizado para consultarla.</p></body></html>'
+    const templateVersion = delivery.expert ? 'expert-v1' : 'general-v1'
+    const emailPayload = {
+      from: env.RESEND_FROM_EMAIL,
+      to: [delivery.email],
+      subject: delivery.expert ? 'Notificación operativa' : subject,
+      text: delivery.expert ? expertText : text,
+      html: delivery.expert ? expertHtml : html,
+    }
+    const effectKey = `${options.idempotencyKey || `request/${request.id}/${eventCode}`}/${templateVersion}`
+    const result = await sendEmailEffect(sql, env, {
+      effectKey,
+      recipient: delivery.email,
+      payload: emailPayload,
+      requestId: request.id,
+      eventCode,
+      messageSubject: emailPayload.subject,
+      outboxId: options.outboxId,
+    })
+    if (!result.sent) throw new Error(result.reason || 'notification_delivery_pending')
+    lastEmailId = result.emailId || lastEmailId
+  }
+  await sql`UPDATE operations.requests SET notification_status = 'accepted', notification_last_event_at = NOW(), notification_last_error = NULL, updated_at = NOW() WHERE id = ${request.id}`
+  if (actorId) await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'send', 'notification', ${request.id}, ${JSON.stringify({ eventCode, resendEmailId: lastEmailId })}::jsonb)`
+  return { sent: true, emailId: lastEmailId }
+}
 
+export async function sendEmailEffect(sql, env, { effectKey, recipient, payload, requestId, eventCode, messageSubject, outboxId = null }) {
+  if (!effectKey || !recipient || !payload || !requestId || !eventCode) throw new Error('notification_effect_invalid')
+  const payloadJson = JSON.stringify(payload)
+  const payloadHash = await sha256(payloadJson)
+  // A fixed-length digest keeps the Resend key under its 256 character limit,
+  // regardless of caller supplied outbox keys or recipient address length.
+  const resendKey = `cra-email-v1-${await sha256(`${effectKey}\n${recipient}\n${payloadHash}`)}`
+  await sql`
+    INSERT INTO operations.notification_email_effects
+      (effect_key, request_id, event_code, recipient_email, resend_idempotency_key, payload_sha256, status)
+    VALUES (${effectKey}, ${requestId}, ${eventCode}, ${recipient}, ${resendKey}, ${payloadHash}, 'pending')
+    ON CONFLICT (effect_key, recipient_email) DO NOTHING
+  `
+  let rows = await sql`
+    SELECT id, resend_idempotency_key, payload_sha256, status, resend_email_id
+    FROM operations.notification_email_effects
+    WHERE effect_key = ${effectKey} AND recipient_email = ${recipient}
+    LIMIT 1
+  `
+  const effect = rows[0]
+  if (!effect || effect.payload_sha256 !== payloadHash || effect.resend_idempotency_key !== resendKey) {
+    throw new Error('notification_effect_payload_conflict')
+  }
+  if (effect.status === 'accepted') {
+    await recordAcceptedEmailMessage(sql, { requestId, eventCode, emailId: effect.resend_email_id, recipient, messageSubject })
+    await updateAppNotificationEmail(sql, { outboxId, requestId, recipient, emailId: effect.resend_email_id })
+    return { sent: true, emailId: effect.resend_email_id, alreadyAccepted: true }
+  }
+  if (effect.status === 'uncertain') return { sent: false, reason: 'notification_delivery_uncertain' }
+
+  // The first attempt timestamp is never reset. Within Resend's retention
+  // window an expired lease can safely retry with the identical key and body.
+  const claimed = await sql`
+    UPDATE operations.notification_email_effects
+    SET status = 'sending', attempts = attempts + 1,
+        first_attempt_at = COALESCE(first_attempt_at, NOW()), last_attempt_at = NOW(),
+        last_error_code = NULL, updated_at = NOW()
+    WHERE id = ${effect.id}
+      AND (status IN ('pending', 'retryable') OR
+        (status = 'sending' AND first_attempt_at > NOW() - INTERVAL '24 hours'
+          AND last_attempt_at < NOW() - INTERVAL '5 minutes'))
+      AND (first_attempt_at IS NULL OR first_attempt_at > NOW() - INTERVAL '24 hours')
+    RETURNING id
+  `
+  if (!claimed[0]) {
+    await sql`
+      UPDATE operations.notification_email_effects
+      SET status = 'uncertain', last_error_code = 'resend_idempotency_window_expired', updated_at = NOW()
+      WHERE id = ${effect.id} AND status IN ('pending', 'retryable', 'sending')
+        AND first_attempt_at <= NOW() - INTERVAL '24 hours'
+    `
+    rows = await sql`
+      SELECT status FROM operations.notification_email_effects WHERE id = ${effect.id} LIMIT 1
+    `
+    return { sent: false, reason: rows[0]?.status === 'uncertain' ? 'notification_delivery_uncertain' : 'notification_delivery_in_progress' }
+  }
+
+  let resendResponse
+  let resendBody = {}
+  try {
+    resendResponse = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': resendKey,
+      },
+      body: payloadJson,
+    })
+    resendBody = await resendResponse.json().catch(() => ({}))
+  } catch (error) {
+    await sql`
+      UPDATE operations.notification_email_effects
+      SET status = 'retryable', last_error_code = 'resend_result_unknown', updated_at = NOW()
+      WHERE id = ${effect.id} AND status = 'sending'
+    `
+    throw error
+  }
+  if (!resendResponse.ok || !resendBody.id) {
+    const errorCode = !resendResponse.ok ? `resend_http_${resendResponse.status}` : 'resend_response_invalid'
+    await sql`
+      UPDATE operations.notification_email_effects
+      SET status = 'retryable', last_error_code = ${errorCode}, updated_at = NOW()
+      WHERE id = ${effect.id} AND status = 'sending'
+    `
+    throw new Error(resendBody.message || 'Resend no aceptó el envío.')
+  }
+  const emailId = String(resendBody.id)
+  await sql`
+    UPDATE operations.notification_email_effects
+    SET status = 'accepted', resend_email_id = ${emailId}, accepted_at = NOW(), updated_at = NOW()
+    WHERE id = ${effect.id} AND status = 'sending'
+  `
+  await recordAcceptedEmailMessage(sql, { requestId, eventCode, emailId, recipient, messageSubject })
+  await updateAppNotificationEmail(sql, { outboxId, requestId, recipient, emailId })
+  return { sent: true, emailId }
+}
+
+async function recordAcceptedEmailMessage(sql, { requestId, eventCode, emailId, recipient, messageSubject }) {
   await sql`
     INSERT INTO operations.notification_messages (request_id, event_code, resend_email_id, subject, to_emails, cc_emails, bcc_emails, status, last_event_at)
-    VALUES (${request.id}, ${eventCode}, ${resendBody.id}, ${subject}, ${JSON.stringify(to)}::jsonb, ${JSON.stringify(cc)}::jsonb, ${JSON.stringify(bcc)}::jsonb, 'accepted', NOW())
+    VALUES (${requestId}, ${eventCode}, ${emailId}, ${messageSubject}, ${JSON.stringify([recipient])}::jsonb, '[]'::jsonb, '[]'::jsonb, 'accepted', NOW())
     ON CONFLICT (resend_email_id) DO NOTHING
   `
-  await sql`UPDATE operations.requests SET notification_status = 'accepted', notification_last_event_at = NOW(), notification_last_error = NULL, updated_at = NOW() WHERE id = ${request.id}`
-  if (actorId) await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'send', 'notification', ${request.id}, ${JSON.stringify({ eventCode, resendEmailId: resendBody.id })}::jsonb)`
-  return { sent: true, emailId: String(resendBody.id) }
+}
+
+async function updateAppNotificationEmail(sql, { outboxId, requestId, recipient, emailId }) {
+  if (!outboxId || !emailId) return
+  await sql`
+    UPDATE operations.app_notifications notification
+    SET resend_email_id = ${emailId}, email_status = 'accepted', updated_at = NOW()
+    FROM operations.users u
+    WHERE notification.user_id = u.id AND notification.request_id = ${requestId}
+      AND notification.idempotency_key LIKE ${`event/${outboxId}/%`}
+      AND lower(u.email) = ${recipient}
+  `
 }
 
 const notificationEventCodes = new Set([
@@ -173,6 +310,7 @@ export async function enqueueNotification(sql, requestId, eventCode, {
   actorId = null,
   payload = {},
   retryFailed = false,
+  env = null,
 } = {}) {
   if (!notificationEventCodes.has(eventCode)) throw new Error('notification_event_invalid')
   if (!idempotencyKey || idempotencyKey.length > 250) throw new Error('notification_idempotency_key_invalid')
@@ -195,7 +333,30 @@ export async function enqueueNotification(sql, requestId, eventCode, {
   if (!rows[0]) return { queued: false, reason: 'duplicate_event' }
   const outbox = rows[0]
   if (outbox.status === 'pending') await sql`UPDATE operations.requests SET notification_status = 'pending_retry', updated_at = NOW() WHERE id = ${requestId}`
+  if (env?.NOTIFICATION_EVENTS_QUEUE && outbox.status === 'pending') {
+    try { await publishNotificationEvent(sql, env, String(outbox.id)) }
+    catch { /* Durable outbox remains eligible for bounded recovery. */ }
+  }
   return { queued: true, eventId: String(outbox.id), status: String(outbox.status) }
+}
+
+export async function publishNotificationEvent(sql, env, eventId) {
+  if (!/^[0-9a-f-]{36}$/i.test(String(eventId)) || !env?.NOTIFICATION_EVENTS_QUEUE) return false
+  const claimed = await sql`
+    UPDATE operations.notification_outbox
+    SET status = 'dispatching', dispatch_lease_expires_at = NOW() + INTERVAL '2 minutes', updated_at = NOW()
+    WHERE id = ${eventId} AND status = 'pending' AND next_attempt_at <= NOW()
+    RETURNING id
+  `
+  if (!claimed[0]) return false
+  try {
+    await env.NOTIFICATION_EVENTS_QUEUE.send({ eventId: String(claimed[0].id) })
+    await sql`UPDATE operations.notification_outbox SET status = 'queued', dispatch_lease_expires_at = NULL, updated_at = NOW() WHERE id = ${claimed[0].id} AND status = 'dispatching'`
+    return true
+  } catch (error) {
+    await sql`UPDATE operations.notification_outbox SET status = 'pending', dispatch_lease_expires_at = NULL, next_attempt_at = NOW() + INTERVAL '1 minute', last_error_code = 'queue_dispatch_failed', updated_at = NOW() WHERE id = ${claimed[0].id} AND status = 'dispatching'`
+    throw error
+  }
 }
 
 export async function dispatchPendingNotifications(env, limit = 20) {
@@ -209,6 +370,7 @@ export async function dispatchPendingNotifications(env, limit = 20) {
       WHERE (status = 'pending' AND next_attempt_at <= NOW())
          OR (status = 'processing' AND lease_expires_at < NOW())
          OR (status = 'dispatching' AND dispatch_lease_expires_at < NOW())
+         OR (status = 'queued' AND updated_at < NOW() - INTERVAL '15 minutes')
       ORDER BY next_attempt_at, created_at
       LIMIT ${Math.max(1, Math.min(Number(limit) || 20, 100))}
       FOR UPDATE SKIP LOCKED
@@ -267,13 +429,14 @@ export async function dispatchPendingAppNotifications(env, limit = 50) {
 }
 
 export async function consumeQueuedNotification(env, eventId) {
-  if (!env.NEON_DATABASE_URL || !eventId) throw new Error('notification_queue_configuration_missing')
+  if (!env.NEON_DATABASE_URL || typeof eventId !== 'string' || !/^[0-9a-f-]{36}$/i.test(eventId)) throw new Error('notification_queue_configuration_missing')
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   await deliverNotification(sql, env, String(eventId))
 }
 
 export async function deliverNotification(sql, env, outboxId) {
+  if (typeof outboxId !== 'string' || !/^[0-9a-f-]{36}$/i.test(outboxId)) return
   const claimed = await sql`
     UPDATE operations.notification_outbox
     SET status = 'processing', attempts = attempts + 1,
@@ -285,14 +448,26 @@ export async function deliverNotification(sql, env, outboxId) {
   `
   if (!claimed[0]) return
   const item = claimed[0]
+  if (!notificationEventCodes.has(item.event_code) || typeof item.admin_only !== 'boolean' || !item.idempotency_key || !item.request_id) {
+    await sql`UPDATE operations.notification_outbox SET status = 'failed', last_error_code = 'notification_contract_invalid', lease_expires_at = NULL, updated_at = NOW() WHERE id = ${item.id}`
+    return
+  }
+  if (item.event_code === 'expert_response_approved') {
+    let payload
+    try { payload = typeof item.event_payload === 'string' ? JSON.parse(item.event_payload || '{}') : item.event_payload } catch { payload = null }
+    if (!payload || typeof payload.responseId !== 'string' || !/^[0-9a-f-]{36}$/i.test(payload.responseId)) {
+      await sql`UPDATE operations.notification_outbox SET status = 'failed', last_error_code = 'notification_contract_invalid', lease_expires_at = NULL, updated_at = NOW() WHERE id = ${item.id}`
+      return
+    }
+  }
   try { await publishRequestStateUpdate(sql, env, item) }
   catch { console.warn(JSON.stringify({ event: 'request_realtime_publish_failed', severity: 'warning', errorCode: 'realtime_publish_failed' })) }
   try {
-    await createEmailAppNotifications(sql, env, item, null, 'not_sent')
+    await createEmailAppNotifications(sql, env, item, null, 'pending_retry')
     await sql`UPDATE operations.notification_outbox SET app_notifications_generated_at = COALESCE(app_notifications_generated_at, NOW()), updated_at = NOW() WHERE id = ${item.id}`
     const result = item.event_code === 'expert_response_approved'
       ? await sendApprovedResponseNotification(sql, env, item)
-      : await sendRequestNotification(sql, env, item.request_id, item.event_code, item.actor_id, { idempotencyKey: `cra-${item.id}`, forceAdminOnly: Boolean(item.admin_only) })
+      : await sendRequestNotification(sql, env, item.request_id, item.event_code, item.actor_id, { idempotencyKey: `cra-${item.id}`, outboxId: String(item.id), forceAdminOnly: Boolean(item.admin_only) })
     if (!result.sent && result.reason === 'email_not_required') {
       await sql`
         UPDATE operations.notification_outbox
@@ -303,11 +478,6 @@ export async function deliverNotification(sql, env, outboxId) {
     }
     if (!result.sent) throw new Error(result.reason || 'notification_not_sent')
     await sql`
-      UPDATE operations.app_notifications
-      SET resend_email_id = ${result.emailId}, email_status = 'accepted', updated_at = NOW()
-      WHERE request_id = ${item.request_id} AND idempotency_key LIKE ${`event/${item.id}/%`}
-    `
-    await sql`
       UPDATE operations.notification_outbox
       SET status = 'sent', resend_email_id = ${result.emailId}, last_error_code = NULL,
           lease_expires_at = NULL, sent_at = NOW(), updated_at = NOW()
@@ -316,8 +486,11 @@ export async function deliverNotification(sql, env, outboxId) {
     try { await dispatchPendingAppNotifications(env, 1) }
     catch { console.warn(JSON.stringify({ event: 'app_notification_materialization_failed', severity: 'warning', outboxId: String(item.id) })) }
   } catch (error) {
-    const retry = Number(item.attempts) < 8
-    const safeCode = error.message === 'mail_configuration_missing' ? error.message : 'resend_delivery_failed'
+    const uncertain = error.message === 'notification_delivery_uncertain'
+    const retry = !uncertain && Number(item.attempts) < 8
+    const safeCode = ['mail_configuration_missing', 'notification_delivery_uncertain'].includes(error.message)
+      ? error.message
+      : 'resend_delivery_failed'
     await sql`
       UPDATE operations.app_notifications
       SET email_status = ${retry ? 'pending_retry' : 'failed'}, updated_at = NOW()
@@ -370,21 +543,19 @@ async function sendApprovedResponseNotification(sql, env, item) {
   const subject = `Respuesta a tu solicitud · ${row.reference}`
   const textBody = [`Hola ${row.client_name},`, '', row.body, row.admin_note ? `\nNota de administración:\n${row.admin_note}` : '', '', `¿Quieres continuar el proceso con nosotros? Accede al portal de clientes: ${portalUrl}`, '', `Evalúa esta respuesta: ${feedbackUrl}`, '', 'Gracias por confiar en Cortés Rodríguez Asesores.'].join('\n')
   const html = `<p>Hola ${escapeHtml(row.client_name)},</p><div>${escapeHtml(row.body).replaceAll('\n', '<br />')}</div>${row.admin_note ? `<p><strong>Nota de administración:</strong><br />${escapeHtml(row.admin_note).replaceAll('\n', '<br />')}</p>` : ''}<p>¿Cómo fue tu experiencia? <a href="${escapeHtml(feedbackUrl)}">Déjanos tu feedback</a>.</p><p>¿Quieres continuar el proceso con nosotros? <a href="${escapeHtml(portalUrl)}">Accede al portal de clientes</a> para consultar tus solicitudes.</p><p>Gracias por confiar en Cortés Rodríguez Asesores.</p>`
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json', 'Idempotency-Key': `cra-${item.id}` },
-    body: JSON.stringify({ from: env.RESEND_FROM_EMAIL, to: [row.email], subject, text: textBody, html }),
+  const emailResult = await sendEmailEffect(sql, env, {
+    effectKey: `cra-${item.id}/general-v1`,
+    recipient: String(row.email).trim().toLowerCase(),
+    requestId: String(row.request_id),
+    eventCode: item.event_code,
+    messageSubject: subject,
+    outboxId: String(item.id),
+    payload: { from: env.RESEND_FROM_EMAIL, to: [row.email], subject, text: textBody, html },
   })
-  const result = await response.json().catch(() => ({}))
-  if (!response.ok || !result.id) throw new Error('resend_delivery_failed')
-  await sql`
-    INSERT INTO operations.notification_messages (request_id, event_code, resend_email_id, subject, to_emails, status, last_event_at)
-    VALUES (${row.request_id}, ${item.event_code}, ${result.id}, ${subject}, ${JSON.stringify([row.email])}::jsonb, 'accepted', NOW())
-    ON CONFLICT (resend_email_id) DO NOTHING
-  `
+  if (!emailResult.sent) throw new Error(emailResult.reason || 'notification_delivery_pending')
   await sql`UPDATE operations.expert_responses SET status = 'sent', sent_at = COALESCE(sent_at, NOW()), updated_at = NOW() WHERE id = ${row.id} AND status <> 'sent'`
   await sql`UPDATE operations.requests SET notification_status = 'accepted', notification_last_event_at = NOW(), notification_last_error = NULL, updated_at = NOW() WHERE id = ${row.request_id}`
-  return { sent: true, emailId: String(result.id) }
+  return { sent: true, emailId: String(emailResult.emailId) }
 }
 
 async function feedbackTokenForResponse(secret, responseId) {

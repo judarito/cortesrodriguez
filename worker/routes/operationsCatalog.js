@@ -45,6 +45,7 @@ async function revokeLink(sql, id, claims) {
   const isAdmin = claims.roles?.includes('admin')
   const rows = await sql`UPDATE operations.agent_links SET active = FALSE, revoked_at = NOW() WHERE id = ${id} AND ${isAdmin ? sql`TRUE` : sql`agent_id = ${claims.sub}`} RETURNING id`
   if (!rows[0]) return response({ error: 'Enlace no encontrado.' }, 404)
+  await sql`UPDATE operations.public_request_attribution_tokens SET revoked_at = NOW() WHERE agent_link_id = ${id} AND revoked_at IS NULL`
   await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id) VALUES (${claims.sub}, 'revoke', 'agent_link', ${id})`
   return response({ ok: true })
 }
@@ -269,28 +270,36 @@ async function createAgentLink(sql, request, claims) {
   const token = randomToken()
   const tokenHash = await sha256(token)
   const rows = await sql`
-    INSERT INTO operations.agent_links (agent_id, token_hash, label)
-    VALUES (${agentId}, ${tokenHash}, ${label})
-    RETURNING id, label, active, created_at
+    WITH new_link AS (
+      INSERT INTO operations.agent_links (agent_id, token_hash, label, expires_at)
+      VALUES (${agentId}, ${tokenHash}, ${label}, NOW() + INTERVAL '1 year')
+      RETURNING id, label, active, created_at, expires_at
+    ), new_token AS (
+      INSERT INTO operations.public_request_attribution_tokens (token_hash, attribution_type, agent_link_id, expires_at)
+      SELECT ${tokenHash}, 'agent_link', id, expires_at FROM new_link
+    )
+    SELECT id, label, active, created_at, expires_at FROM new_link
   `
   await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${claims.sub}, 'create', 'agent_link', ${rows[0].id}, ${JSON.stringify({ agentId, label })}::jsonb)`
-  return response({ ok: true, link: { id: String(rows[0].id), label: String(rows[0].label), active: Boolean(rows[0].active), createdAt: String(rows[0].created_at), token, path: `/solicitud/agente/${token}` } }, 201)
+  return response({ ok: true, link: { id: String(rows[0].id), label: String(rows[0].label), active: Boolean(rows[0].active), createdAt: String(rows[0].created_at), expiresAt: String(rows[0].expires_at), token, path: `/solicitud/agente/${token}` } }, 201)
 }
 
 async function resolveAgentLink(sql, token) {
   if (!token || token.length < 20) return response({ error: 'Enlace inválido.' }, 404)
   const rows = await sql`
-    SELECT l.id, l.agent_id, l.label, u.full_name AS agent_name
-    FROM operations.agent_links l
+    SELECT l.id, l.label
+    FROM operations.public_request_attribution_tokens t
+    JOIN operations.agent_links l ON l.id = t.agent_link_id
     JOIN operations.users u ON u.id = l.agent_id
-    WHERE l.token_hash = ${await sha256(token)}
+    WHERE t.token_hash = ${await sha256(token)} AND t.attribution_type = 'agent_link'
+      AND t.revoked_at IS NULL AND t.expires_at > NOW()
       AND l.active = TRUE AND l.revoked_at IS NULL
       AND (l.expires_at IS NULL OR l.expires_at > NOW())
       AND u.active = TRUE
     LIMIT 1
   `
   if (!rows[0]) return response({ error: 'Enlace inválido o vencido.' }, 404)
-  return response({ valid: true, source: 'agent_link', agentLinkId: String(rows[0].id), agentId: String(rows[0].agent_id), label: String(rows[0].label), displayLabel: 'Solicitud referida por su asesor' })
+  return response({ valid: true, source: 'agent_link', label: String(rows[0].label), displayLabel: 'Solicitud referida por su asesor' })
 }
 
 function serializeCatalogItem(row) {

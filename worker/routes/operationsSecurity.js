@@ -82,6 +82,7 @@ async function deactivateUser(sql, id, actorId) {
   if (id === actorId) return response({ error: 'No puedes desactivar tu propia cuenta.' }, 400)
   const updated = await sql`UPDATE operations.users SET active = FALSE WHERE id = ${id} RETURNING id`
   if (!updated[0]) return response({ error: 'Usuario no encontrado.' }, 404)
+  await sql`UPDATE operations.sessions SET revoked_at = NOW() WHERE user_id = ${id} AND revoked_at IS NULL`
   await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id) VALUES (${actorId}, 'deactivate', 'user', ${id})`
   return response({ ok: true })
 }

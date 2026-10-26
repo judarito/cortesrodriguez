@@ -79,6 +79,13 @@ onMounted(async () => {
       return
     }
     agentContext.value = await agentResponse.json()
+  } else {
+    const attributionResponse = await fetch('/api/public/request-attribution-token', { cache: 'no-store' })
+    if (!attributionResponse.ok) {
+      error.value = 'No fue posible preparar el formulario. Recarga la página e inténtalo de nuevo.'
+      return
+    }
+    agentToken.value = (await attributionResponse.json()).token
   }
   const catalogResponse = await fetch('/api/public/catalog')
   if (catalogResponse.ok) {
@@ -214,7 +221,7 @@ async function submitRequest() {
     if (turnstileEnabled.value && !turnstileToken.value) throw new Error(turnstileError.value || 'Completa la verificación de seguridad.')
     const payload = new FormData()
     Object.entries(form.value).forEach(([key, value]) => payload.append(key, value))
-    if (agentToken.value) payload.append('agentToken', agentToken.value)
+    if (agentToken.value) payload.append('attributionToken', agentToken.value)
     if (turnstileToken.value) payload.append('turnstileToken', turnstileToken.value)
     attachments.value.forEach((file) => payload.append('attachments', file))
     const payloadSignature = JSON.stringify({ ...form.value, agentToken: agentToken.value, attachments: attachments.value.map((file) => [file.name, file.size, file.type, file.lastModified]) })

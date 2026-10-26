@@ -236,7 +236,7 @@ export default {
     for (const message of batch.messages) {
       try {
         const eventId = message.body?.eventId
-        if (typeof eventId !== 'string' || !eventId) {
+        if (typeof eventId !== 'string' || !/^[0-9a-f-]{36}$/i.test(eventId)) {
           message.ack()
           continue
         }

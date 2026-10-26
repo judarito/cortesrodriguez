@@ -2,10 +2,12 @@
 
 **Proyecto:** Cortés Rodríguez Asesores  
 **Fecha:** 25 de octubre de 2026  
-**Estado:** propuesta de implementación; no modifica el repositorio ni despliega cambios.  
-**Base de revisión:** rama `dev`, commit `8f975ed3d8399b24a770c10d070cd2d9a38e2881`. Revisar diferencias posteriores antes de implementar.
+**Estado:** implementación iniciada en `dev`; SEC-01 y SEC-02 son el primer bloque.
+**Base de revisión:** rama `dev`, commit `6c9ffef` (plan incorporado; el código revisado parte de `8f975ed3d8399b24a770c10d070cd2d9a38e2881`).
 
 **Actualización:** medidas de seguridad contrastadas con el mismo commit de `dev`; controles de infraestructura pendientes de evidencia se distinguen de faltantes de código.
+
+**Avance 25-oct-2026:** SEC-01 a SEC-07 implementados localmente con pruebas unitarias. SEC-02 también revisó rutas generales y dashboard del experto; bandeja y métricas no muestran asignaciones impagas. SEC-06 incluye límites progresivos de inicio de sesión y límites por IP para emisión de tokens/solicitudes públicas; Turnstile obligatorio en producción sigue pendiente. SEC-08 añade publicación inmediata, recuperación del outbox sin corte temporal y efectos de correo por destinatario con clave y huella del contenido (sin guardar el cuerpo completo); después de 24 horas, un resultado incierto queda detenido como `uncertain`. Se corrigieron una clave duplicada de asignación inicial y atomicidad en reasignación manual y resolución de similitud. SEC-12 limitó el listado de clientes para roles no administradores. Las 20 suites, el build y la revisión de sintaxis/diff pasan. **Solo dev:** migraciones 032–036 aplicadas, `PUBLIC_RATE_LIMIT_SECRET` configurado en el Worker dev y versión `60b36b84-140d-415f-a36a-226962a91a75` desplegada. Smoke checks dev: landing y configuración de Turnstile responden 200; emisión del token de atribución responde 200. Producción y `main` no se modificaron ni desplegaron. Falta validar el flujo de colas end-to-end y terminar recuperación/DLQ/redrive.
 
 **Ampliación funcional:** portal «Consultar mis solicitudes», acceso por correo y código, retorno de pasarela, seguimiento y reintentos sobre la misma solicitud (sección 17). Frecuencia de recuperación acordada: 30 minutos.
 
@@ -67,6 +69,8 @@ Actualizar `wrangler.dev.jsonc` y `wrangler.jsonc`, primero en desarrollo:
 Reducción de activaciones programadas respecto a cada minuto: **96,7 %**. Sí reduce ejecuciones y consumo del respaldo; el ahorro en factura depende del consumo facturable y las capas gratuitas. Frente a cada 15 minutos, reduce las activaciones a la mitad. Medir actividad de Neon, consultas, CPU y operaciones de cola.
 
 La frecuencia acordada es de 30 minutos únicamente como recuperación: el flujo normal publica y procesa inmediatamente. Una publicación perdida puede esperar hasta el siguiente ciclo (cerca de 30 minutos en el peor momento), más el tiempo de procesamiento. Un lease vencido espera el siguiente ciclo elegible. No es una garantía de recuperación si persiste la falla. No reducir la frecuencia antes de probar publicación inmediata, consumidores, alertas e idempotencia.
+
+La recuperación de 30 minutos es un barrido de respaldo, no un SLA para eventos normales. Inventariar cada ruta que crea outbox (incluidos pagos, asignaciones, revisiones, respuestas y notificaciones manuales) y demostrar que todas publican al confirmar su transacción. El barrido debe recuperar también eventos que quedaron `queued`/publicados sin progreso y leases vencidos, con límites y alertas; no basta con seleccionar filas `pending`.
 
 ### Responsabilidades del recuperador
 
@@ -148,9 +152,12 @@ Si el lease está ocupado, no ejecutar el efecto: diferir el mensaje o reconocer
 - Usar la misma clave de idempotencia del proveedor en cada reintento del mismo correo, dentro de su vigencia documentada.
 - Registrar el identificador devuelto por Resend y deduplicar sus webhooks.
 - Si Resend aceptó el correo pero se perdió la respuesta o falló la escritura local, marcar el resultado como incierto y conciliar antes de reenviar fuera de la ventana de deduplicación del proveedor.
+- Definir la decisión al vencer la ventana de idempotencia de Resend: mantener el efecto en estado `uncertain`, consultar eventos/registro de Resend y requerir decisión administrativa auditada si no se puede demostrar aceptación o rechazo. Nunca cambiar la clave ni reenviar automáticamente un correo incierto tras esa ventana.
 - Distinguir `accepted`, `delivered`, `bounced` y `failed`. No afirmar entrega ni lectura por una respuesta HTTP exitosa.
 
 La base local por sí sola no puede garantizar ausencia absoluta de correos duplicados si el servicio externo aceptó la operación y se perdió toda confirmación.
+
+Definir una matriz de efectos por evento y audiencia antes de cablear consumidores: destinatario identificado, plantilla/versionado, datos permitidos, condición de pago/asignación, clave idempotente y política de reintento. Incluir correo cliente, experto asignado, agente y administración por separado; las notificaciones de campana son efectos separados y pueden tener destinatarios distintos.
 
 ### 5.5 Retención y orden
 
@@ -233,40 +240,56 @@ Alertar por umbrales configurables y por ausencia de consumidores; reducir el cr
 
 ## 12. Plan de implementación
 
-### Fase 0: cerrar brechas de seguridad P0
+### Fase 0: cerrar brechas de seguridad P0 — en curso
 
-- [ ] Completar SEC-01 a SEC-06 y SEC-12 de la sección 16 antes de promover el cambio a producción.
+- [x] SEC-01: sesión y permisos vigentes; revocación al desactivar cuenta.
+- [x] SEC-02: experto limitado por asignación y pago; revisar rutas alternas y dashboard.
+- [x] SEC-03 a SEC-05: aislamiento de correos, atribución pública y revisión condicional/atómica.
+- [ ] Hacer obligatorio Turnstile en producción y completar SEC-12 antes de cualquier promoción; producción permanece sin cambios.
 - [ ] Conservar los controles existentes y ejecutar pruebas de acceso denegado con usuarios de cada rol.
 - [ ] Registrar evidencia de configuración de secretos y aislamiento de entornos; resolver faltantes críticos encontrados en SEC-13.
 
-### Fase 1: consolidar contratos y migraciones
+### Fase 1: consolidar contratos y migraciones — parcial
 
-- [ ] Revisar esquema, colas, migraciones y cambios posteriores al commit de referencia.
+- [x] Revisar esquema, colas y cambios concurrentes del plan; agregar migraciones 032–036 para atribución, notas internas, límites y registro idempotente de correos.
+- [x] Aplicar en orden migraciones 032–036 a Neon dev y comprobar ejecución satisfactoria.
 - [ ] Reutilizar outbox y agregar solo campos o restricciones faltantes.
 - [ ] Identificar duplicados existentes antes de aplicar índices únicos.
 - [ ] Definir estados, claves, orden y retención.
 - [ ] Corregir accesos de experto antes de habilitar efectos de pago.
 
-### Fase 2: publicación inmediata y consumidores
+### Fase 2: publicación inmediata y consumidores — parcial
 
-- [ ] Guardar transiciones y eventos en una transacción.
-- [ ] Publicar inmediatamente después del commit.
-- [ ] Implementar reclamación, leases e idempotencia por efecto.
-- [ ] Procesar notificaciones internas desde el consumidor.
-- [ ] Separar envíos por destinatario y eliminar identidad del cliente de correos a expertos.
-- [ ] Incorporar conciliación de envíos inciertos.
+- [ ] Guardar todas las transiciones y eventos en una transacción o sentencia atómica; aprobación/rechazo, reasignación manual y resolución de similitud ya usan sentencia única; revisar creación pública, pago y productores restantes.
+- [x] Publicar inmediatamente desde los productores de outbox que tienen acceso al binding de cola.
+- [x] Validar forma del ID y contrato básico del outbox antes de efectos; aislar entrega de correo por destinatario.
+- [x] Alinear la clave del evento de asignación inicial con la clave creada por el trigger; quitar ventana de 24 horas que dejaba eventos pendientes sin recuperación.
+- [x] Registrar cada correo por efecto/destinatario, conservar la huella y clave (sin almacenar el cuerpo completo); omitir destinatarios aceptados y bloquear reenvíos automáticos de resultado incierto tras 24 horas.
+- [x] Persistir estados inciertos y aceptación por destinatario en `notification_email_effects` (migración 036).
+- [x] Implementar reclamación, leases e idempotencia local por efecto/destinatario.
+- [x] Materializar notificaciones internas desde el consumidor con destinatarios por rol.
+- [x] Separar envíos por destinatario y eliminar identidad del cliente de correos a expertos.
+- [x] Registrar envíos inciertos; su conciliación administrativa y redrive quedan pendientes.
 - [ ] Aplicar validación de contratos, permisos y estado vigente en consumidores (SEC-08).
-- [ ] Completar revocación de conexiones WebSocket (SEC-07).
+- [x] Revalidar sesión y snapshot de permisos en conexiones WebSocket; alarma de respaldo de 60 segundos (SEC-07).
 
-### Fase 3: recuperación cada 30 minutos
+### Fase 3: recuperación cada 30 minutos — pendiente
 
 - [ ] Probar fallos de publicación y expiración de leases.
 - [ ] Confirmar recuperación del outbox histórico sin repetir completados.
 - [ ] Cambiar cron en desarrollo a `*/30 * * * *`.
 - [ ] Verificar backlog, DLQ y latencia antes de promover el cambio.
-- [ ] Llevar a producción mediante PR y revisión, sin publicar automáticamente con este plan.
+- [ ] No promover a producción ni integrar en `main` dentro de este trabajo; cualquier cambio futuro de alcance requerirá instrucción expresa.
 
-### Fase 4: imágenes y reportes
+### Fase 4: portal del cliente y recuperación de pagos
+
+- [ ] Implementar PORT-01 a PORT-08 de la sección 17 reutilizando autenticación y listado existentes.
+- [ ] Publicar «Consultar mis solicitudes» en landing, confirmación de solicitud, retorno de pasarela y correos correspondientes.
+- [ ] Completar detalle autorizado, estados separados de pago y atención y acciones por estado.
+- [ ] Implementar conciliación y exclusión mutua de reintentos con una sola solicitud y múltiples intentos trazables.
+- [ ] Ejecutar pruebas funcionales y de seguridad de la sección 17.10 antes de habilitar el recorrido.
+
+### Fase 5: imágenes y reportes
 
 - [ ] Seleccionar y presupuestar procesador de imágenes.
 - [ ] Implementar derivados privados con claves deterministas.
@@ -274,7 +297,7 @@ Alertar por umbrales configurables y por ausencia de consumidores; reducir el cr
 - [ ] Incorporar trabajos de exportación y descargas seguras.
 - [ ] Completar controles de imágenes, descarga y exportación de SEC-09 y SEC-10.
 
-### Fase 5: estadísticas y limpieza
+### Fase 6: estadísticas y limpieza
 
 - [ ] Proyecciones idempotentes con conciliación.
 - [ ] Limpieza por lotes con verificación de referencias y plazo de gracia.
@@ -282,13 +305,7 @@ Alertar por umbrales configurables y por ausencia de consumidores; reducir el cr
 - [ ] Completar auditoría, alertas y prueba de restauración (SEC-14 y SEC-15).
 - [ ] Verificar cabeceras y protecciones del navegador (SEC-16).
 
-### Fase 6: portal del cliente y recuperación de pagos
-
-- [ ] Implementar PORT-01 a PORT-08 de la sección 17 reutilizando autenticación y listado existentes.
-- [ ] Publicar «Consultar mis solicitudes» en landing, confirmación de solicitud, retorno de pasarela y correos correspondientes.
-- [ ] Completar detalle autorizado, estados separados de pago y atención y acciones por estado.
-- [ ] Implementar conciliación y exclusión mutua de reintentos con una sola solicitud y múltiples intentos trazables.
-- [ ] Ejecutar pruebas funcionales y de seguridad de la sección 17.10 antes de habilitar el recorrido.
+El portal del cliente se adelanta a imágenes, exportaciones y proyecciones: ofrece valor directo y ya cuenta con una base funcional. Se mantiene como entrega independiente, después de cerrar los controles P0 y la confiabilidad de eventos/pagos.
 
 ## 13. Pruebas de aceptación
 
@@ -356,18 +373,18 @@ Estos controles no se presupuestan como desarrollos desde cero. Su presencia en 
 
 | ID / prioridad | Estado y evidencia | Acción pendiente | Criterio de aceptación |
 |---|---|---|---|
-| SEC-01 / P0 | Parcial. `operationsAuth.js`: `requireOperationsAuth` solo verifica JWT; `requireActiveOperationsAuth` consulta revocación y usuario activo, pero se usa en notificaciones. | Unificar autenticación de toda API operativa, incluido `/session`, con comprobación de sesión activa. Invalidar sesiones por desactivación, cambio de contraseña y cambios sensibles de permisos; evitar permisos obsoletos de JWT durante 12 horas. | Token válido criptográficamente pero revocado o usuario inactivo obtiene 401; retirar un permiso impide usarlo sin esperar expiración. |
-| SEC-02 / P0 | Faltante confirmado. `operationsExpert.js` filtra asignación pero no pago; al responder solo exige `expert_requests.read`. | Exigir asignación actual, estado atendible y pago aprobado o exención administrativa auditada tanto al listar como al responder. Exigir permiso de escritura `expert_responses.create` para responder. Revisar también dashboard y rutas alternativas de experto en `operationsData.js`. | Experto con solo lectura no responde; impago no aparece ni se responde por ID; exención válida habilita y deja trazabilidad. |
-| SEC-03 / P0 | Parcial. El cuerpo para experto limita información, pero `operationsEmail.js` agrega `reply_to: request.email` y permite destinatarios To/CC/BCC compartidos. | Separar envíos por destinatario y audiencia, usar remitente/respuesta corporativos para expertos y una lista explícita de campos permitidos. Revalidar reglas para impedir que un experto reciba plantillas de cliente o administrador con datos personales. | Correo al experto sin identidad del cliente en cuerpo, cabeceras, enlaces ni destinatarios visibles, incluso con reglas configuradas incorrectamente. |
-| SEC-04 / P0 | Faltante confirmado. En `publicRequests.js`, `agentToken` es opcional y sin él se acepta `direct_web`. | Unificar origen obligatorio mediante token opaco aleatorio para landing y agentes; guardar hash, tipo, vigencia y revocación. Resolver atribución en servidor sin aceptar un `agentId` proporcionado por el cliente. | Eliminar, alterar, vencer o revocar el parámetro bloquea la creación; landing válida y agente válido conservan su atribución. |
-| SEC-05 / P0 | Faltante confirmado. `operationsReviews.js` consulta estado y luego actualiza sin condición de estado/versionado; evento y cierre son escrituras independientes. | Aplicar transición condicional y transacción con versión aprobada, nota y outbox; separar nota pública e interna. Reutiliza secciones 5 y 7, sin duplicar desarrollo. | Dos administradores simultáneos: una aprobación efectiva; otro recibe conflicto; un fallo no deja caso cerrado sin evento durable. |
-| SEC-06 / P0 | Parcial. Login comprueba `locked_until` pero el flujo revisado no incrementa fallos ni aplica bloqueo; Turnstile es opcional por configuración. | Implementar límites atómicos por cuenta e IP y espera progresiva; extender límites a formularios, creación de pagos y códigos del portal sin sustituir sus controles actuales. Exigir Turnstile configurado y válido en producción; fallar de forma cerrada ante configuración ausente. | Ataques paralelos no eluden límites; respuesta 429 cuando corresponde, recuperación controlada y formulario de producción no acepta envíos sin verificación. |
-| SEC-07 / P1 | Parcial. `NotificationHub.js` almacena `userId` y mantiene conexiones sin caducidad/revocación de sesión. | Asociar conexión a sesión y expiración verificadas; cerrar por logout, desactivación, vencimiento o cambio de permisos, con señal interna y expiración de respaldo. Mantener DO accesible solo mediante bindings internos autorizados. | Conexión abierta deja de recibir eventos tras revocación dentro del plazo definido; no hay suscripción a otro usuario. |
-| SEC-08 / P1 | Parcial. `worker/index.js` consume un `eventId`; base existente de cola/outbox e idempotencia. | Validar contrato/versionado/tamaño del mensaje y existencia del evento; cargar datos desde fuente autorizada. Comprobar vigencia, asignación y audiencia antes de cada efecto; no enviar información a un experto reasignado. Restringir publicación/consumo y redrive mediante permisos del proveedor y rol administrativo auditado. | Mensaje alterado, evento inexistente u obsoleto no provoca efectos; redrive no autorizado se rechaza y no elimina claves de deduplicación. |
+| SEC-01 / P0 | Implementado localmente. `requireOperationsAuth` valida sesión no revocada, usuario activo y roles/permisos actuales; `/session` comparte la validación; desactivación revoca sesiones. Pruebas comprueban sesión revocada y permiso retirado. | Completar caso de usuario inactivo en prueba E2E. Si se incorpora cambio/reset de contraseña, revocar sesiones en ese flujo también. | Token revocado/usuario inactivo es rechazado; retirar permiso impide usarlo sin esperar expiración; desactivación invalida sesiones. |
+| SEC-02 / P0 | Implementado localmente. `operationsExpert.js` filtra bandeja y `operationsData.js` limita el dashboard por pago aprobado cuando se requiere; el detalle general queda restringido a admin/agente creador, no a experto. Responder exige permiso `expert_responses.create`, asignación vigente, pago y solicitud abierta. Pruebas cubren bandeja, dashboard, permiso obsoleto e impago. | Validar el flujo de adjuntos privados al completar SEC-09. No existe una exención administrativa explícita en el esquema; no habilitar excepciones implícitas. | Experto con solo lectura no responde; impago no aparece en bandeja/dashboard ni se responde por ID; solicitud sin pago no habilita respuesta. |
+| SEC-03 / P0 | Implementado localmente. `operationsEmail.js` envía un correo por destinatario; la audiencia del experto recibe contenido fijo y mínimo, sin identidad/datos del cliente, reply-to ni destinatarios compartidos. Clave Resend estable por evento, versión y hash del destinatario. | Mantener esta allowlist al añadir eventos y confirmar configuración de reglas con pruebas. | Correo del experto no expone datos del cliente ni audiencias cruzadas incluso con reglas configuradas incorrectamente. |
+| SEC-04 / P0 | Desplegado en dev. `publicRequests.js` exige token opaco y válido; se guarda hash, audiencia, vencimiento y revocación; atribución de agente se resuelve en backend. Smoke checks dev: landing, configuración Turnstile y emisión de token respondieron 200. Se mantiene el feature flag de Cloudflare. | Completar pruebas funcionales con formulario/enlace de agente en dev; no confiar en `agentId` del navegador. | Token ausente, manipulado, expirado o revocado bloquea la creación; landing y enlace de agente válidos mantienen atribución. |
+| SEC-05 / P0 | Implementado localmente. Transición condicional; aprobación, evento outbox y cierre se escriben en una sentencia, con versión aprobada y nota pública separada de la interna. Rechazo también usa transición condicional. | Validar concurrencia real contra PostgreSQL de desarrollo y verificar el consumidor de la versión aprobada. | Dos administradores simultáneos: una aprobación efectiva; otro recibe conflicto; fallo de escritura no deja caso cerrado sin evento durable. |
+| SEC-06 / P0 | Implementado y desplegado en dev. Login registra fallos con contadores atómicos por cuenta/IP y espera progresiva; el formulario público limita tokens y solicitudes por IP de Cloudflare. Migraciones 034–035 aplicadas en dev y `PUBLIC_RATE_LIMIT_SECRET` configurado como secreto del Worker dev. | Probar límites funcionales y recuperación en dev; agregar límites a creación de pagos/códigos del portal donde corresponda. Hacer obligatorio Turnstile en producción, validar integración y fallar de forma cerrada si no está configurado. | Ataques paralelos no eluden límites; respuesta 429 y recuperación controlada; producción no acepta solicitudes sin Turnstile. |
+| SEC-07 / P1 | Implementado localmente. `NotificationHub.js` asocia el socket al usuario, hash de sesión y snapshot de permisos; valida sesión/usuario/permisos al publicar y cada 60 s mediante alarma. | Probar logout, desactivación, expiración y cambio de rol en Cloudflare; revisar la política fail-closed ante indisponibilidad temporal de Neon. | Socket deja de recibir eventos tras revocación; la alarma cierra conexiones inválidas en un máximo aproximado de 60 s; no hay suscripción entre usuarios. |
+| SEC-08 / P1 | Parcial y desplegado en dev. Outbox con reclamo/leases, publicación inmediata, recuperación sin corte temporal, validación de UUID/evento/payload y efecto de correo por destinatario con huella del payload y clave persistidas (sin almacenar el cuerpo). Después de 24 h, un efecto incierto queda `uncertain` y no se reenvía. Migración 036 aplicada en dev; Worker dev versión `60b36b84-140d-415f-a36a-226962a91a75`. | Probar cola real end-to-end, envíos parciales, resultados inciertos, alertas, DLQ/redrive auditado y vigencia de asignación/audiencia al consumir. Completar atomicidad de los productores restantes y verificar triggers en Neon. | Mensaje inválido no provoca efectos; cada destinatario aceptado se omite en reintentos; un correo incierto no se reenvía automáticamente después de la ventana del proveedor. |
 | SEC-09 / P1 | Parcial. Validación de imágenes ya presente; protección de descarga, derivados y anonimización aún incompleta en los flujos revisados. | Implementar descarga autorizada con R2 privado y, si se usan, URLs de corta duración. Verificar tamaño real leído sin depender solo de `Content-Length`, límites de decodificación y tiempo; recodificar y quitar EXIF. Revisar y redactar datos visibles antes de entregar al experto. | Archivo sin autorización no descarga; carga sin cabecera de tamaño no evita límite; original con datos personales no llega al experto; derivados seguros solo tras procesamiento. |
 | SEC-10 / P1 | Funcionalidad nueva del plan: reportes asincrónicos. | Autorizar al solicitar, ejecutar y descargar; revalidar usuario y alcance si cambian permisos. Aislar objetos por trabajo/propietario, caducar descargas y neutralizar fórmulas en CSV/hojas exportadas. | ID o enlace de otro usuario no permite descarga; revocación impide acceso; valores como `=...` no se ejecutan como fórmulas. |
 | SEC-11 / P1 | Faltante en login operativo revisado: no hay segundo factor. Estado en proveedores por verificar. | Agregar MFA para administradores y acciones críticas, con recuperación segura y auditada. Revisar primero si una solución de identidad existente lo cubre. Activar/verificar MFA de cuentas GitHub, Cloudflare, Neon, R2/Resend y pasarela según disponibilidad. | Cuenta administrativa requiere segundo factor; recuperación no lo evita sin control; cuentas técnicas tienen evidencia de protección equivalente. |
-| SEC-12 / P0 | Parcial. Hay roles y filtros, pero faltan controles uniformes de sesión y permisos de acción; no se acredita cobertura completa por objeto. | Definir matriz rol/acción/recurso y aplicar denegación por defecto en todas las rutas de clientes, pagos, reportes, asignaciones y archivos. Permisos sensibles no se conceden implícitamente por tener acceso a un módulo. | Manipular IDs no revela datos ajenos; agente no crea solicitudes y experto no accede a clientes ni finanzas; pruebas verifican backend, no solo menú. |
+| SEC-12 / P0 | Parcial. Roles con `clients.read` ya quedan limitados a clientes asociados a solicitudes propias para los no administradores; el listado global de pagos exige `payments.read`. Prueba backend de aislamiento agregada. | Completar matriz por rol/recurso, incluidos archivos; revisar IDs manipulados en detalle/asignación/pago y validar las rutas en la base dev. | Manipular IDs no revela datos ajenos; no administradores solo ven clientes vinculados a solicitudes bajo su alcance; agente no crea solicitudes y experto no accede a clientes ni finanzas. |
 
 Los tokens públicos de origen sirven para atribución y control de entrada; no son credenciales privadas y pueden compartirse. Turnstile y límites de abuso siguen siendo necesarios. Para consumidores, separar efectos ya comprometidos e inmutables de permisos que deben revalidarse: una baja o reasignación debe cancelar el envío pendiente al destinatario que ya no está autorizado y dejar auditoría de la decisión.
 

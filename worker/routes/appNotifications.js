@@ -26,14 +26,29 @@ export async function handleAppNotifications(request, env) {
       FROM operations.sessions s JOIN operations.users u ON u.id = s.user_id
       WHERE ticket.token_hash = ${ticketHash} AND ticket.consumed_at IS NULL AND ticket.expires_at > NOW()
         AND s.token_hash = ticket.session_token_hash AND s.revoked_at IS NULL AND s.expires_at > NOW() AND u.active = TRUE
-      RETURNING ticket.user_id
+      RETURNING ticket.user_id, ticket.session_token_hash
     `
     if (!tickets[0]) return new Response('Ticket inválido o vencido.', { status: 401 })
     const userId = String(tickets[0].user_id)
+    const sessionTokenHash = String(tickets[0].session_token_hash)
+    const permissions = await sql`
+      SELECT DISTINCT p.code
+      FROM operations.user_roles ur
+      JOIN operations.role_permissions rp ON rp.role_id = ur.role_id
+      JOIN operations.permissions p ON p.id = rp.permission_id
+      WHERE ur.user_id = ${userId}
+      ORDER BY p.code
+    `
+    const permissionCodes = permissions.map((row) => String(row.code))
     const id = env.APP_NOTIFICATION_HUB.idFromName(userId)
     const stub = env.APP_NOTIFICATION_HUB.get(id)
     return stub.fetch(new Request('https://notifications.internal/connect', {
-      headers: { Upgrade: 'websocket', 'x-notification-user-id': userId },
+      headers: {
+        Upgrade: 'websocket',
+        'x-notification-user-id': userId,
+        'x-notification-session-hash': sessionTokenHash,
+        'x-notification-permissions-hash': await sha256(JSON.stringify(permissionCodes)),
+      },
     }))
   }
 

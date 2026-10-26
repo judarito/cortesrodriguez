@@ -1,5 +1,5 @@
 import { requireOperationsAuth } from './operationsAuth.js'
-import { enqueueNotification } from './operationsEmail.js'
+import { enqueueNotification, publishNotificationEvent } from './operationsEmail.js'
 import { refreshRequestPayment, verifyRequestPayment } from './publicRequests.js'
 import { normalizeClientEmail } from '../lib/clientIdentity.js'
 
@@ -19,6 +19,7 @@ export async function handleOperationsData(request, env) {
   if (!isClients && !isPayments && !isRequests && !createRequest && !isRequestDetail && !isRequestAssignment && !isRequestPaymentVerify && !isDashboard) return null
 
   const claims = await requireOperationsAuth(request, env)
+  if (!claims) return response({ error: 'Sesión requerida.' }, 401)
   const permission = isClients ? 'clients.read' : isPayments ? 'payments.read' : createRequest ? 'requests.create' : isRequestAssignment || isRequestPaymentVerify ? 'requests.update' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
   if (!claims?.permissions?.includes(permission)) {
     return response({ error: 'No tienes permisos para consultar este módulo.' }, 403)
@@ -61,13 +62,21 @@ export async function handleOperationsData(request, env) {
   const assignedOnly = isRequests && isAdmin && url.searchParams.get('assignedOnly') === 'true'
 
   if (isClients) {
+    const clientRequestAccess = isAdmin
+      ? sql`TRUE`
+      : sql`(r.agent_id = ${claims.sub} OR (r.agent_id IS NULL AND r.created_by = ${claims.sub}))`
     const [countRows, clients] = await Promise.all([
-      sql`SELECT COUNT(*)::int AS total FROM operations.clients c WHERE c.full_name ILIKE ${searchPattern}`,
+      sql`SELECT COUNT(*)::int AS total FROM operations.clients c
+        WHERE c.full_name ILIKE ${searchPattern}
+          AND (${isAdmin ? sql`TRUE` : sql`EXISTS (
+            SELECT 1 FROM operations.requests r
+            WHERE r.client_id = c.id AND ${clientRequestAccess}
+          )`})`,
       sql`
         SELECT c.id, c.full_name, c.created_at, COUNT(r.id)::int AS request_count
         FROM operations.clients c
-        LEFT JOIN operations.requests r ON r.client_id = c.id
-        WHERE c.full_name ILIKE ${searchPattern}
+        LEFT JOIN operations.requests r ON r.client_id = c.id AND ${clientRequestAccess}
+        WHERE c.full_name ILIKE ${searchPattern} AND (${isAdmin ? sql`TRUE` : sql`r.id IS NOT NULL`})
         GROUP BY c.id
         ORDER BY c.created_at DESC
         LIMIT ${pageSize} OFFSET ${offset}
@@ -308,7 +317,7 @@ async function createAgentRequest(sql, request, claims, env) {
       ${freightAgent || null}, ${productType}, 'pending', ${claims.sub}, FALSE
     )
   `
-  try { await enqueueNotification(sql, requestId, 'request_created', { idempotencyKey: `request_created/${requestId}`, actorId: claims.sub }) }
+  try { await enqueueNotification(sql, requestId, 'request_created', { env, idempotencyKey: `request_created/${requestId}`, actorId: claims.sub }) }
   catch (error) { console.error('No se pudo encolar la notificación de solicitud del agente:', error.message) }
   return response({ ok: true, reference, status: 'pending', paymentRequired: false }, 201)
 }
@@ -410,7 +419,7 @@ async function getRequestDetail(sql, requestId, claims) {
   })
 }
 
-async function assignRequestExpert(sql, request, requestId, claims, env) {
+export async function assignRequestExpert(sql, request, requestId, claims, env) {
   const body = await request.json().catch(() => ({}))
   const expertId = text(body.expertId)
   if (!expertId) return response({ error: 'Selecciona un experto para asignar la solicitud.' }, 400)
@@ -429,16 +438,64 @@ async function assignRequestExpert(sql, request, requestId, claims, env) {
     LIMIT 1
   `
   if (!experts[0]) return response({ error: 'El experto debe estar activo y asociado al tipo de consulta de esta solicitud.' }, 400)
-  await sql`UPDATE operations.request_assignments SET status = 'reassigned' WHERE request_id = ${requestId} AND status = 'assigned'`
+  const reassignment = Boolean(requests[0].assigned_expert_id)
   const assignmentRows = await sql`
-    INSERT INTO operations.request_assignments (request_id, expert_id, consultation_type_id, candidate_count, strategy, status, reason, assigned_by)
-    VALUES (${requestId}, ${expertId}, ${requests[0].consultation_type_id}, 1, 'admin_manual', ${requests[0].assigned_expert_id ? 'reassigned' : 'assigned'}, ${text(body.reason) || (requests[0].assigned_expert_id ? 'Reasignación administrativa' : 'Asignación administrativa')}, ${claims.sub})
-    RETURNING id
+    WITH locked_request AS MATERIALIZED (
+      SELECT id, consultation_type_id, assigned_expert_id, status
+      FROM operations.requests
+      WHERE id = ${requestId}
+      FOR UPDATE
+    ), previous_assignments AS (
+      UPDATE operations.request_assignments a
+      SET status = 'reassigned'
+      FROM locked_request r
+      WHERE a.request_id = r.id AND a.status = 'assigned'
+      RETURNING a.id
+    ), new_assignment AS (
+      INSERT INTO operations.request_assignments (
+        request_id, expert_id, consultation_type_id, candidate_count, strategy, status, reason, assigned_by
+      )
+      SELECT r.id, ${expertId}, r.consultation_type_id, 1, 'admin_manual',
+        CASE WHEN r.assigned_expert_id IS NULL THEN 'assigned' ELSE 'reassigned' END,
+        ${text(body.reason) || (reassignment ? 'Reasignación administrativa' : 'Asignación administrativa')}, ${claims.sub}
+      FROM locked_request r
+      CROSS JOIN (SELECT COUNT(*) FROM previous_assignments) previous_gate
+      WHERE r.status NOT IN ('closed', 'cancelled')
+        AND NOT EXISTS (
+          SELECT 1 FROM operations.expert_responses er
+          WHERE er.request_id = r.id AND er.status = 'pending_admin_review'
+        )
+      RETURNING id, request_id
+    ), updated_request AS (
+      UPDATE operations.requests r
+      SET assigned_expert_id = ${expertId}, updated_at = NOW()
+      FROM new_assignment a
+      WHERE r.id = a.request_id
+      RETURNING r.id, r.assigned_expert_id
+    ), audit_entry AS (
+      INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata)
+      SELECT ${claims.sub}, 'assign', 'request', updated.id,
+        jsonb_build_object('expertId', ${expertId}, 'previousExpertId', original.assigned_expert_id)
+      FROM updated_request updated
+      JOIN locked_request original ON original.id = updated.id
+      RETURNING entity_id
+    )
+    SELECT a.id
+    FROM new_assignment a
+    JOIN audit_entry audit ON audit.entity_id = a.request_id
   `
-  await sql`UPDATE operations.requests SET assigned_expert_id = ${expertId}, updated_at = NOW() WHERE id = ${requestId}`
-  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${claims.sub}, 'assign', 'request', ${requestId}, ${JSON.stringify({ expertId, previousExpertId: requests[0].assigned_expert_id ? String(requests[0].assigned_expert_id) : null })}::jsonb)`
-  try { await enqueueNotification(sql, requestId, 'expert_assigned', { idempotencyKey: `expert_assigned/${assignmentRows[0].id}`, actorId: claims.sub }) }
-  catch (error) { console.error('No se pudo encolar la notificación de asignación:', error.message) }
+  if (!assignmentRows[0]) {
+    return response({ error: 'La solicitud cambió o ya no se puede reasignar. Actualiza e intenta de nuevo.' }, 409)
+  }
+  if (env?.NOTIFICATION_EVENTS_QUEUE) {
+    try {
+      const outboxRows = await sql`
+        SELECT id FROM operations.notification_outbox
+        WHERE idempotency_key = ${`expert_assigned/${assignmentRows[0].id}`} LIMIT 1
+      `
+      if (outboxRows[0]) await publishNotificationEvent(sql, env, String(outboxRows[0].id))
+    } catch (error) { console.error('No se pudo publicar la notificación de asignación:', error.message) }
+  }
   return response({ ok: true, expert: { id: String(experts[0].id), name: String(experts[0].full_name) } })
 }
 
@@ -502,11 +559,14 @@ async function getDashboard(sql, claims) {
 }
 
 async function getExpertDashboard(sql, claims) {
-  const assigned = sql`assigned_expert_id = ${claims.sub}`
+  const assigned = sql`r.assigned_expert_id = ${claims.sub}
+    AND (r.payment_required = FALSE OR EXISTS (
+      SELECT 1 FROM operations.request_payments p WHERE p.request_id = r.id AND p.status = 'approved'
+    ))`
   const [totalRows, activeRows, pendingRows, statusRows, recentRows] = await Promise.all([
-    sql`SELECT COUNT(*)::int AS total FROM operations.requests WHERE ${assigned}`,
-    sql`SELECT COUNT(*)::int AS total FROM operations.requests WHERE status NOT IN ('closed', 'cancelled') AND ${assigned}`,
-    sql`SELECT COUNT(*)::int AS total FROM operations.expert_responses er JOIN operations.requests r ON r.id = er.request_id WHERE er.expert_id = ${claims.sub} AND er.status = 'pending_admin_review'`,
+    sql`SELECT COUNT(*)::int AS total FROM operations.requests r WHERE ${assigned}`,
+    sql`SELECT COUNT(*)::int AS total FROM operations.requests r WHERE r.status NOT IN ('closed', 'cancelled') AND ${assigned}`,
+    sql`SELECT COUNT(*)::int AS total FROM operations.expert_responses er JOIN operations.requests r ON r.id = er.request_id WHERE er.expert_id = ${claims.sub} AND er.status = 'pending_admin_review' AND ${assigned}`,
     sql`SELECT r.status, COUNT(*)::int AS total FROM operations.requests r WHERE ${assigned} GROUP BY r.status`,
     sql`SELECT r.reference, r.status, r.service_type, r.consultation_type_name, r.created_at,
           COALESCE(latest.status, 'none') AS response_status
@@ -516,7 +576,7 @@ async function getExpertDashboard(sql, claims) {
           WHERE er.request_id = r.id AND er.expert_id = ${claims.sub}
           ORDER BY er.version DESC LIMIT 1
         ) latest ON TRUE
-        WHERE r.assigned_expert_id = ${claims.sub}
+        WHERE ${assigned}
         ORDER BY r.created_at DESC LIMIT 5`,
   ])
   const byStatus = Object.fromEntries(statusRows.map((row) => [String(row.status), Number(row.total || 0)]))
