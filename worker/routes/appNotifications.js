@@ -140,6 +140,27 @@ export async function createEmailAppNotifications(sql, env, outboxItem, resendEm
   const request = requests[0]
   if (!request) return
   const eventCode = String(outboxItem.event_code)
+  let assignmentPayload = null
+  if (eventCode === 'expert_assigned') {
+    try { assignmentPayload = typeof outboxItem.event_payload === 'string' ? JSON.parse(outboxItem.event_payload || '{}') : outboxItem.event_payload } catch { assignmentPayload = null }
+    if (!validUuid(assignmentPayload?.assignmentId) || !validUuid(assignmentPayload?.expertId)) return
+    const assignmentRows = await sql`
+      SELECT 1 FROM operations.request_assignments assignment
+      JOIN operations.requests current_request ON current_request.id = assignment.request_id
+      JOIN operations.users expert ON expert.id = assignment.expert_id AND expert.active = TRUE
+      JOIN operations.user_roles ur ON ur.user_id = expert.id
+      JOIN operations.roles role ON role.id = ur.role_id AND role.name = 'expert'
+      WHERE assignment.id = ${assignmentPayload.assignmentId}::uuid
+        AND assignment.request_id = ${request.id} AND assignment.expert_id = ${assignmentPayload.expertId}::uuid
+        AND assignment.status IN ('assigned', 'reassigned') AND current_request.assigned_expert_id = assignment.expert_id
+        AND (current_request.consultation_type_id IS NULL OR EXISTS (
+          SELECT 1 FROM operations.consultation_type_experts cte WHERE cte.consultation_type_id = current_request.consultation_type_id
+            AND cte.user_id = expert.id AND cte.active = TRUE
+        ))
+      LIMIT 1
+    `
+    if (!assignmentRows.length) return
+  }
   let paymentConfirmed = false
   if (request.payment_required) {
     const payments = await sql`SELECT EXISTS (SELECT 1 FROM operations.request_payments WHERE request_id = ${request.id} AND status = 'approved') AS paid`
@@ -148,6 +169,7 @@ export async function createEmailAppNotifications(sql, env, outboxItem, resendEm
   const adminOnly = Boolean(outboxItem.admin_only) || (Boolean(request.payment_required) && !paymentConfirmed)
   const audiences = roleAudiences(eventCode, request, adminOnly)
   const recipientIds = roleRecipientIds(eventCode, request, adminOnly)
+  if (eventCode === 'expert_assigned') recipientIds.expertId = assignmentPayload.expertId
   const emailRows = resendEmailId ? await sql`SELECT status FROM operations.notification_messages WHERE resend_email_id = ${resendEmailId} LIMIT 1` : []
   const emailStatus = String(emailRows[0]?.status || initialEmailStatus)
   const resolvedFailures = await sql`
@@ -166,7 +188,18 @@ export async function createEmailAppNotifications(sql, env, outboxItem, resendEm
     WHERE u.active = TRUE AND (
       (role.name = 'admin' AND ${audiences.admin}) OR
       (u.id = ${recipientIds.agentId} AND role.name = 'agent') OR
-      (u.id = ${recipientIds.expertId} AND role.name = 'expert')
+      (u.id = ${recipientIds.expertId} AND role.name = 'expert' AND (
+        ${eventCode !== 'expert_assigned'} OR EXISTS (
+        SELECT 1 FROM operations.requests current_request
+        JOIN operations.request_assignments assignment ON assignment.request_id = current_request.id
+        WHERE current_request.id = ${request.id} AND current_request.assigned_expert_id = ${assignmentPayload?.expertId || null}::uuid
+          AND assignment.id = ${assignmentPayload?.assignmentId || null}::uuid AND assignment.expert_id = u.id
+          AND assignment.status IN ('assigned', 'reassigned')
+          AND (current_request.consultation_type_id IS NULL OR EXISTS (
+            SELECT 1 FROM operations.consultation_type_experts cte
+            WHERE cte.consultation_type_id = current_request.consultation_type_id AND cte.user_id = u.id AND cte.active = TRUE
+          ))
+      )))
     )
     ORDER BY u.id, CASE role.name WHEN 'admin' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END
   `
@@ -199,7 +232,14 @@ export async function publishRequestStateUpdate(sql, env, outboxItem) {
   `
   const request = requests[0]
   if (!request) return
+  let assignmentPayload = null
+  if (outboxItem.event_code === 'expert_assigned') {
+    try { assignmentPayload = typeof outboxItem.event_payload === 'string' ? JSON.parse(outboxItem.event_payload || '{}') : outboxItem.event_payload } catch { assignmentPayload = null }
+    if (!validUuid(assignmentPayload?.assignmentId) || !validUuid(assignmentPayload?.expertId)) return
+    if (String(request.assigned_expert_id || '') !== String(assignmentPayload.expertId)) return
+  }
   const recipients = requestUpdateRecipientIds(request)
+  if (assignmentPayload) recipients.expertId = assignmentPayload.expertId
   const users = await sql`
     SELECT DISTINCT u.id
     FROM operations.users u
@@ -208,7 +248,12 @@ export async function publishRequestStateUpdate(sql, env, outboxItem) {
     WHERE u.active = TRUE AND (
       role.name = 'admin' OR
       (role.name = 'agent' AND u.id = ${recipients.agentId}) OR
-      (role.name = 'expert' AND u.id = ${recipients.expertId})
+      (role.name = 'expert' AND u.id = ${recipients.expertId}
+        AND (${assignmentPayload ? sql`EXISTS (
+          SELECT 1 FROM operations.request_assignments assignment
+          WHERE assignment.id = ${assignmentPayload.assignmentId}::uuid AND assignment.request_id = ${request.id}
+            AND assignment.expert_id = u.id AND assignment.status IN ('assigned', 'reassigned')
+        )` : sql`TRUE`}))
     )
   `
   for (const user of users) {
@@ -223,6 +268,8 @@ export async function publishRequestStateUpdate(sql, env, outboxItem) {
     }
   }
 }
+
+function validUuid(value) { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) }
 
 export function requestUpdateRecipientIds(request) {
   const fromAgent = request.source_channel === 'agent_link' || request.source === 'agent'

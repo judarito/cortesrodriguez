@@ -5,7 +5,7 @@
   "durable_objects": { "bindings": [{ "name": "APP_NOTIFICATION_HUB", "class_name": "NotificationHub" }] },
   "migrations": [{ "tag": "notifications-hub-v1", "new_sqlite_classes": ["NotificationHub"] }],
   "workers_dev": true,
-  "triggers": { "crons": ["* * * * *"] },
+  "triggers": { "crons": ["*/30 * * * *"] },
   "queues": {
     "producers": [{ "binding": "NOTIFICATION_EVENTS_QUEUE", "queue": "cra-notification-events-dev" }],
     "consumers": [{
@@ -16,6 +16,14 @@
       "retry_delay": 60,
       "dead_letter_queue": "cra-notification-events-dev-dlq",
       "max_concurrency": 5
+    }, {
+      "queue": "cra-notification-events-dev-dlq",
+      "max_batch_size": 10,
+      "max_batch_timeout": 5,
+      "max_retries": 20,
+      "retry_delay": 60,
+      "dead_letter_queue": "cra-notification-events-dev-dlq-storage-failures",
+      "max_concurrency": 1
     }]
   },
   "observability": {

@@ -1,6 +1,13 @@
 import fs from 'node:fs/promises'
 import { neon } from '@neondatabase/serverless'
-import 'dotenv/config'
+import dotenv from 'dotenv'
+
+const environmentFile = '.env.dev'
+const loaded = dotenv.config({ path: environmentFile, override: true })
+if (loaded.error) throw new Error(`No se pudo cargar ${environmentFile}; las migraciones operativas están limitadas a dev.`)
+if (process.env.DOTENV_CONFIG_PATH && process.env.DOTENV_CONFIG_PATH !== environmentFile) {
+  throw new Error('Las migraciones operativas de este checkout solo se permiten con .env.dev.')
+}
 
 if (!process.env.NEON_DATABASE_URL) {
   throw new Error('Falta NEON_DATABASE_URL.')

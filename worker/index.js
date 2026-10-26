@@ -3,6 +3,7 @@ import { defaultContent, normalizeContent } from '../src/contentDefaults.js'
 import { handleOperationsAuth } from './routes/operationsAuth.js'
 import { handleAppNotifications } from './routes/appNotifications.js'
 import { handleOperationsData } from './routes/operationsData.js'
+import { handleOperationsAttachments } from './routes/operationsAttachments.js'
 import { handlePublicRequests } from './routes/publicRequests.js'
 import { handleOperationsSecurity } from './routes/operationsSecurity.js'
 import { handleOperationsNotifications } from './routes/operationsNotifications.js'
@@ -13,7 +14,8 @@ import { handleOperationsReviews } from './routes/operationsReviews.js'
 import { handlePublicFeedback } from './routes/publicFeedback.js'
 import { handleClientPortal } from './routes/clientPortal.js'
 import { handleResendWebhook } from './routes/resendWebhooks.js'
-import { consumeQueuedNotification, dispatchPendingAppNotifications, dispatchPendingNotifications } from './routes/operationsEmail.js'
+import { consumeQueuedNotification, dispatchPendingAppNotifications, dispatchPendingNotifications, recordQueueFailure } from './routes/operationsEmail.js'
+import { handleOperationsNotificationOps } from './routes/operationsNotificationOps.js'
 import {
   isLandingRequestApi,
   isLandingRequestButtonEnabled,
@@ -77,6 +79,9 @@ export default {
       const operationsDataResponse = await handleOperationsData(request, env)
       if (operationsDataResponse) return operationsDataResponse
 
+      const operationsAttachmentsResponse = await handleOperationsAttachments(request, env)
+      if (operationsAttachmentsResponse) return operationsAttachmentsResponse
+
       const operationsExpertResponse = await handleOperationsExpert(request, env)
       if (operationsExpertResponse) return operationsExpertResponse
 
@@ -97,6 +102,9 @@ export default {
 
       const operationsEmailResponse = await handleOperationsEmail(request, env)
       if (operationsEmailResponse) return operationsEmailResponse
+
+      const operationsNotificationOpsResponse = await handleOperationsNotificationOps(request, env)
+      if (operationsNotificationOpsResponse) return operationsNotificationOpsResponse
 
       const operationsCatalogResponse = await handleOperationsCatalog(request, env)
       if (operationsCatalogResponse) return operationsCatalogResponse
@@ -233,10 +241,21 @@ export default {
     ctx.waitUntil(Promise.all([dispatchPendingNotifications(env), dispatchPendingAppNotifications(env)]))
   },
   async queue(batch, env) {
+    const isDeadLetterBatch = /notification-events(?:-dev)?-dlq$/.test(String(batch.queue || ''))
     for (const message of batch.messages) {
       try {
+        if (isDeadLetterBatch) {
+          if (!env.NEON_DATABASE_URL) throw new Error('notification_queue_configuration_missing')
+          const { neon } = await import('@neondatabase/serverless')
+          await recordQueueFailure(neon(env.NEON_DATABASE_URL), batch.queue, message, 'dead_letter')
+          message.ack()
+          continue
+        }
         const eventId = message.body?.eventId
         if (typeof eventId !== 'string' || !/^[0-9a-f-]{36}$/i.test(eventId)) {
+          if (!env.NEON_DATABASE_URL) throw new Error('notification_queue_configuration_missing')
+          const { neon } = await import('@neondatabase/serverless')
+          await recordQueueFailure(neon(env.NEON_DATABASE_URL), batch.queue || 'unknown', message, 'invalid_message')
           message.ack()
           continue
         }
@@ -1398,11 +1417,15 @@ async function uploadImage(request, env) {
   return json({ key, url: `/images/${key}` }, request)
 }
 
-async function getImage(request, env) {
+export async function getImage(request, env) {
   if (!env.GALLERY_IMAGES) throw new Error('Falta configurar el bucket R2 GALLERY_IMAGES.')
 
   const url = new URL(request.url)
-  const key = decodeURIComponent(url.pathname.replace(/^\/images\//, ''))
+  let key
+  try { key = decodeURIComponent(url.pathname.replace(/^\/images\//, '')) } catch { return new Response('Imagen no encontrada.', { status: 404, headers: corsHeaders(request) }) }
+  // Request attachments are private and must only be served by the authenticated
+  // operations route, which checks assignment, role, payment, and object status.
+  if (!key.startsWith('gallery/')) return new Response('Imagen no encontrada.', { status: 404, headers: corsHeaders(request) })
   const object = await env.GALLERY_IMAGES.get(key)
   if (!object) return new Response('Imagen no encontrada.', { status: 404, headers: corsHeaders(request) })
 

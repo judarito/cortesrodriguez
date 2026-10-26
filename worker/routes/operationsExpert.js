@@ -36,6 +36,7 @@ export async function handleOperationsExpert(request, env) {
       sql`SELECT r.id, r.reference, r.status, r.service_type, r.general_service_name,
           r.consultation_type_name, r.consultation_type_description, r.question, r.created_at,
           COUNT(DISTINCT a.id)::int AS attachment_count,
+          COALESCE(jsonb_agg(DISTINCT jsonb_build_object('id', a.id, 'name', a.original_name)) FILTER (WHERE a.id IS NOT NULL), '[]'::jsonb) AS attachments,
           COALESCE(latest.status, 'none') AS response_status,
           latest.body AS response_body
         FROM operations.requests r
@@ -113,6 +114,7 @@ function serializeAssignment(row) {
     consultationDescription: row.consultation_type_description ? String(row.consultation_type_description) : '',
     question: row.question ? String(row.question) : '',
     attachmentCount: Number(row.attachment_count || 0),
+    attachments: Array.isArray(row.attachments) ? row.attachments.map((item) => ({ id: String(item.id), name: String(item.name || 'Adjunto') })) : [],
     responseStatus: String(row.response_status || 'none'),
     responseBody: row.response_body ? String(row.response_body) : '',
     createdAt: String(row.created_at),

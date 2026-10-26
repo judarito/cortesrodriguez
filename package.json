@@ -14,7 +14,7 @@
     "db:seed:bilingual": "node scripts/seed-bilingual-content.js",
     "db:migrate:operations": "node scripts/migrate-operations.js",
     "db:seed:operations-admin": "node scripts/seed-operations-admin.js",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "npm run deploy:dev",
     "deploy:dev": "npm run build && wrangler deploy --config wrangler.dev.jsonc"
   },
   "dependencies": {

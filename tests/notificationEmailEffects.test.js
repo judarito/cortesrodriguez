@@ -19,7 +19,7 @@ function effectStore(initial = null) {
       if (state.row.status === 'pending' || state.row.status === 'retryable' || state.row.leaseExpired) {
         state.row.status = 'sending'
         state.row.leaseExpired = false
-        return [{ id: state.row.id }]
+        return [{ id: state.row.id, lease_token: 'lease-effect-1' }]
       }
       return []
     }
@@ -36,7 +36,7 @@ function effectStore(initial = null) {
     if (query.includes("SET status = 'accepted'")) {
       state.row.status = 'accepted'
       state.row.resend_email_id = values[0]
-      return []
+      return [{ id: state.row.id }]
     }
     if (query.includes('INSERT INTO operations.notification_messages')) return []
     throw new Error(`Unexpected SQL: ${query}`)
@@ -72,6 +72,7 @@ test('persists a per-recipient attempt, retries with the same key and body, then
     assert.equal(attempts[0].body, attempts[1].body)
     assert.ok(attempts[0].key.length <= 256)
     assert.equal(state.row.status, 'accepted')
+    assert.ok(state.calls.some((query) => query.includes("SET status = 'accepted'") && query.includes('lease_token =')))
   } finally {
     globalThis.fetch = originalFetch
   }

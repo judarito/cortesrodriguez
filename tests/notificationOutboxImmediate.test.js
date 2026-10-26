@@ -45,3 +45,26 @@ test('completed or otherwise ineligible duplicate events are neutralized by the 
   await deliverNotification(sql, {}, eventId)
   assert.equal(sideEffects, 0)
 })
+
+test('a superseded assignment event is cancelled before publishing or sending', async () => {
+  const calls = []
+  let finalStatus = ''
+  const sql = async (parts) => {
+    const query = parts.join(' ')
+    calls.push(query)
+    if (query.includes('RETURNING id, request_id')) return [{
+      id: eventId, request_id: '90199877-a6f9-46fc-8f87-6117846d8eef', event_code: 'expert_assigned',
+      idempotency_key: `expert_assigned/${eventId}`, admin_only: false, actor_id: null,
+      event_payload: { assignmentId: 'a0199877-a6f9-46fc-8f87-6117846d8eef', expertId: 'b0199877-a6f9-46fc-8f87-6117846d8eef' },
+      attempts: 1, lease_token: 'c0199877-a6f9-46fc-8f87-6117846d8eef',
+    }]
+    if (query.includes('FROM operations.request_assignments assignment')) return []
+    if (query.includes("SET status = 'cancelled'")) { finalStatus = 'cancelled'; return [] }
+    throw new Error(`Unexpected SQL: ${query}`)
+  }
+  await deliverNotification(sql, {}, eventId)
+  assert.equal(finalStatus, 'cancelled')
+  assert.match(calls.at(-1), /lease_token =/)
+  assert.equal(calls.some((query) => query.includes('INSERT INTO operations.app_notifications')), false)
+  assert.equal(calls.some((query) => query.includes('notification_messages')), false)
+})

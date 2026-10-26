@@ -29,10 +29,10 @@ function createEmailEffectStore() {
         const row = [...rows.values()].find((item) => item.id === values[0])
         if (!row || !['pending', 'retryable'].includes(row.status)) return []
         row.status = 'sending'
-        return [{ id: row.id }]
+        return [{ id: row.id, lease_token: 'lease-effect-1' }]
       }
       if (query.includes("SET status = 'retryable'")) {
-        const row = [...rows.values()].find((item) => item.id === values.at(-1))
+        const row = [...rows.values()].find((item) => item.id === values[1])
         if (row) row.status = 'retryable'
         return []
       }
@@ -41,6 +41,7 @@ function createEmailEffectStore() {
         if (row) {
           row.status = 'accepted'
           row.resend_email_id = values[0]
+          return [{ id: row.id }]
         }
         return []
       }
@@ -148,7 +149,7 @@ test('retries a failed Resend delivery and succeeds idempotently without changin
       if (!['queued', 'dispatching'].includes(outboxStatus)) return []
       outboxStatus = 'processing'
       event.attempts = ++attempts
-      return [{ ...event }]
+      return [{ ...event, lease_token: 'lease-outbox-1' }]
     }
     if (query.includes('SELECT r.id, r.reference')) return [{
       id: event.request_id,

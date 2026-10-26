@@ -5,9 +5,9 @@
 **Estado:** implementación iniciada en `dev`; SEC-01 y SEC-02 son el primer bloque.
 **Base de revisión:** rama `dev`, commit `6c9ffef` (plan incorporado; el código revisado parte de `8f975ed3d8399b24a770c10d070cd2d9a38e2881`).
 
-**Actualización:** medidas de seguridad contrastadas con el mismo commit de `dev`; controles de infraestructura pendientes de evidencia se distinguen de faltantes de código.
+**Actualización:** medidas de seguridad contrastadas en `dev`; controles de infraestructura pendientes de evidencia se distinguen de faltantes de código.
 
-**Avance 25-oct-2026:** SEC-01 a SEC-07 implementados localmente con pruebas unitarias. SEC-02 también revisó rutas generales y dashboard del experto; bandeja y métricas no muestran asignaciones impagas. SEC-06 incluye límites progresivos de inicio de sesión y límites por IP para emisión de tokens/solicitudes públicas; Turnstile obligatorio en producción sigue pendiente. SEC-08 añade publicación inmediata, recuperación del outbox sin corte temporal y efectos de correo por destinatario con clave y huella del contenido (sin guardar el cuerpo completo); después de 24 horas, un resultado incierto queda detenido como `uncertain`. Se corrigieron una clave duplicada de asignación inicial y atomicidad en reasignación manual y resolución de similitud. SEC-12 limitó el listado de clientes para roles no administradores. Las 20 suites, el build y la revisión de sintaxis/diff pasan. **Solo dev:** migraciones 032–036 aplicadas, `PUBLIC_RATE_LIMIT_SECRET` configurado en el Worker dev y versión `60b36b84-140d-415f-a36a-226962a91a75` desplegada. Smoke checks dev: landing y configuración de Turnstile responden 200; emisión del token de atribución responde 200. Producción y `main` no se modificaron ni desplegaron. Falta validar el flujo de colas end-to-end y terminar recuperación/DLQ/redrive.
+**Avance 25-oct-2026:** SEC-01 a SEC-07 implementados localmente con pruebas unitarias. SEC-02 también revisó rutas generales y dashboard del experto; bandeja y métricas no muestran asignaciones impagas. SEC-06 incluye límites progresivos de inicio de sesión y límites por IP para emisión de tokens/solicitudes públicas; Turnstile obligatorio en producción sigue pendiente. SEC-08 incluye publicación inmediata, recuperación durable, efectos de correo idempotentes, leases con fencing tokens, vigencia de asignación validada en el consumidor, bitácora DLQ sin guardar payloads, redrive/reconciliación solo para administración y resultado incierto detenido como `uncertain`. SEC-12 añade descarga privada de adjuntos con autorización por rol/asignación y pago aprobado; los enlaces públicos de imágenes ya no exponen objetos `requests/`. SEC-13 hace que `npm run deploy` use dev y que el migrador operativo cargue exclusivamente `.env.dev`. **Solo dev:** migración 037 aplicada a Neon de `.env.dev`; creada la cola de respaldo de DLQ; Worker versión `40a2ab52-a370-42a5-8d2e-cc9708c1bc56` desplegada con cron `*/30`, consumidor principal y consumidor DLQ. Build exitoso, 22 suites pasan y smoke checks dev dieron landing `200` y `/images/requests/*` `404`. **Verificación externa pendiente:** inyectar un fallo controlado en Cloudflare para demostrar ciclo cola/DLQ/redrive y revisión de secretos/permisos de infraestructura y aislamiento real Neon/R2/Queues/DO entre entornos. Producción y `main` no se modifican ni despliegan.
 
 **Ampliación funcional:** portal «Consultar mis solicitudes», acceso por correo y código, retorno de pasarela, seguimiento y reintentos sobre la misma solicitud (sección 17). Frecuencia de recuperación acordada: 30 minutos.
 
@@ -240,7 +240,7 @@ Alertar por umbrales configurables y por ausencia de consumidores; reducir el cr
 
 ## 12. Plan de implementación
 
-### Fase 0: cerrar brechas de seguridad P0 — en curso
+### Fase 0: cerrar brechas de seguridad P0 — parcialmente implementada; requiere verificación externa
 
 - [x] SEC-01: sesión y permisos vigentes; revocación al desactivar cuenta.
 - [x] SEC-02: experto limitado por asignación y pago; revisar rutas alternas y dashboard.
@@ -253,12 +253,12 @@ Alertar por umbrales configurables y por ausencia de consumidores; reducir el cr
 
 - [x] Revisar esquema, colas y cambios concurrentes del plan; agregar migraciones 032–036 para atribución, notas internas, límites y registro idempotente de correos.
 - [x] Aplicar en orden migraciones 032–036 a Neon dev y comprobar ejecución satisfactoria.
-- [ ] Reutilizar outbox y agregar solo campos o restricciones faltantes.
+- [x] Reutilizar outbox; la migración 037 añade fencing tokens y registro durable de fallos (aplicación en Neon dev pendiente).
 - [ ] Identificar duplicados existentes antes de aplicar índices únicos.
 - [ ] Definir estados, claves, orden y retención.
-- [ ] Corregir accesos de experto antes de habilitar efectos de pago.
+- [x] Corregir accesos de experto antes de habilitar efectos de pago.
 
-### Fase 2: publicación inmediata y consumidores — parcial
+### Fase 2: publicación inmediata y consumidores — desplegada en dev; falta verificación controlada
 
 - [ ] Guardar todas las transiciones y eventos en una transacción o sentencia atómica; aprobación/rechazo, reasignación manual y resolución de similitud ya usan sentencia única; revisar creación pública, pago y productores restantes.
 - [x] Publicar inmediatamente desde los productores de outbox que tienen acceso al binding de cola.
@@ -269,16 +269,23 @@ Alertar por umbrales configurables y por ausencia de consumidores; reducir el cr
 - [x] Implementar reclamación, leases e idempotencia local por efecto/destinatario.
 - [x] Materializar notificaciones internas desde el consumidor con destinatarios por rol.
 - [x] Separar envíos por destinatario y eliminar identidad del cliente de correos a expertos.
-- [x] Registrar envíos inciertos; su conciliación administrativa y redrive quedan pendientes.
-- [ ] Aplicar validación de contratos, permisos y estado vigente en consumidores (SEC-08).
+- [x] Registrar envíos inciertos y conciliarlos solo con evidencia de Resend o confirmación administrativa auditada.
+- [x] Validar contratos y asignación experta vigente al consumir eventos; cancelar eventos de asignaciones sustituidas y dirigir avisos al experto específico (SEC-08).
+- [x] Fencing tokens en leases de publicación, procesamiento y efectos Resend para impedir que un trabajador vencido sobrescriba el resultado de otro.
+- [x] Persistir identificador/hash/tipo/intent de mensajes inválidos y DLQ sin guardar el payload; redrive e ignorado administrativo con justificación y auditoría.
+- [x] Conciliar efectos Resend inciertos: registrar aceptación con ID de Resend o reintentar solo tras confirmación administrativa de no aceptación; el redrive bloquea efectos inciertos no conciliados.
+- [x] Aplicar migración 037 y desplegar los dos consumidores de dev; Cloudflare muestra un consumidor en la cola principal y otro en la DLQ.
+- [ ] Verificar flujo real de cola, persistencia DLQ y redrive con un evento de prueba controlado en Cloudflare dev.
 - [x] Revalidar sesión y snapshot de permisos en conexiones WebSocket; alarma de respaldo de 60 segundos (SEC-07).
 
-### Fase 3: recuperación cada 30 minutos — pendiente
+### Fase 3: recuperación cada 30 minutos — desplegada en dev; falta prueba de recuperación
 
 - [ ] Probar fallos de publicación y expiración de leases.
 - [ ] Confirmar recuperación del outbox histórico sin repetir completados.
 - [ ] Cambiar cron en desarrollo a `*/30 * * * *`.
-- [ ] Verificar backlog, DLQ y latencia antes de promover el cambio.
+- [x] Configurar `*/30 * * * *` en `wrangler.dev.jsonc` y desplegarlo; el envío normal sigue siendo inmediato.
+- [ ] Probar recuperación de un evento pendiente/lease vencido y medir latencia del ciclo en Cloudflare dev.
+- [ ] Verificar backlog, DLQ y latencia antes de cualquier cambio de entorno. No tocar configuración de producción.
 - [ ] No promover a producción ni integrar en `main` dentro de este trabajo; cualquier cambio futuro de alcance requerirá instrucción expresa.
 
 ### Fase 4: portal del cliente y recuperación de pagos
@@ -380,11 +387,11 @@ Estos controles no se presupuestan como desarrollos desde cero. Su presencia en 
 | SEC-05 / P0 | Implementado localmente. Transición condicional; aprobación, evento outbox y cierre se escriben en una sentencia, con versión aprobada y nota pública separada de la interna. Rechazo también usa transición condicional. | Validar concurrencia real contra PostgreSQL de desarrollo y verificar el consumidor de la versión aprobada. | Dos administradores simultáneos: una aprobación efectiva; otro recibe conflicto; fallo de escritura no deja caso cerrado sin evento durable. |
 | SEC-06 / P0 | Implementado y desplegado en dev. Login registra fallos con contadores atómicos por cuenta/IP y espera progresiva; el formulario público limita tokens y solicitudes por IP de Cloudflare. Migraciones 034–035 aplicadas en dev y `PUBLIC_RATE_LIMIT_SECRET` configurado como secreto del Worker dev. | Probar límites funcionales y recuperación en dev; agregar límites a creación de pagos/códigos del portal donde corresponda. Hacer obligatorio Turnstile en producción, validar integración y fallar de forma cerrada si no está configurado. | Ataques paralelos no eluden límites; respuesta 429 y recuperación controlada; producción no acepta solicitudes sin Turnstile. |
 | SEC-07 / P1 | Implementado localmente. `NotificationHub.js` asocia el socket al usuario, hash de sesión y snapshot de permisos; valida sesión/usuario/permisos al publicar y cada 60 s mediante alarma. | Probar logout, desactivación, expiración y cambio de rol en Cloudflare; revisar la política fail-closed ante indisponibilidad temporal de Neon. | Socket deja de recibir eventos tras revocación; la alarma cierra conexiones inválidas en un máximo aproximado de 60 s; no hay suscripción entre usuarios. |
-| SEC-08 / P1 | Parcial y desplegado en dev. Outbox con reclamo/leases, publicación inmediata, recuperación sin corte temporal, validación de UUID/evento/payload y efecto de correo por destinatario con huella del payload y clave persistidas (sin almacenar el cuerpo). Después de 24 h, un efecto incierto queda `uncertain` y no se reenvía. Migración 036 aplicada en dev; Worker dev versión `60b36b84-140d-415f-a36a-226962a91a75`. | Probar cola real end-to-end, envíos parciales, resultados inciertos, alertas, DLQ/redrive auditado y vigencia de asignación/audiencia al consumir. Completar atomicidad de los productores restantes y verificar triggers en Neon. | Mensaje inválido no provoca efectos; cada destinatario aceptado se omite en reintentos; un correo incierto no se reenvía automáticamente después de la ventana del proveedor. |
-| SEC-09 / P1 | Parcial. Validación de imágenes ya presente; protección de descarga, derivados y anonimización aún incompleta en los flujos revisados. | Implementar descarga autorizada con R2 privado y, si se usan, URLs de corta duración. Verificar tamaño real leído sin depender solo de `Content-Length`, límites de decodificación y tiempo; recodificar y quitar EXIF. Revisar y redactar datos visibles antes de entregar al experto. | Archivo sin autorización no descarga; carga sin cabecera de tamaño no evita límite; original con datos personales no llega al experto; derivados seguros solo tras procesamiento. |
+| SEC-08 / P1 | Implementación local para dev: leases con fencing, validación del contrato y asignación vigente en consumidor, destinatario experto específico, DLQ persistida sin payload, redrive/ignorado administrativo auditado y conciliación de efectos inciertos. | Aplicar migración 037 y desplegar en dev; ejecutar prueba real de cola, envíos parciales, DLQ/redrive y recuperación. Revisar atomicidad de los productores restantes. | Redrive exige permiso y motivo; asignación sustituida no recibe el evento; efectos completados no se repiten; evidencia de prueba Cloudflare dev. |
+| SEC-09 / P1 | El listado público de imágenes permite solo `gallery/`; adjuntos de solicitudes tienen endpoint privado con sesión, permiso, asignación y pago aprobado. | Desplegar en dev y completar revisión de tamaños, decodificación y metadatos de las imágenes. | URL pública o ID de adjunto ajeno no entrega archivos; experto asignado con pago aprobado sí los descarga. |
 | SEC-10 / P1 | Funcionalidad nueva del plan: reportes asincrónicos. | Autorizar al solicitar, ejecutar y descargar; revalidar usuario y alcance si cambian permisos. Aislar objetos por trabajo/propietario, caducar descargas y neutralizar fórmulas en CSV/hojas exportadas. | ID o enlace de otro usuario no permite descarga; revocación impide acceso; valores como `=...` no se ejecutan como fórmulas. |
 | SEC-11 / P1 | Faltante en login operativo revisado: no hay segundo factor. Estado en proveedores por verificar. | Agregar MFA para administradores y acciones críticas, con recuperación segura y auditada. Revisar primero si una solución de identidad existente lo cubre. Activar/verificar MFA de cuentas GitHub, Cloudflare, Neon, R2/Resend y pasarela según disponibilidad. | Cuenta administrativa requiere segundo factor; recuperación no lo evita sin control; cuentas técnicas tienen evidencia de protección equivalente. |
-| SEC-12 / P0 | Parcial. Roles con `clients.read` ya quedan limitados a clientes asociados a solicitudes propias para los no administradores; el listado global de pagos exige `payments.read`. Prueba backend de aislamiento agregada. | Completar matriz por rol/recurso, incluidos archivos; revisar IDs manipulados en detalle/asignación/pago y validar las rutas en la base dev. | Manipular IDs no revela datos ajenos; no administradores solo ven clientes vinculados a solicitudes bajo su alcance; agente no crea solicitudes y experto no accede a clientes ni finanzas. |
+| SEC-12 / P0 | Parcial. Listados de clientes/pagos limitados por rol y adjuntos privados por autorización de admin o experto asignado con pago aprobado. | Desplegar y probar matriz de rol/recurso e IDs manipulados en detalle, asignación, respuesta y pago contra Neon dev. | IDs ajenos no revelan datos; agente ve su alcance; experto solo casos asignados y pagados; administración de cola es admin-only. |
 
 Los tokens públicos de origen sirven para atribución y control de entrada; no son credenciales privadas y pueden compartirse. Turnstile y límites de abuso siguen siendo necesarios. Para consumidores, separar efectos ya comprometidos e inmutables de permisos que deben revalidarse: una baja o reasignación debe cancelar el envío pendiente al destinatario que ya no está autorizado y dejar auditoría de la decisión.
 
@@ -392,7 +399,7 @@ Los tokens públicos de origen sirven para atribución y control de entrada; no 
 
 | ID / prioridad | Verificación requerida | Si no existe, implementar | Evidencia para cerrar |
 |---|---|---|---|
-| SEC-13 / P0 | Inventario de secretos, permisos, separación dev/prod, exposición pública de R2 y acceso a cola/DO. El repositorio no demuestra configuración efectiva. | Secretos del servidor fuera del código/frontend; claves distintas por entorno, permisos mínimos, rotación y retirada de claves antiguas; buckets privados y bindings aislados. Usuario de aplicación con permisos DB mínimos; migraciones con credencial separada. | Inventario sin valores secretos, accesos revisados y prueba de que dev no lee/escribe recursos de producción. Cualquier recurso sensible público se corrige antes del despliegue. |
+| SEC-13 / P0 | Repositorio reforzado: `deploy` apunta a dev, migraciones operativas fuerzan `.env.dev`, configuración dev usa nombres de Worker/cola/R2 propios y los adjuntos de solicitud ya no son públicos. | Desplegar con config dev; verificar en Cloudflare/Neon los bindings, secretos y permisos sin exponer sus valores; confirmar que recursos dev no leen ni escriben prod. | Comando genérico no despliega prod; recursos dev aislados; secretos ausentes del bundle/logs y acceso a adjuntos autenticado. |
 | SEC-14 / P1 | Cobertura de logs y alertas; ya existe auditoría parcial. | Registrar actor, acción, entidad, versión, resultado e ID de correlación en cambios de roles, pagos, aprobación, exenciones, enlaces y redrives. Restringir modificación de auditoría; redactar tokens, datos personales y respuestas completas. Alertar por accesos anómalos, errores de firma, abuso y DLQ. | Caso trazable de extremo a extremo sin secretos en logs; cambio sensible auditado; alerta de prueba recibida por canal autorizado. |
 | SEC-15 / P1 | Copias, retención, restauración Neon/Turso y recuperación R2; capacidades dependen del plan contratado. | Definir RPO/RTO de negocio, exportaciones/copias cifradas y control de acceso; recuperación compatible de datos y archivos. Probar restauración aislada y retención/borrado de datos personales. | Acta de restauración con tiempos y pérdida medida; objetos y referencias consistentes; acceso limitado a respaldos. No dar por hecho que una capa gratuita incluye recuperación suficiente. |
 | SEC-16 / P1 | TLS, cabeceras del sitio y API, CORS y reglas WAF/rate limiting efectivas. Ausencia en código no prueba ausencia en Cloudflare. | HTTPS, CSP probada con pagos/Turnstile, `frame-ancestors`, `nosniff`, política de referencia que evite filtrar tokens y `no-store` en datos sensibles. Restringir orígenes; para operaciones con cookies, proteger contra CSRF con validación de origen/token según flujo. Mantener escape de contenido y consultas parametrizadas. | Cabeceras verificadas en respuestas reales, origen ajeno rechazado donde aplica, contenido de pregunta/nota no ejecuta scripts y sesión cliente conserva cookies seguras. |

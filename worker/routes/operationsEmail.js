@@ -30,6 +30,10 @@ export async function handleOperationsEmail(request, env) {
 }
 
 export async function sendRequestNotification(sql, env, requestId, eventCode, actorId = null, options = {}) {
+  if (eventCode === 'expert_assigned' && options.assignmentId && options.expertId) {
+    const current = await isCurrentAssignment(sql, requestId, options.assignmentId, options.expertId)
+    if (!current) return { sent: false, reason: 'assignment_superseded' }
+  }
   const requests = await sql`
     SELECT r.id, r.reference, r.email, r.service_name, r.service_type, r.product_type, r.status, r.source, r.payment_required,
       r.agent_id, r.assigned_expert_id, r.consultation_type_id, r.source_channel, c.full_name AS client_name,
@@ -37,7 +41,12 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     FROM operations.requests r
     JOIN operations.clients c ON c.id = r.client_id
     LEFT JOIN operations.users agent ON agent.id = r.agent_id
-    LEFT JOIN operations.users expert ON expert.id = r.assigned_expert_id
+    LEFT JOIN operations.users expert ON expert.id = r.assigned_expert_id AND expert.active = TRUE
+      AND EXISTS (SELECT 1 FROM operations.user_roles ur JOIN operations.roles role ON role.id = ur.role_id WHERE ur.user_id = expert.id AND role.name = 'expert')
+      AND (r.consultation_type_id IS NULL OR EXISTS (
+        SELECT 1 FROM operations.consultation_type_experts cte
+        WHERE cte.consultation_type_id = r.consultation_type_id AND cte.user_id = expert.id AND cte.active = TRUE
+      ))
     WHERE r.id = ${requestId}
     LIMIT 1
   `
@@ -175,7 +184,15 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     if (!result.sent) throw new Error(result.reason || 'notification_delivery_pending')
     lastEmailId = result.emailId || lastEmailId
   }
-  await sql`UPDATE operations.requests SET notification_status = 'accepted', notification_last_event_at = NOW(), notification_last_error = NULL, updated_at = NOW() WHERE id = ${request.id}`
+  if (options.leaseToken) {
+    await sql`UPDATE operations.requests r SET notification_status = 'accepted', notification_last_event_at = NOW(), notification_last_error = NULL, updated_at = NOW()
+      WHERE r.id = ${request.id} AND EXISTS (
+        SELECT 1 FROM operations.notification_outbox event
+        WHERE event.id = ${options.outboxId} AND event.status = 'processing' AND event.lease_token = ${options.leaseToken}::uuid
+      )`
+  } else {
+    await sql`UPDATE operations.requests SET notification_status = 'accepted', notification_last_event_at = NOW(), notification_last_error = NULL, updated_at = NOW() WHERE id = ${request.id}`
+  }
   if (actorId) await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${actorId}, 'send', 'notification', ${request.id}, ${JSON.stringify({ eventCode, resendEmailId: lastEmailId })}::jsonb)`
   return { sent: true, emailId: lastEmailId }
 }
@@ -214,7 +231,7 @@ export async function sendEmailEffect(sql, env, { effectKey, recipient, payload,
   // window an expired lease can safely retry with the identical key and body.
   const claimed = await sql`
     UPDATE operations.notification_email_effects
-    SET status = 'sending', attempts = attempts + 1,
+    SET status = 'sending', attempts = attempts + 1, lease_token = gen_random_uuid(),
         first_attempt_at = COALESCE(first_attempt_at, NOW()), last_attempt_at = NOW(),
         last_error_code = NULL, updated_at = NOW()
     WHERE id = ${effect.id}
@@ -222,7 +239,7 @@ export async function sendEmailEffect(sql, env, { effectKey, recipient, payload,
         (status = 'sending' AND first_attempt_at > NOW() - INTERVAL '24 hours'
           AND last_attempt_at < NOW() - INTERVAL '5 minutes'))
       AND (first_attempt_at IS NULL OR first_attempt_at > NOW() - INTERVAL '24 hours')
-    RETURNING id
+    RETURNING id, lease_token
   `
   if (!claimed[0]) {
     await sql`
@@ -254,7 +271,7 @@ export async function sendEmailEffect(sql, env, { effectKey, recipient, payload,
     await sql`
       UPDATE operations.notification_email_effects
       SET status = 'retryable', last_error_code = 'resend_result_unknown', updated_at = NOW()
-      WHERE id = ${effect.id} AND status = 'sending'
+      WHERE id = ${effect.id} AND status = 'sending' AND lease_token = ${claimed[0].lease_token}::uuid
     `
     throw error
   }
@@ -263,16 +280,18 @@ export async function sendEmailEffect(sql, env, { effectKey, recipient, payload,
     await sql`
       UPDATE operations.notification_email_effects
       SET status = 'retryable', last_error_code = ${errorCode}, updated_at = NOW()
-      WHERE id = ${effect.id} AND status = 'sending'
+      WHERE id = ${effect.id} AND status = 'sending' AND lease_token = ${claimed[0].lease_token}::uuid
     `
     throw new Error(resendBody.message || 'Resend no aceptó el envío.')
   }
   const emailId = String(resendBody.id)
-  await sql`
+  const acceptedEffect = await sql`
     UPDATE operations.notification_email_effects
     SET status = 'accepted', resend_email_id = ${emailId}, accepted_at = NOW(), updated_at = NOW()
-    WHERE id = ${effect.id} AND status = 'sending'
+    WHERE id = ${effect.id} AND status = 'sending' AND lease_token = ${claimed[0].lease_token}::uuid
+    RETURNING id
   `
+  if (!acceptedEffect.length) return { sent: false, reason: 'notification_delivery_in_progress' }
   await recordAcceptedEmailMessage(sql, { requestId, eventCode, emailId, recipient, messageSubject })
   await updateAppNotificationEmail(sql, { outboxId, requestId, recipient, emailId })
   return { sent: true, emailId }
@@ -344,19 +363,36 @@ export async function publishNotificationEvent(sql, env, eventId) {
   if (!/^[0-9a-f-]{36}$/i.test(String(eventId)) || !env?.NOTIFICATION_EVENTS_QUEUE) return false
   const claimed = await sql`
     UPDATE operations.notification_outbox
-    SET status = 'dispatching', dispatch_lease_expires_at = NOW() + INTERVAL '2 minutes', updated_at = NOW()
+    SET status = 'dispatching', dispatch_lease_expires_at = NOW() + INTERVAL '2 minutes', dispatch_lease_token = gen_random_uuid(), updated_at = NOW()
     WHERE id = ${eventId} AND status = 'pending' AND next_attempt_at <= NOW()
-    RETURNING id
+    RETURNING id, dispatch_lease_token
   `
   if (!claimed[0]) return false
   try {
     await env.NOTIFICATION_EVENTS_QUEUE.send({ eventId: String(claimed[0].id) })
-    await sql`UPDATE operations.notification_outbox SET status = 'queued', dispatch_lease_expires_at = NULL, updated_at = NOW() WHERE id = ${claimed[0].id} AND status = 'dispatching'`
+    await sql`UPDATE operations.notification_outbox SET status = 'queued', dispatch_lease_expires_at = NULL, dispatch_lease_token = NULL, updated_at = NOW() WHERE id = ${claimed[0].id} AND status = 'dispatching' AND dispatch_lease_token = ${claimed[0].dispatch_lease_token}::uuid`
     return true
   } catch (error) {
-    await sql`UPDATE operations.notification_outbox SET status = 'pending', dispatch_lease_expires_at = NULL, next_attempt_at = NOW() + INTERVAL '1 minute', last_error_code = 'queue_dispatch_failed', updated_at = NOW() WHERE id = ${claimed[0].id} AND status = 'dispatching'`
+    await sql`UPDATE operations.notification_outbox SET status = 'pending', dispatch_lease_expires_at = NULL, dispatch_lease_token = NULL, next_attempt_at = NOW() + INTERVAL '1 minute', last_error_code = 'queue_dispatch_failed', updated_at = NOW() WHERE id = ${claimed[0].id} AND status = 'dispatching' AND dispatch_lease_token = ${claimed[0].dispatch_lease_token}::uuid`
     throw error
   }
+}
+
+export async function recordQueueFailure(sql, queueName, message, messageKind) {
+  const payload = JSON.stringify(message?.body ?? null)
+  const payloadHash = await sha256(payload)
+  const rawEventId = message?.body?.eventId
+  const eventId = isUuid(rawEventId) ? rawEventId : null
+  await sql`
+    INSERT INTO operations.notification_queue_failures
+      (queue_message_id, queue_name, event_id, message_kind, payload_sha256, delivery_attempts)
+    SELECT ${String(message?.id || `${queueName}:${payloadHash}`)}, ${String(queueName)},
+      CASE WHEN ${eventId}::text IS NOT NULL AND EXISTS (
+        SELECT 1 FROM operations.notification_outbox WHERE id = ${eventId}::uuid
+      ) THEN ${eventId}::uuid ELSE NULL END,
+      ${messageKind}, ${payloadHash}, ${Math.max(0, Number(message?.attempts) || 0)}
+    ON CONFLICT (queue_message_id) DO NOTHING
+  `
 }
 
 export async function dispatchPendingNotifications(env, limit = 20) {
@@ -376,10 +412,10 @@ export async function dispatchPendingNotifications(env, limit = 20) {
       FOR UPDATE SKIP LOCKED
     )
     UPDATE operations.notification_outbox AS event
-    SET status = 'dispatching', dispatch_lease_expires_at = NOW() + INTERVAL '2 minutes', updated_at = NOW()
+    SET status = 'dispatching', dispatch_lease_expires_at = NOW() + INTERVAL '2 minutes', dispatch_lease_token = gen_random_uuid(), updated_at = NOW()
     FROM due
     WHERE event.id = due.id
-    RETURNING event.id
+    RETURNING event.id, event.dispatch_lease_token
   `
   let dispatched = 0
   for (const item of claimed) {
@@ -387,16 +423,16 @@ export async function dispatchPendingNotifications(env, limit = 20) {
       await env.NOTIFICATION_EVENTS_QUEUE.send({ eventId: String(item.id) })
       await sql`
         UPDATE operations.notification_outbox
-        SET status = 'queued', dispatch_lease_expires_at = NULL, updated_at = NOW()
-        WHERE id = ${item.id} AND status = 'dispatching'
+        SET status = 'queued', dispatch_lease_expires_at = NULL, dispatch_lease_token = NULL, updated_at = NOW()
+        WHERE id = ${item.id} AND status = 'dispatching' AND dispatch_lease_token = ${item.dispatch_lease_token}::uuid
       `
       dispatched += 1
     } catch (error) {
       await sql`
         UPDATE operations.notification_outbox
-        SET status = 'pending', dispatch_lease_expires_at = NULL, next_attempt_at = NOW() + INTERVAL '1 minute',
+        SET status = 'pending', dispatch_lease_expires_at = NULL, dispatch_lease_token = NULL, next_attempt_at = NOW() + INTERVAL '1 minute',
             last_error_code = 'queue_dispatch_failed', updated_at = NOW()
-        WHERE id = ${item.id} AND status = 'dispatching'
+        WHERE id = ${item.id} AND status = 'dispatching' AND dispatch_lease_token = ${item.dispatch_lease_token}::uuid
       `
       console.warn(JSON.stringify({ event: 'notification_queue_dispatch_failed', severity: 'warning', outboxId: String(item.id), errorCode: 'queue_dispatch_failed' }))
     }
@@ -409,7 +445,7 @@ export async function dispatchPendingAppNotifications(env, limit = 50) {
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   const pending = await sql`
-    SELECT id, request_id, event_code, resend_email_id
+    SELECT id, request_id, event_code, resend_email_id, event_payload, admin_only, actor_id
     FROM operations.notification_outbox
     WHERE status = 'sent' AND app_notifications_generated_at IS NULL AND resend_email_id IS NOT NULL
     ORDER BY sent_at, created_at
@@ -439,24 +475,34 @@ export async function deliverNotification(sql, env, outboxId) {
   if (typeof outboxId !== 'string' || !/^[0-9a-f-]{36}$/i.test(outboxId)) return
   const claimed = await sql`
     UPDATE operations.notification_outbox
-    SET status = 'processing', attempts = attempts + 1,
+    SET status = 'processing', attempts = attempts + 1, lease_token = gen_random_uuid(), dispatch_lease_token = NULL,
         lease_expires_at = NOW() + INTERVAL '5 minutes', updated_at = NOW()
     WHERE id = ${outboxId}
       AND (status IN ('queued', 'dispatching')
         OR (status = 'processing' AND lease_expires_at < NOW()))
-    RETURNING id, request_id, event_code, idempotency_key, admin_only, actor_id, event_payload, attempts
+    RETURNING id, request_id, event_code, idempotency_key, admin_only, actor_id, event_payload, attempts, lease_token
   `
   if (!claimed[0]) return
   const item = claimed[0]
   if (!notificationEventCodes.has(item.event_code) || typeof item.admin_only !== 'boolean' || !item.idempotency_key || !item.request_id) {
-    await sql`UPDATE operations.notification_outbox SET status = 'failed', last_error_code = 'notification_contract_invalid', lease_expires_at = NULL, updated_at = NOW() WHERE id = ${item.id}`
+    await sql`UPDATE operations.notification_outbox SET status = 'failed', last_error_code = 'notification_contract_invalid', lease_expires_at = NULL, lease_token = NULL, dispatch_lease_token = NULL, updated_at = NOW() WHERE id = ${item.id} AND lease_token = ${item.lease_token}::uuid`
     return
+  }
+  if (item.event_code === 'expert_assigned') {
+    const payload = parseEventPayload(item.event_payload)
+    const assignmentId = typeof payload?.assignmentId === 'string' ? payload.assignmentId : ''
+    const expertId = typeof payload?.expertId === 'string' ? payload.expertId : ''
+    if (!isUuid(assignmentId) || !isUuid(expertId) || !await isCurrentAssignment(sql, item.request_id, assignmentId, expertId)) {
+      await sql`UPDATE operations.notification_outbox SET status = 'cancelled', last_error_code = 'assignment_superseded', lease_expires_at = NULL, lease_token = NULL, dispatch_lease_token = NULL, updated_at = NOW() WHERE id = ${item.id} AND lease_token = ${item.lease_token}::uuid`
+      return
+    }
+    item.event_payload = payload
   }
   if (item.event_code === 'expert_response_approved') {
     let payload
     try { payload = typeof item.event_payload === 'string' ? JSON.parse(item.event_payload || '{}') : item.event_payload } catch { payload = null }
     if (!payload || typeof payload.responseId !== 'string' || !/^[0-9a-f-]{36}$/i.test(payload.responseId)) {
-      await sql`UPDATE operations.notification_outbox SET status = 'failed', last_error_code = 'notification_contract_invalid', lease_expires_at = NULL, updated_at = NOW() WHERE id = ${item.id}`
+      await sql`UPDATE operations.notification_outbox SET status = 'failed', last_error_code = 'notification_contract_invalid', lease_expires_at = NULL, lease_token = NULL, dispatch_lease_token = NULL, updated_at = NOW() WHERE id = ${item.id} AND lease_token = ${item.lease_token}::uuid`
       return
     }
   }
@@ -464,15 +510,19 @@ export async function deliverNotification(sql, env, outboxId) {
   catch { console.warn(JSON.stringify({ event: 'request_realtime_publish_failed', severity: 'warning', errorCode: 'realtime_publish_failed' })) }
   try {
     await createEmailAppNotifications(sql, env, item, null, 'pending_retry')
-    await sql`UPDATE operations.notification_outbox SET app_notifications_generated_at = COALESCE(app_notifications_generated_at, NOW()), updated_at = NOW() WHERE id = ${item.id}`
+    await sql`UPDATE operations.notification_outbox SET app_notifications_generated_at = COALESCE(app_notifications_generated_at, NOW()), updated_at = NOW() WHERE id = ${item.id} AND lease_token = ${item.lease_token}::uuid`
     const result = item.event_code === 'expert_response_approved'
       ? await sendApprovedResponseNotification(sql, env, item)
-      : await sendRequestNotification(sql, env, item.request_id, item.event_code, item.actor_id, { idempotencyKey: `cra-${item.id}`, outboxId: String(item.id), forceAdminOnly: Boolean(item.admin_only) })
+      : await sendRequestNotification(sql, env, item.request_id, item.event_code, item.actor_id, { idempotencyKey: `cra-${item.id}`, outboxId: String(item.id), forceAdminOnly: Boolean(item.admin_only), leaseToken: item.lease_token, assignmentId: item.event_payload?.assignmentId, expertId: item.event_payload?.expertId })
+    if (result.reason === 'assignment_superseded') {
+      await sql`UPDATE operations.notification_outbox SET status = 'cancelled', last_error_code = 'assignment_superseded', lease_expires_at = NULL, lease_token = NULL, dispatch_lease_token = NULL, updated_at = NOW() WHERE id = ${item.id} AND lease_token = ${item.lease_token}::uuid`
+      return
+    }
     if (!result.sent && result.reason === 'email_not_required') {
       await sql`
         UPDATE operations.notification_outbox
-        SET status = 'sent', last_error_code = NULL, lease_expires_at = NULL, sent_at = NOW(), updated_at = NOW()
-        WHERE id = ${item.id}
+        SET status = 'sent', last_error_code = NULL, lease_expires_at = NULL, lease_token = NULL, dispatch_lease_token = NULL, sent_at = NOW(), updated_at = NOW()
+        WHERE id = ${item.id} AND lease_token = ${item.lease_token}::uuid
       `
       return
     }
@@ -480,8 +530,8 @@ export async function deliverNotification(sql, env, outboxId) {
     await sql`
       UPDATE operations.notification_outbox
       SET status = 'sent', resend_email_id = ${result.emailId}, last_error_code = NULL,
-          lease_expires_at = NULL, sent_at = NOW(), updated_at = NOW()
-      WHERE id = ${item.id}
+          lease_expires_at = NULL, lease_token = NULL, dispatch_lease_token = NULL, sent_at = NOW(), updated_at = NOW()
+      WHERE id = ${item.id} AND lease_token = ${item.lease_token}::uuid
     `
     try { await dispatchPendingAppNotifications(env, 1) }
     catch { console.warn(JSON.stringify({ event: 'app_notification_materialization_failed', severity: 'warning', outboxId: String(item.id) })) }
@@ -495,19 +545,20 @@ export async function deliverNotification(sql, env, outboxId) {
       UPDATE operations.app_notifications
       SET email_status = ${retry ? 'pending_retry' : 'failed'}, updated_at = NOW()
       WHERE request_id = ${item.request_id} AND idempotency_key LIKE ${`event/${item.id}/%`}
+        AND EXISTS (SELECT 1 FROM operations.notification_outbox current_event WHERE current_event.id = ${item.id} AND current_event.lease_token = ${item.lease_token}::uuid)
     `
     await sql`
       UPDATE operations.notification_outbox
       SET status = ${retry ? 'pending' : 'failed'},
           next_attempt_at = NOW() + (LEAST(3600, 60 * POWER(2, GREATEST(0, ${Number(item.attempts)} - 1))) * INTERVAL '1 second'),
-          lease_expires_at = NULL, last_error_code = ${safeCode}, updated_at = NOW()
-      WHERE id = ${item.id}
+          lease_expires_at = NULL, lease_token = NULL, dispatch_lease_expires_at = NULL, dispatch_lease_token = NULL, last_error_code = ${safeCode}, updated_at = NOW()
+      WHERE id = ${item.id} AND lease_token = ${item.lease_token}::uuid
     `
     await sql`
       UPDATE operations.requests
       SET notification_status = ${retry ? 'pending_retry' : 'failed'},
           notification_last_error = ${safeCode}, notification_last_event_at = NOW(), updated_at = NOW()
-      WHERE id = ${item.request_id}
+      WHERE id = ${item.request_id} AND EXISTS (SELECT 1 FROM operations.notification_outbox current_event WHERE current_event.id = ${item.id} AND current_event.lease_token = ${item.lease_token}::uuid)
     `
     console.warn(JSON.stringify({ event: 'notification_retry_scheduled', eventCode: item.event_code, severity: retry ? 'warning' : 'error', outboxId: String(item.id), attempt: Number(item.attempts), errorCode: safeCode }))
     try { await createEmailFailureAlerts(sql, env, item, safeCode, retry) }
@@ -553,8 +604,16 @@ async function sendApprovedResponseNotification(sql, env, item) {
     payload: { from: env.RESEND_FROM_EMAIL, to: [row.email], subject, text: textBody, html },
   })
   if (!emailResult.sent) throw new Error(emailResult.reason || 'notification_delivery_pending')
-  await sql`UPDATE operations.expert_responses SET status = 'sent', sent_at = COALESCE(sent_at, NOW()), updated_at = NOW() WHERE id = ${row.id} AND status <> 'sent'`
-  await sql`UPDATE operations.requests SET notification_status = 'accepted', notification_last_event_at = NOW(), notification_last_error = NULL, updated_at = NOW() WHERE id = ${row.request_id}`
+  await sql`UPDATE operations.expert_responses SET status = 'sent', sent_at = COALESCE(sent_at, NOW()), updated_at = NOW()
+    WHERE id = ${row.id} AND status <> 'sent' AND EXISTS (
+      SELECT 1 FROM operations.notification_outbox event
+      WHERE event.id = ${item.id} AND event.status = 'processing' AND event.lease_token = ${item.lease_token}::uuid
+    )`
+  await sql`UPDATE operations.requests SET notification_status = 'accepted', notification_last_event_at = NOW(), notification_last_error = NULL, updated_at = NOW()
+    WHERE id = ${row.request_id} AND EXISTS (
+      SELECT 1 FROM operations.notification_outbox event
+      WHERE event.id = ${item.id} AND event.status = 'processing' AND event.lease_token = ${item.lease_token}::uuid
+    )`
   return { sent: true, emailId: String(emailResult.emailId) }
 }
 
@@ -591,6 +650,34 @@ export function notificationPolicyForPayment(eventCode, paymentRequired, paid, f
 
 export function adminEmailAllowedForEvent(eventCode) {
   return adminEmailEvents.has(eventCode)
+}
+
+function parseEventPayload(value) {
+  try { return typeof value === 'string' ? JSON.parse(value || '{}') : value || {} } catch { return null }
+}
+
+function isUuid(value) { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) }
+
+async function isCurrentAssignment(sql, requestId, assignmentId, expertId) {
+  if (!isUuid(String(requestId)) || !isUuid(String(assignmentId)) || !isUuid(String(expertId))) return false
+  const rows = await sql`
+    SELECT 1
+    FROM operations.request_assignments assignment
+    JOIN operations.requests request ON request.id = assignment.request_id
+    JOIN operations.users expert ON expert.id = assignment.expert_id AND expert.active = TRUE
+    JOIN operations.user_roles ur ON ur.user_id = expert.id
+    JOIN operations.roles role ON role.id = ur.role_id AND role.name = 'expert'
+    WHERE assignment.id = ${assignmentId}::uuid AND assignment.request_id = ${requestId}::uuid
+      AND assignment.expert_id = ${expertId}::uuid AND assignment.status IN ('assigned', 'reassigned')
+      AND request.assigned_expert_id = assignment.expert_id
+      AND (request.consultation_type_id IS NULL OR EXISTS (
+        SELECT 1 FROM operations.consultation_type_experts cte
+        WHERE cte.consultation_type_id = request.consultation_type_id
+          AND cte.user_id = expert.id AND cte.active = TRUE
+      ))
+    LIMIT 1
+  `
+  return rows.length > 0
 }
 
 export function notificationDescription(eventCode) {
