@@ -9,6 +9,8 @@
 
 **Avance 25-oct-2026:** SEC-01 a SEC-07 implementados localmente con pruebas unitarias. SEC-02 también revisó rutas generales y dashboard del experto; bandeja y métricas no muestran asignaciones impagas. SEC-06 incluye límites progresivos de inicio de sesión y límites por IP para emisión de tokens/solicitudes públicas; Turnstile obligatorio en producción sigue pendiente. SEC-08 incluye publicación inmediata, recuperación durable, efectos de correo idempotentes, leases con fencing tokens, vigencia de asignación validada en el consumidor, bitácora DLQ sin guardar payloads, redrive/reconciliación solo para administración y resultado incierto detenido como `uncertain`. SEC-12 añade descarga privada de adjuntos con autorización por rol/asignación y pago aprobado; los enlaces públicos de imágenes ya no exponen objetos `requests/`. SEC-13 hace que `npm run deploy` use dev y que el migrador operativo cargue exclusivamente `.env.dev`. **Solo dev:** migración 037 aplicada a Neon de `.env.dev`; creada la cola de respaldo de DLQ; Worker versión `40a2ab52-a370-42a5-8d2e-cc9708c1bc56` desplegada con cron `*/30`, consumidor principal y consumidor DLQ. Build exitoso, 23 suites pasan y smoke checks dev dieron landing `200` y `/images/requests/*` `404`. La lista de nombres de secretos dev fue revisada sin leer sus valores. **Verificación externa pendiente:** inyectar un fallo controlado en Cloudflare para demostrar ciclo cola/DLQ/redrive y confirmar permisos efectivos y aislamiento real Neon/R2/Queues/DO entre entornos. Prueba automatizada de recuperación de pendientes, leases vencidos, cola atascada y publicación fallida añadida; validación completa en dev sigue pendiente. Producción y `main` no se modifican ni despliegan.
 
+**Revisión 26-oct-2026:** pendientes REV-01 a REV-08 documentados en la sección 18. Las marcas de implementación anteriores no cierran los defectos de pagos, notas, correo, confirmación de conversión ni atribución detectados en esta revisión.
+
 **Ampliación funcional:** portal «Consultar mis solicitudes», acceso por correo y código, retorno de pasarela, seguimiento y reintentos sobre la misma solicitud (sección 17). Frecuencia de recuperación acordada: 30 minutos.
 
 ## 1. Objetivo
@@ -564,6 +566,59 @@ Consultar estado desde el portal debe tener límites y caché breve donde sea se
 - [ ] Notificaciones de pago/atención respetan reglas después de confirmación; no se envían códigos no solicitados.
 
 **Pruebas ya ejecutadas:** `tests/clientPortal.test.js` cubre sesión requerida, filtro por titular, respuestas aprobadas/enviadas, reserva atómica de intentos de código y conservación del código anterior si Resend falla. La suite completa reportó 24 archivos aprobados; build y `git diff --check` también pasaron. El smoke HTTP de dev está documentado en `docs/DEPLOYMENT_ENVIRONMENTS.md`.
+
+## 18. Hallazgos de revisión del 26 de octubre de 2026
+
+**Base:** rama `dev`, commit `01a6b12139860572b0794cd6df28c437778a0ec0`. Esta sección complementa los avances anteriores: un control implementado parcialmente no se considera cerrado mientras persistan los hallazgos relacionados. Las tareas siguientes están pendientes; documentarlas no implica corregir código ni desplegar.
+
+**Validación realizada:** 84 pruebas automatizadas aprobadas y compilación `npm run build` exitosa. Se reprodujeron localmente con base de datos/proveedor simulados la recuperación de checkout sin sesión y la conservación de `approved` después de un `refunded`. Los demás puntos se verificaron por lectura del flujo. No se validaron transacciones concurrentes con PostgreSQL real, correos en buzón real ni pagos completos con Mercado Pago sandbox en esta revisión.
+
+### 18.1 Correcciones pendientes por prioridad
+
+| ID | Prioridad | Hallazgo y evidencia | Corrección requerida | Relación con el plan |
+|---|---|---|---|---|
+| REV-01 | Alta / P0 | `publicRequests.js`, actualización en `recordVerifiedPayment`: `CASE WHEN status = 'approved' THEN status` conserva la aprobación aunque el proveedor informe `refunded` o `charged_back`. La conciliación puede devolver aprobado para un pago reembolsado. | Admitir transiciones financieras válidas posteriores a aprobación, con registro de historial, idempotencia y protección contra eventos obsoletos. Definir efecto sobre atención y accesos; no habilitar un nuevo cobro automáticamente. Mantener trazabilidad de la aprobación original sin confundirla con el estado financiero vigente. | Secciones 5.5, 6 y 17.5; PORT-05 y PORT-07. |
+| REV-02 | Alta / P0 | `POST /api/public/payments/preference` llama a `createPaymentPreference` sin identidad verificada. La referencia permite pedir/recuperar checkout; el control de correo solo aplica al wrapper del portal. La ruta usa estados locales sin consultar al proveedor antes de reutilizar/habilitar intentos. | Proteger el pago inicial con autorización opaca y limitada a la solicitud recién creada; exigir sesión y titularidad para reintentos del portal. Compartir las mismas reglas en todas las entradas. Conciliar intentos relevantes con el proveedor antes de habilitar un nuevo pago cuando puedan existir cobros pendientes, tardíos o estados desactualizados. Bloquear resultados inciertos y limitar frecuencia. | SEC-06, SEC-12 y sección 17.6; PORT-05. |
+| REV-03 | Media / P1 | `OperationsApp.vue` envía `adminNote` desde el campo «Nota para el cliente o indicaciones para el experto». `operationsReviews.js` lo interpreta como `internalNote`; `publicNote` queda vacío. | Separar en interfaz «Nota para el cliente» y «Nota interna», enviando explícitamente `publicNote` e `internalNote`. Alinear aprobación y devolución al experto con los destinatarios autorizados y actualizar serialización/vistas. No convertir notas históricas internas en públicas automáticamente. | SEC-05, sección 7 y PORT-03/PORT-06. |
+| REV-04 | Media / P1 | En `operationsEmail.js`, la plantilla general utilizada para `payment_approved` indica «Ingresa al panel operativo» sin botón al portal. La respuesta aprobada sí contiene enlace al portal. | Crear contenido de confirmación de pago adecuado para cliente, con botón «Consultar mis solicitudes» a `/portal-cliente`, referencia e importe/moneda correspondientes. Separar audiencia cliente de plantillas operativas y mantener aislamiento del experto. Al cambiar plantilla, versionar efectos sin reenviar automáticamente eventos históricos completados. | SEC-03, sección 17.7 y PORT-06. |
+| REV-05 | Media / P1 | `ClientPortalApp.vue:startPayment` redirige a `initPoint` inmediatamente; no muestra para confirmación el importe COP y la TRM devueltos. El formulario público ya tiene un resumen de conversión. | Reutilizar un resumen previo al checkout: precio USD contratado, TRM y fecha, total COP y botón de confirmación. Conservar el intento preparado al confirmar; si debe cambiar monto o cotización, solicitar nueva aceptación explícita. No crear un intento nuevo por pulsar confirmar. | Secciones 17.4–17.6; PORT-05. |
+| REV-06 | Media / P1 | `PublicRequestApp.vue` obtiene automáticamente un token `direct_web` cuando no encuentra ruta de agente. El backend exige token, pero la interfaz lo repone y permite entrar al formulario sin origen en el enlace. | Emitir el token desde el acceso de la landing y llevarlo explícitamente al formulario; exigir origen válido al abrir y enviar. Enlace sin origen, alterado, revocado o vencido muestra una pantalla de enlace inválido; no atribuir silenciosamente a landing ni generar reemplazo dentro del formulario. Mantener límites y verificación de servidor; el token de origen no autentica clientes. | SEC-04 y SEC-12; requisito de atribución de landing/agentes. |
+
+La autorización del pago inicial de REV-02 es independiente del token público de origen de REV-06: un enlace de agente o landing no autoriza a consultar o gestionar cualquier solicitud. Ningún dato sensible o credencial debe aparecer en URLs públicas o logs.
+
+### 18.2 Consumo de WebSocket y alcance por entorno
+
+**REV-07 — P1, medición y optimización pendiente:** `NotificationHub.js` programa una alarma cada 60 segundos mientras haya sockets abiertos y valida sesión/permisos contra Neon por conexión, además de verificar al publicar. Esto protege la revocación, pero puede mantener actividad en Neon aunque el cron de recuperación se ejecute cada 30 minutos.
+
+- [ ] Medir consultas, activaciones de Neon y costo con cero, una y varias conexiones abiertas, con y sin notificaciones; comparar con carga equivalente.
+- [ ] Evitar verificaciones duplicadas de una misma sesión en el mismo ciclo y estudiar invalidación por eventos con una comprobación periódica de respaldo o caché acotada, si las mediciones justifican el cambio.
+- [ ] Definir latencia máxima de revocación y comportamiento ante falla de verificación antes de optimizar. No retirar comprobaciones ni ampliar su intervalo sin preservar el control de acceso.
+- [ ] Verificar que logout, desactivación, expiración y retirada de permisos impiden nuevas entregas dentro del plazo definido.
+- [ ] Reportar ahorro total con cron, colas, autenticación y WebSocket; no atribuir a toda la base la reducción de activaciones del cron.
+
+**REV-08 — P1, validación de entornos pendiente:** en el commit revisado, `wrangler.dev.jsonc` tiene `*/30 * * * *`; `wrangler.jsonc` conserva `* * * * *`. Es una diferencia de configuración comprobada, no prueba del estado desplegado en producción. Mantener producción sin cambios hasta cerrar las correcciones y completar la validación de desarrollo; al promover, revisar configuración, migraciones, bindings y recursos de recuperación correspondientes. No copiar valores o credenciales de dev a producción.
+
+### 18.3 Secuencia de trabajo y criterios de cierre
+
+1. **Bloque financiero y autorización:** corregir REV-01 y REV-02 antes de promover los cambios a producción.
+2. **Completar el recorrido funcional:** resolver REV-03 a REV-06 antes de declarar terminado el portal, la separación de notas y la atribución por enlaces.
+3. **Verificación operativa:** medir REV-07 y comprobar REV-08 antes de afirmar ahorro global o equivalencia de entornos.
+4. **Cierre de cada hallazgo:** enlazar commit de corrección, prueba automatizada y evidencia de integración donde corresponda. No marcar cerrado únicamente porque la suite anterior siga pasando.
+
+### 18.4 Pruebas de aceptación adicionales
+
+- [ ] REV-01: pago aprobado pasa a reembolsado o contracargo con datos verificados; portal y administración muestran estado vigente, conservan historial y no habilitan otro cobro automáticamente.
+- [ ] REV-01: notificación repetida no duplica efectos y evento atrasado no restaura indebidamente una aprobación anterior.
+- [ ] REV-02: referencia e idempotency key sin sesión/autorización ligada al caso no permiten crear ni recuperar checkout; usuario autenticado ajeno tampoco.
+- [ ] REV-02: pago inicial autorizado sigue funcionando; reintento autorizado conserva solicitud, datos e imágenes.
+- [ ] REV-02: pago aprobado en proveedor pero pendiente/rechazado localmente se concilia antes de permitir otro intento; proveedor indisponible mantiene bloqueo prudente.
+- [ ] REV-02: doble clic y pestañas paralelas no emiten intentos independientes; un resultado incierto requiere conciliación.
+- [ ] REV-03: aprobar con nota pública e interna entrega solo la pública al cliente; la interna no aparece en correo, portal ni respuestas de API del cliente.
+- [ ] REV-04: correo real de pago confirmado contiene «Consultar mis solicitudes» y abre el listado del correo autenticado; sin sesión pide código y con sesión vigente abre el listado.
+- [ ] REV-05: reintento muestra USD, TRM, fecha y COP antes de redirigir; confirmar reutiliza el intento mostrado; cambio de importe exige nueva aceptación.
+- [ ] REV-06: quitar o alterar origen en enlaces de landing y agentes impide el flujo; origen válido conserva atribución y no se sustituye silenciosamente.
+- [ ] REV-07: mediciones comparables y pruebas de revocación documentan costo y seguridad de cualquier ajuste del canal.
+- [ ] REV-08: probar en desarrollo login con código recibido, creación de solicitud, compra/rechazo/reintento/retorno sandbox, aprobación de respuesta, correo y descarga autorizada. Validar también concurrencia real y recuperación cola/DLQ/redrive.
 
 ## Referencias internas
 
