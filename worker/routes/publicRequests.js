@@ -15,6 +15,12 @@ export async function handlePublicRequests(request, env) {
     const sql = neon(env.NEON_DATABASE_URL)
     const token = createOpaqueToken()
     await sql`INSERT INTO operations.public_request_attribution_tokens (token_hash, attribution_type, expires_at) VALUES (${await sha256(token)}, 'direct_web', NOW() + INTERVAL '2 hours')`
+    if (request.headers.get('accept')?.includes('application/json')) {
+      return response({ token, type: 'direct_web' }, 200, {
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+      })
+    }
     return new Response(null, { status: 302, headers: {
       location: new URL(`/solicitud#originToken=${encodeURIComponent(token)}`, url).toString(),
       'cache-control': 'no-store',

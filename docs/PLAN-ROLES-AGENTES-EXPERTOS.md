@@ -295,6 +295,7 @@ La landing pública existente es un flujo crítico y debe conservar su comportam
 - [x] Evaluar el flag desde el Worker que sirve la landing y renderizar la nueva CTA solo cuando esté habilitada; mantener intactos los botones y formularios actuales. La evaluación falla cerrada y los endpoints de la función quedan fuera de servicio mientras el flag esté apagado.
 - [x] Crear y enlazar el binding `LANDING_FLAGS` con App IDs separados para dev y producción; ambos manifiestos pasaron `wrangler deploy --dry-run` y muestran el binding correcto.
 - [x] Comprobar el flag también en el Worker/API para impedir el uso directo de la función cuando esté apagada; el flag de interfaz por sí solo no es una barrera de seguridad.
+- [x] En dev, apuntar la CTA directamente a `/solicitud`; la app pide el token de atribución en segundo plano, con la ruta protegida por flag y límite de intentos, sin navegar al endpoint intermedio.
 - [ ] Probar en Cloudflare dev ambos estados del flag: el estado apagado ya fue comprobado en vivo; falta validar el estado encendido y el flujo nuevo completo, sin activar producción.
 - [x] Desplegar primero el código con el flag apagado en dev desde el commit `fc7c24f`; confirmar landing 200, CTA oculta, redirección `/solicitud` y API nueva 404.
 - [ ] Activar el flag en producción solo después de aprobar las pruebas, inicialmente con exposición controlada si la configuración de Flagship lo permite; verificar métricas y errores antes de ampliar.

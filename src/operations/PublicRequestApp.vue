@@ -18,6 +18,7 @@ function localizedError(message) {
     'La consulta debe tener entre 20 y 3000 caracteres.': 'Your question must be 20–3,000 characters.',
     'Puedes adjuntar máximo 5 imágenes.': 'You can attach up to 5 images.', 'Cada adjunto debe ser PNG, JPG o WEBP y pesar máximo 10 MB.': 'Each attachment must be PNG, JPG, or WEBP and no larger than 10 MB.',
     'Completa la verificación de seguridad.': 'Complete the security check.', 'No fue posible registrar la solicitud.': 'We could not submit your request.',
+    'No se pudo iniciar el formulario. Inténtalo de nuevo.': 'Could not start the form. Please try again.',
     'La solicitud quedó registrada, pero no fue posible cotizar el pago.': 'Your request was registered, but we could not prepare the payment quote.',
     'El enlace de pago no pertenece a Mercado Pago.': 'The payment link is not from Mercado Pago.', 'No fue posible abrir el pago.': 'We could not open the payment page.',
     'Abre el formulario desde la página principal.': 'Open the form from the home page.',
@@ -83,6 +84,7 @@ const form = ref({
 const loading = ref(false)
 const error = ref('')
 const originValid = ref(false)
+const originLoading = ref(true)
 const submitted = ref(false)
 const reference = ref('')
 const paymentNotice = ref('')
@@ -134,21 +136,44 @@ onMounted(async () => {
   if (match) {
     agentToken.value = match[1]
     window.history.replaceState(window.history.state, '', '/solicitud')
-    const agentResponse = await fetch(`/api/public/agent-links/${encodeURIComponent(agentToken.value)}`)
-    if (!agentResponse.ok) {
-      error.value = tr('El enlace de agente es inválido o venció.', 'This agent link is invalid or has expired.')
+    try {
+      const agentResponse = await fetch(`/api/public/agent-links/${encodeURIComponent(agentToken.value)}`)
+      if (!agentResponse.ok) throw new Error(tr('El enlace de agente es inválido o venció.', 'This agent link is invalid or has expired.'))
+      agentContext.value = await agentResponse.json()
+      originValid.value = true
+    } catch (agentError) {
+      error.value = agentError.message || tr('El enlace de agente es inválido o venció.', 'This agent link is invalid or has expired.')
+      originLoading.value = false
       return
     }
-    agentContext.value = await agentResponse.json()
-    originValid.value = true
+    originLoading.value = false
   } else {
     agentToken.value = new URLSearchParams(window.location.hash.slice(1)).get('originToken') || ''
-    if (!/^[A-Za-z0-9_-]{40,60}$/.test(agentToken.value)) {
-      window.location.replace('/api/public/request-start')
+    if (agentToken.value && !/^[A-Za-z0-9_-]{40,60}$/.test(agentToken.value)) {
+      error.value = tr('El enlace de origen es inválido o venció. Recarga el formulario e inténtalo de nuevo.', 'The source link is invalid or expired. Reload the form and try again.')
+      originLoading.value = false
       return
+    }
+    if (!agentToken.value) {
+      try {
+        const startResponse = await fetch('/api/public/request-start', {
+          headers: { Accept: 'application/json' },
+          cache: 'no-store',
+        })
+        const startData = await startResponse.json().catch(() => ({}))
+        if (!startResponse.ok || !/^[A-Za-z0-9_-]{40,60}$/.test(startData.token || '')) {
+          throw new Error(startData.error || tr('No se pudo iniciar el formulario. Inténtalo de nuevo.', 'Could not start the form. Please try again.'))
+        }
+        agentToken.value = startData.token
+      } catch (startError) {
+        error.value = localizedError(startError.message || tr('No se pudo iniciar el formulario. Inténtalo de nuevo.', 'Could not start the form. Please try again.'))
+        originLoading.value = false
+        return
+      }
     }
     window.history.replaceState(window.history.state, '', '/solicitud')
     originValid.value = true
+    originLoading.value = false
   }
   const turnstileSetup = initializeTurnstile()
   const catalogResponse = await fetch('/api/public/catalog')
@@ -371,6 +396,7 @@ function goToLanding() {
           <div class="form-actions"><button v-if="!pendingPayment" type="button" class="back-button" :disabled="loading" @click="requestPaymentPreference">{{ loading ? tr('Consultando…', 'Loading…') : tr('Reintentar cálculo', 'Retry quote') }}</button><button v-else type="button" class="submit-request" :disabled="loading || paymentRedirecting" @click="continueToPayment">{{ paymentRedirecting ? tr('Abriendo pago…', 'Opening payment…') : tr('Pagar', 'Pay') }} <span>→</span></button></div>
           <a class="portal-link" href="/portal-cliente">{{ tr('¿Quieres continuar después? Consulta aquí tus solicitudes.', 'Would you like to continue later? View your requests here.') }}</a>
         </section>
+        <div v-else-if="originLoading" class="request-origin-error" role="status"><p>{{ tr('Preparando el formulario…', 'Preparing your form…') }}</p></div>
         <div v-else-if="!originValid && !submitted" class="request-origin-error" role="alert"><p>{{ error || tr('Abre el formulario desde el botón de solicitudes de la página principal.', 'Open this form using the request button on the home page.') }}</p><a href="/">{{ tr('Volver a la página principal', 'Back to home page') }}</a></div>
         <form v-else-if="!submitted" @submit.prevent="submitRequest">
           <fieldset><legend>{{ tr('Datos del cliente', 'Customer details') }}</legend><div class="field full-field"><label for="fullName">{{ tr('Nombre completo', 'Full name') }} <b>*</b></label><input id="fullName" v-model="form.fullName" type="text" minlength="2" maxlength="120" autocomplete="name" :placeholder="tr('Ej. Juan Pablo Gómez', 'e.g. Juan Pablo Gomez')" required /></div><div class="field"><label for="legalEntityType">{{ tr('Constitución legal', 'Legal entity type') }} <b>*</b></label><select id="legalEntityType" v-model="form.legalEntityType" required><option value="" disabled>{{ tr('Selecciona una opción', 'Select an option') }}</option><option value="natural">{{ tr('Persona natural', 'Individual') }}</option><option value="juridica">{{ tr('Persona jurídica', 'Legal entity') }}</option></select></div></fieldset>
