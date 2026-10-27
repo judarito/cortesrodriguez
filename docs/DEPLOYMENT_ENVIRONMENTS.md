@@ -77,7 +77,7 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 
 - El inicio de sesión de la plataforma operativa valida usuarios y contraseñas contra `operations.users` y `operations.user_credentials` en Neon. Los secretos heredados `ADMIN_EMAIL` y `ADMIN_PASSWORD` no son las credenciales de acceso de este flujo; `ADMIN_EMAIL` sigue siendo usado por el script explícito de seed, por lo que no se debe ejecutar ese script para recuperar una cuenta sin revisar antes el correo configurado.
 - Si cambia el correo de un administrador, debe iniciar sesión con el correo vigente en `operations.users`; la contraseña se conserva mientras no se restablezca explícitamente.
-- La pantalla `/solicitud/resultado-pago` limita a 15 segundos la verificación iniciada por el navegador. Si Mercado Pago o la base de datos tardan, muestra el pago como pendiente de confirmación y aconseja no pagar de nuevo si el cliente ya ve el cargo. La confirmación del webhook y la conciliación administrativa siguen siendo las fuentes para actualizar el estado.
+- La pantalla `/solicitud/resultado-pago` limita a 8 segundos la verificación iniciada por el navegador. Desde que abre confirma que la solicitud está registrada, muestra el código de seguimiento y advierte que no se debe pagar de nuevo si el cargo ya aparece. Si Mercado Pago o la base de datos tardan, conserva ese mensaje sin dejar un spinner indefinido. La confirmación del webhook y la conciliación administrativa siguen siendo las fuentes para actualizar el estado.
 
 #### Ajuste de retorno de pago en Dev (2026-10-27)
 
@@ -85,6 +85,13 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - Diagnóstico de acceso: el usuario administrador actual de Neon Dev está activo y conserva credencial; el correo del login es el que figura en `operations.users`. `.env.dev` aún contiene un correo anterior en `ADMIN_EMAIL`, variable que el login operativo no consulta.
 - Publicado en `cortes-rodriguez-asesores-dev`, versión `e635d8f3-96eb-40d2-bf95-4db03f51a7f5`. Verificación HTTP: retorno de pago 200; ruta de login accesible (400 ante cuerpo vacío, sin intento de contraseña); verificación de pago configurada (400 ante datos vacíos, sin consultar una transacción). Build y `git diff --check` aprobados.
 - No se modificó producción, `main`, credenciales ni estado de pagos.
+
+#### Mensaje de retorno más claro (2026-10-27)
+
+- Dev ahora presenta desde la carga inicial que la solicitud sigue registrada, incluye el código de seguimiento y avisa que no se debe pagar otra vez si el cliente ya ve el cargo. El icono ya no queda animándose indefinidamente.
+- La consulta al backend tiene un límite visible de 8 segundos; al agotarse, la página conserva la solicitud y explica que Mercado Pago aún debe confirmar el estado.
+- Publicado en `cortes-rodriguez-asesores-dev`, versión `8e3f71c8-3f8c-4e43-9045-e3475bae775d`. El HTML responde HTTP 200 y el bundle publicado contiene los nuevos mensajes.
+- No se modificó producción ni `main`.
 
 ### Portal de clientes — despliegue y estado actual en dev (2026-10-25)
 

@@ -20,16 +20,16 @@ const pendingPaymentMessage = () => tr(
 
 const content = computed(() => ({
   checking: {
-    title: tr('Estamos verificando tu pago', 'We are checking your payment'),
-    description: tr('Espera un momento mientras confirmamos el resultado con Mercado Pago.', 'Please wait while we confirm the result with Mercado Pago.'),
+    title: tr('Tu solicitud está registrada', 'Your request is recorded'),
+    description: tr('Estamos confirmando el pago con Mercado Pago. Si ya ves el cobro, no vuelvas a pagar; conserva tu código de seguimiento mientras actualizamos el estado.', 'We are confirming your payment with Mercado Pago. If you can see the charge, do not pay again; keep your tracking code while we update the status.'),
   },
   approved: {
     title: tr('Pago recibido', 'Payment received'),
     description: tr('Tu solicitud quedó registrada. Nuestro equipo pronto te contactará con información sobre la respuesta.', 'Your request has been recorded. Our team will contact you soon with an update about the response.'),
   },
   pending: {
-    title: tr('Pago pendiente de confirmación', 'Payment confirmation pending'),
-    description: tr('Mercado Pago aún no confirma el pago. Si ya pagaste, no necesitas enviar otra solicitud; actualizaremos el estado al recibir la confirmación.', 'Mercado Pago has not confirmed the payment yet. If you have already paid, you do not need to submit another request; we will update the status when confirmation arrives.'),
+    title: tr('Tu solicitud sigue registrada', 'Your request is still recorded'),
+    description: tr('Mercado Pago aún no termina de confirmar el pago. Si ya ves el cobro, no vuelvas a pagar ni envíes otra solicitud. Conserva este código; actualizaremos el estado cuando llegue la confirmación.', 'Mercado Pago has not finished confirming the payment. If you can see the charge, do not pay again or submit another request. Keep this code; we will update the status when confirmation arrives.'),
   },
   failed: {
     title: tr('No se confirmó el pago', 'Payment was not confirmed'),
@@ -51,15 +51,27 @@ onMounted(async () => {
     }
 
     const controller = new AbortController()
-    const timeoutId = window.setTimeout(() => controller.abort(), 15000)
+    let timeoutId
     try {
-      const response = await fetch('/api/public/payments/verify', {
+      const verification = fetch('/api/public/payments/verify', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ paymentId, reference: reference.value }),
         signal: controller.signal,
+      }).then(async (response) => ({ response, result: await response.json().catch(() => ({})) }))
+      const timedOut = new Promise((resolve) => {
+        timeoutId = window.setTimeout(() => {
+          controller.abort()
+          resolve(null)
+        }, 8000)
       })
-      const result = await response.json().catch(() => ({}))
+      const verificationResult = await Promise.race([verification, timedOut])
+      if (!verificationResult) {
+        state.value = 'pending'
+        verificationMessage.value = pendingPaymentMessage()
+        return
+      }
+      const { response, result } = verificationResult
       if (response.ok && result.reference) reference.value = result.reference
       if (response.ok && result.status === 'approved') state.value = 'approved'
       else if (response.ok && ['rejected', 'cancelled', 'refunded', 'charged_back'].includes(result.status)) state.value = 'failed'
@@ -93,8 +105,8 @@ onMounted(async () => {
     </header>
 
     <section class="payment-return-card" aria-live="polite">
-      <div :class="['payment-return-icon', `is-${state}`]">
-        <span v-if="state === 'checking'" class="payment-return-spinner"></span>
+      <div :class="['payment-return-icon', `is-${state}`]" :aria-label="state === 'checking' ? tr('Confirmando pago', 'Confirming payment') : undefined">
+        <span v-if="state === 'checking'" aria-hidden="true">…</span>
         <span v-else-if="state === 'approved'">✓</span>
         <span v-else>!</span>
       </div>
