@@ -45,8 +45,9 @@ onMounted(async () => {
 
   if (paymentStatus === 'success') {
     const paymentId = query.get('payment_id') || query.get('collection_id')
-    if (!paymentId || !reference.value) {
+    if (!reference.value) {
       state.value = 'pending'
+      verificationMessage.value = pendingPaymentMessage()
       return
     }
 

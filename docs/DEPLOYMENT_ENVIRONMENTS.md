@@ -93,6 +93,14 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - Publicado en `cortes-rodriguez-asesores-dev`, versión `8e3f71c8-3f8c-4e43-9045-e3475bae775d`. El HTML responde HTTP 200 y el bundle publicado contiene los nuevos mensajes.
 - No se modificó producción ni `main`.
 
+#### Retorno basado en pago confirmado (2026-10-27)
+
+- La verificación del retorno consulta primero en Neon el pago `approved` asociado a la referencia. Si el webhook o la conciliación ya lo guardaron como pagado, responde confirmado directamente y no depende de repetir la consulta a Mercado Pago.
+- La consulta pública solo devuelve el estado y la referencia, sin datos personales. Si no existe un pago aprobado localmente, se conserva la verificación con Mercado Pago.
+- Se comprobó que la solicitud `CRA-20261027-A67C15` tiene un intento `approved` enlazado como confirmado en Neon Dev.
+- Publicado en `cortes-rodriguez-asesores-dev`, versión `644211e2-6d18-4d22-9bc8-a1f14bea0e27`. La verificación de retorno de esa referencia respondió HTTP 200 con `approved` sin requerir un ID ni consultar de nuevo a Mercado Pago.
+- Producción y `main` no se modificaron.
+
 ### Portal de clientes — despliegue y estado actual en dev (2026-10-25)
 
 - Se inició el detalle autenticado de solicitudes, el historial de pago y el inicio/reanudación del checkout sobre la solicitud existente.

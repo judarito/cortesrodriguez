@@ -445,13 +445,28 @@ async function handlePaymentWebhook(request, env) {
 }
 
 async function verifyReturnedPayment(request, env) {
-  if (!env.NEON_DATABASE_URL || !env.MP_ACCESS_TOKEN) return response({ error: 'La verificación de pagos no está configurada.' }, 503)
+  if (!env.NEON_DATABASE_URL) return response({ error: 'La verificación de pagos no está configurada.' }, 503)
   const body = await request.json().catch(() => ({}))
   const paymentId = text(body.paymentId)
   const reference = text(body.reference)
-  if (!/^\d{1,32}$/.test(paymentId) || !/^CRA-[A-Z0-9-]{8,40}$/i.test(reference)) {
+  if (!/^CRA-[A-Z0-9-]{8,40}$/i.test(reference)) {
     return response({ error: 'La referencia de pago no es válida.' }, 400)
   }
+
+  const { neon } = await import('@neondatabase/serverless')
+  const sql = neon(env.NEON_DATABASE_URL)
+  const confirmedPayment = await sql`
+    SELECT request.reference
+    FROM operations.requests request
+    JOIN operations.request_payments payment ON payment.request_id = request.id
+    WHERE request.reference = ${reference} AND payment.status = 'approved'
+    ORDER BY payment.created_at DESC
+    LIMIT 1
+  `
+  if (confirmedPayment[0]) return response({ ok: true, reference, status: 'approved' })
+
+  if (!/^\d{1,32}$/.test(paymentId)) return response({ error: 'La referencia de pago no es válida.' }, 400)
+  if (!env.MP_ACCESS_TOKEN) return response({ error: 'La verificación de pagos no está configurada.' }, 503)
   let payment
   try {
     payment = await mercadoPago(`/v1/payments/${encodeURIComponent(paymentId)}`, env.MP_ACCESS_TOKEN)
