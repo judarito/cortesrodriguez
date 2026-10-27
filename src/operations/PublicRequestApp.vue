@@ -144,7 +144,7 @@ onMounted(async () => {
   } else {
     agentToken.value = new URLSearchParams(window.location.hash.slice(1)).get('originToken') || ''
     if (!/^[A-Za-z0-9_-]{40,60}$/.test(agentToken.value)) {
-      error.value = tr('Abre el formulario desde el botón de solicitudes de la página principal.', 'Open this form using the request button on the home page.')
+      window.location.replace('/api/public/request-start')
       return
     }
     window.history.replaceState(window.history.state, '', '/solicitud')
