@@ -79,6 +79,12 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - Si cambia el correo de un administrador, debe iniciar sesión con el correo vigente en `operations.users`; la contraseña se conserva mientras no se restablezca explícitamente.
 - La pantalla `/solicitud/resultado-pago` limita a 8 segundos la verificación iniciada por el navegador. Desde que abre confirma que la solicitud está registrada, muestra el código de seguimiento y advierte que no se debe pagar de nuevo si el cargo ya aparece. Si Mercado Pago o la base de datos tardan, conserva ese mensaje sin dejar un spinner indefinido. La confirmación del webhook y la conciliación administrativa siguen siendo las fuentes para actualizar el estado.
 
+### Layout compartido del portal
+
+- El portal autenticado reutiliza `OperationsShell`, el mismo armazón de navegación, encabezado y perfil que el admin y el experto; el menú muestra las opciones disponibles para cada rol.
+- La landing, el formulario público, la plataforma operativa y el portal cliente comparten la preferencia de idioma `locale` en `localStorage`. Al abrir el portal en el mismo navegador y origen, se conserva el idioma seleccionado sin persistir una preferencia en la base de datos.
+- Publicado en `cortes-rodriguez-asesores-dev`, versión `73d8bcec-6b03-4d42-b175-f0f5d05cbcea`. `/portal-cliente` y `/app/login` responden HTTP 200; build y `git diff --check` aprobados. Producción y `main` no se modificaron.
+
 #### Ajuste de retorno de pago en Dev (2026-10-27)
 
 - La verificación iniciada desde el navegador se cancela a los 15 segundos y pasa a un mensaje de confirmación pendiente con la instrucción explícita de no pagar de nuevo si el cargo ya aparece.
