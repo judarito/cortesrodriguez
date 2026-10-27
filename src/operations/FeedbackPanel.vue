@@ -1,8 +1,13 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import ListView from '../shared/components/ListView.vue'
 
-const props = defineProps({ token: { type: String, required: true } })
+const props = defineProps({ token: { type: String, required: true }, locale: { type: String, default: 'es' } })
+const isEnglish = computed(() => props.locale === 'en')
+const t = (es, en) => isEnglish.value ? en : es
+const errorText = (message) => isEnglish.value
+  ? 'Could not load customer feedback. Please try again.'
+  : (message || 'No se pudo cargar el feedback.')
 const loading = ref(true)
 const error = ref('')
 const items = ref([])
@@ -16,11 +21,11 @@ async function load(page = pagination.value.page) {
       headers: { Authorization: `Bearer ${props.token}` },
     })
     const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data.error || 'No se pudo cargar el feedback.')
+    if (!response.ok) throw new Error(errorText(data.error))
     items.value = data.items || []
     pagination.value = data.pagination || pagination.value
   } catch (loadError) {
-    error.value = loadError.message
+    error.value = errorText(loadError.message)
   } finally {
     loading.value = false
   }
@@ -32,13 +37,13 @@ onMounted(load)
 <template>
   <section class="module-view feedback-view">
     <div class="module-heading">
-      <div><p class="eyebrow">Experiencia del cliente</p><h1>Feedback de clientes</h1><p>Consulta las calificaciones y comentarios asociados a las respuestas enviadas.</p></div>
-      <button type="button" class="secondary-button compact" @click="load">↻ Actualizar</button>
+      <div><p class="eyebrow">{{ t('Experiencia del cliente', 'Customer experience') }}</p><h1>{{ t('Feedback de clientes', 'Customer feedback') }}</h1><p>{{ t('Consulta las calificaciones y comentarios asociados a las respuestas enviadas.', 'Review ratings and comments related to submitted responses.') }}</p></div>
+      <button type="button" class="secondary-button compact" @click="load">↻ {{ t('Actualizar', 'Refresh') }}</button>
     </div>
     <p v-if="error" class="request-error">{{ error }}</p>
-    <ListView title="Feedback recibido" description="Las calificaciones bajas quedan marcadas para seguimiento administrativo." :count="pagination.totalItems" :page="pagination.page" :total-pages="pagination.totalPages" :loading="loading" :empty="!items.length && !loading" empty-text="Aún no hay feedback recibido." @previous="load(pagination.page - 1)" @next="load(pagination.page + 1)">
-      <template #columns><th>Solicitud</th><th>Cliente</th><th>Consulta</th><th>Experto</th><th>Calificación</th><th>Comentario</th><th>Estado</th></template>
-      <template #rows><tr v-for="item in items" :key="item.id"><td><strong class="request-id">{{ item.reference }}</strong></td><td>{{ item.clientName }}</td><td>{{ item.consultationType || '—' }}</td><td>{{ item.expertName || '—' }}</td><td><span :class="['feedback-rating', { low: item.rating <= 3 }]">{{ item.rating }} / 5</span></td><td class="feedback-comment">{{ item.comment || 'Sin comentario' }}</td><td><span :class="['security-status', { inactive: item.status === 'escalated' }]">{{ item.status === 'escalated' ? 'Requiere atención' : 'Recibido' }}</span></td></tr></template>
+    <ListView :title="t('Feedback recibido', 'Feedback received')" :description="t('Las calificaciones bajas quedan marcadas para seguimiento administrativo.', 'Low ratings are flagged for administrative follow-up.')" :count="pagination.totalItems" :page="pagination.page" :total-pages="pagination.totalPages" :loading="loading" :empty="!items.length && !loading" :empty-text="t('Aún no hay feedback recibido.', 'No feedback has been received yet.')" :locale="locale" @previous="load(pagination.page - 1)" @next="load(pagination.page + 1)">
+      <template #columns><th>{{ t('Solicitud', 'Request') }}</th><th>{{ t('Cliente', 'Client') }}</th><th>{{ t('Consulta', 'Consultation') }}</th><th>{{ t('Experto', 'Expert') }}</th><th>{{ t('Calificación', 'Rating') }}</th><th>{{ t('Comentario', 'Comment') }}</th><th>{{ t('Estado', 'Status') }}</th></template>
+      <template #rows><tr v-for="item in items" :key="item.id"><td><strong class="request-id">{{ item.reference }}</strong></td><td>{{ item.clientName }}</td><td>{{ item.consultationType || '—' }}</td><td>{{ item.expertName || '—' }}</td><td><span :class="['feedback-rating', { low: item.rating <= 3 }]">{{ item.rating }} / 5</span></td><td class="feedback-comment">{{ item.comment || t('Sin comentario', 'No comment') }}</td><td><span :class="['security-status', { inactive: item.status === 'escalated' }]">{{ item.status === 'escalated' ? t('Requiere atención', 'Needs attention') : t('Recibido', 'Received') }}</span></td></tr></template>
     </ListView>
   </section>
 </template>

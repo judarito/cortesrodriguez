@@ -23,6 +23,7 @@ export function isLandingRequestApi(pathname) {
     || pathname === '/api/public/service'
     || pathname === '/api/public/turnstile-config'
     || pathname === '/api/public/request-attribution-token'
+    || pathname === '/api/public/request-start'
     || pathname === '/api/public/requests'
     || /^\/api\/public\/agent-links\/[^/]+$/.test(pathname)
 }

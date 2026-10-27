@@ -1,8 +1,9 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import ListView from '../shared/components/ListView.vue'
+import { localeTag } from '../lib/locale.js'
 
-const props = defineProps({ token: { type: String, required: true } })
+const props = defineProps({ token: { type: String, required: true }, locale: { type: String, default: 'es' } })
 const items = ref([])
 const pagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
 const loading = ref(true)
@@ -13,12 +14,37 @@ const selected = ref(null)
 const selectedResponseId = ref('')
 const answer = ref('')
 const adminNote = ref('')
+const isEnglish = () => props.locale === 'en'
+const t = (es, en) => isEnglish() ? en : es
+function localizedError(message) {
+  if (!isEnglish()) return message
+  const translations = {
+    'No se pudo completar la operación.': 'Could not complete the operation.',
+    'No tienes permisos para revisar respuestas.': 'You do not have permission to review responses.',
+    'La base de datos operativa no está configurada.': 'The operations database is not configured.',
+    'Solo administración puede validar preguntas similares.': 'Only administrators can review similar questions.',
+    'La revisión de similitud no existe.': 'The similarity review was not found.',
+    'Esta pregunta ya fue resuelta.': 'This question has already been resolved.',
+    'No hay expertos activos asociados a esta consulta.': 'There are no active experts assigned to this consultation.',
+    'Esta pregunta ya fue resuelta o su asignación cambió.': 'This question has already been resolved or its assignment changed.',
+    'Selecciona reutilizar una respuesta o derivar a experto.': 'Choose whether to reuse a response or forward it to an expert.',
+    'Selecciona una respuesta candidata.': 'Select a candidate response.',
+    'El texto supera la longitud permitida.': 'The text exceeds the allowed length.',
+    'La respuesta elegida no es una coincidencia candidata válida.': 'The selected response is not a valid match candidate.',
+    'El cliente no tiene un correo registrado.': 'The client does not have an email address on file.',
+    'El cliente no tiene un correo registrado': 'The client does not have an email address on file.',
+    'La respuesta ya fue reutilizada y enviada.': 'This response has already been reused and sent.',
+    'No hay respuestas candidatas disponibles; deriva la solicitud a un experto.': 'No candidate responses are available; forward the request to an expert.',
+  }
+  return translations[message] || message
+}
+function formatDate(value) { return new Intl.DateTimeFormat(localeTag(props.locale), { dateStyle: 'medium' }).format(new Date(value)) }
 const selectedCandidate = computed(() => selected.value?.candidates?.find((candidate) => candidate.responseId === selectedResponseId.value) || null)
 
 async function request(url, options = {}) {
   const result = await fetch(url, { ...options, headers: { Authorization: `Bearer ${props.token}`, ...(options.headers || {}) } })
   const data = await result.json().catch(() => ({}))
-  if (!result.ok) throw new Error(data.error || 'No se pudo completar la operación.')
+  if (!result.ok) throw new Error(localizedError(data.error || t('No se pudo completar la operación.', 'Could not complete the operation.')))
   return data
 }
 
@@ -48,7 +74,7 @@ function close() { selected.value = null; selectedResponseId.value = ''; answer.
 
 async function resolve(action) {
   if (!selected.value || saving.value) return
-  if (action === 'reuse' && !window.confirm('Se enviará al cliente la respuesta seleccionada, revisada por administración. ¿Continuar?')) return
+  if (action === 'reuse' && !window.confirm(t('Se enviará al cliente la respuesta seleccionada, revisada por administración. ¿Continuar?', 'The selected response, reviewed by an administrator, will be sent to the client. Continue?'))) return
   saving.value = true
   error.value = ''
   try {
@@ -57,39 +83,39 @@ async function resolve(action) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, responseId: selectedResponseId.value, answer, adminNote }),
     })
-    notice.value = action === 'reuse' ? 'Respuesta aprobada; el correo quedó en la cola de envío.' : `La solicitud fue asignada a ${data.expertName}.`
+    notice.value = action === 'reuse' ? t('Respuesta aprobada; el correo quedó en la cola de envío.', 'Response approved; the email was queued for delivery.') : t(`La solicitud fue asignada a ${data.expertName}.`, `The request was assigned to ${data.expertName}.`)
     close()
     await load()
   } catch (resolveError) { error.value = resolveError.message } finally { saving.value = false }
 }
 
 function percent(score) { return `${Math.round(score * 100)}%` }
-function channelLabel(value) { return value === 'agent_link' ? 'Enlace de agente' : 'Página web' }
+function channelLabel(value) { return value === 'agent_link' ? t('Enlace de agente', 'Agent link') : t('Página web', 'Website') }
 onMounted(() => load(1))
 </script>
 
 <template>
   <section class="module-view similar-view">
-    <div class="module-heading"><div><p class="eyebrow">Validación administrativa</p><h1>Preguntas similares</h1><p>Las coincidencias son sugerencias léxicas; revisa el contexto antes de reutilizar una respuesta.</p></div><button type="button" class="secondary-button compact" @click="load()">↻ Actualizar</button></div>
+    <div class="module-heading"><div><p class="eyebrow">{{ t('Validación administrativa', 'Administrative review') }}</p><h1>{{ t('Preguntas similares', 'Similar questions') }}</h1><p>{{ t('Las coincidencias son sugerencias léxicas; revisa el contexto antes de reutilizar una respuesta.', 'Matches are lexical suggestions; review the context before reusing a response.') }}</p></div><button type="button" class="secondary-button compact" @click="load()">↻ {{ t('Actualizar', 'Refresh') }}</button></div>
     <p v-if="notice" class="security-notice">{{ notice }}</p><p v-if="error" class="request-error" role="alert">{{ error }}</p>
-    <ListView title="Pendientes de validación" description="Solo se comparan respuestas aprobadas y enviadas para el mismo tipo de consulta." :count="pagination.totalItems" :page="pagination.page" :total-pages="pagination.totalPages" :loading="loading" :empty="!items.length && !loading" empty-text="No hay preguntas pendientes de validación." @previous="load(pagination.page - 1)" @next="load(pagination.page + 1)">
-      <template #columns><th>Solicitud</th><th>Pregunta nueva</th><th>Coincidencias</th><th>Origen</th><th>Creada</th><th>Acción</th></template>
-      <template #rows><tr v-for="item in items" :key="item.requestId"><td><strong class="request-id">{{ item.reference }}</strong><br /><span class="muted-cell">{{ item.consultationType }}</span></td><td class="similar-question-cell">{{ item.question }}</td><td><span class="count-badge">{{ item.candidates.length }} sugerencia(s)</span><br /><small v-if="item.candidates[0]" class="muted-cell">Máxima {{ percent(item.candidates[0].score) }}</small></td><td>{{ channelLabel(item.sourceChannel) }}<small v-if="item.agentName" class="muted-cell">{{ item.agentName }}</small></td><td>{{ new Date(item.createdAt).toLocaleDateString('es-CO') }}</td><td><button type="button" class="secondary-button compact" @click="open(item)">Validar</button></td></tr></template>
+    <ListView :locale="locale" :title="t('Pendientes de validación', 'Awaiting review')" :description="t('Solo se comparan respuestas aprobadas y enviadas para el mismo tipo de consulta.', 'Only approved and sent responses for the same consultation type are compared.')" :count="pagination.totalItems" :page="pagination.page" :total-pages="pagination.totalPages" :loading="loading" :empty="!items.length && !loading" :empty-text="t('No hay preguntas pendientes de validación.', 'There are no questions awaiting review.')" @previous="load(pagination.page - 1)" @next="load(pagination.page + 1)">
+      <template #columns><th>{{ t('Solicitud', 'Request') }}</th><th>{{ t('Pregunta nueva', 'New question') }}</th><th>{{ t('Coincidencias', 'Matches') }}</th><th>{{ t('Origen', 'Source') }}</th><th>{{ t('Creada', 'Created') }}</th><th>{{ t('Acción', 'Action') }}</th></template>
+      <template #rows><tr v-for="item in items" :key="item.requestId"><td><strong class="request-id">{{ item.reference }}</strong><br /><span class="muted-cell">{{ item.consultationType }}</span></td><td class="similar-question-cell">{{ item.question }}</td><td><span class="count-badge">{{ t(`${item.candidates.length} sugerencia(s)`, `${item.candidates.length} suggestion(s)`) }}</span><br /><small v-if="item.candidates[0]" class="muted-cell">{{ t('Máxima', 'Top score') }} {{ percent(item.candidates[0].score) }}</small></td><td>{{ channelLabel(item.sourceChannel) }}<small v-if="item.agentName" class="muted-cell">{{ item.agentName }}</small></td><td>{{ formatDate(item.createdAt) }}</td><td><button type="button" class="secondary-button compact" @click="open(item)">{{ t('Validar', 'Review') }}</button></td></tr></template>
     </ListView>
 
-    <div v-if="selected" class="similar-backdrop" @click.self="close"><section class="similar-panel" aria-label="Validar pregunta similar">
-      <div class="panel-heading"><div><p class="eyebrow">{{ selected.reference }} · {{ selected.consultationType }}</p><h2>Validar coincidencia</h2><p>Una puntuación alta no garantiza que la respuesta aplique a este caso.</p></div><button type="button" class="secondary-button compact" @click="close">Cerrar</button></div>
-      <article class="similar-new-question"><span>Pregunta nueva</span><p>{{ selected.question }}</p></article>
-      <p class="request-error">Confirma que la respuesta aplica al caso nuevo y no contiene datos ni documentos del cliente anterior.</p>
-      <div class="similar-candidates"><h3>Respuestas anteriores</h3><p v-if="!selected.candidates.length" class="empty-row">No hay respuestas candidatas disponibles; deriva la solicitud a un experto.</p>
+    <div v-if="selected" class="similar-backdrop" @click.self="close"><section class="similar-panel" :aria-label="t('Validar pregunta similar', 'Review similar question')">
+      <div class="panel-heading"><div><p class="eyebrow">{{ selected.reference }} · {{ selected.consultationType }}</p><h2>{{ t('Validar coincidencia', 'Review match') }}</h2><p>{{ t('Una puntuación alta no garantiza que la respuesta aplique a este caso.', 'A high score does not guarantee that the response applies to this case.') }}</p></div><button type="button" class="secondary-button compact" @click="close">{{ t('Cerrar', 'Close') }}</button></div>
+      <article class="similar-new-question"><span>{{ t('Pregunta nueva', 'New question') }}</span><p>{{ selected.question }}</p></article>
+      <p class="request-error">{{ t('Confirma que la respuesta aplica al caso nuevo y no contiene datos ni documentos del cliente anterior.', 'Confirm that the response applies to the new case and contains no data or documents from the previous client.') }}</p>
+      <div class="similar-candidates"><h3>{{ t('Respuestas anteriores', 'Previous responses') }}</h3><p v-if="!selected.candidates.length" class="empty-row">{{ t('No hay respuestas candidatas disponibles; deriva la solicitud a un experto.', 'No candidate responses are available; forward the request to an expert.') }}</p>
         <button v-for="candidate in selected.candidates" :key="candidate.responseId" type="button" :class="['similar-candidate', { active: candidate.responseId === selectedResponseId }]" @click="chooseCandidate(candidate)">
-          <span class="similar-candidate-heading"><strong>{{ candidate.sourceReference }} · {{ candidate.matchLevel === 'high' ? 'Coincidencia alta' : 'Coincidencia posible' }} · {{ percent(candidate.score) }}</strong><small>Coincide: {{ candidate.sharedTerms.join(', ') }}</small></span>
+          <span class="similar-candidate-heading"><strong>{{ candidate.sourceReference }} · {{ candidate.matchLevel === 'high' ? t('Coincidencia alta', 'Strong match') : t('Coincidencia posible', 'Possible match') }} · {{ percent(candidate.score) }}</strong><small>{{ t('Coincide:', 'Shared terms:') }} {{ candidate.sharedTerms.join(', ') }}</small></span>
           <span class="similar-source-question">{{ candidate.sourceQuestion }}</span><span class="similar-source-answer">{{ candidate.responseBody }}</span>
         </button>
       </div>
-      <label v-if="selectedCandidate" class="similar-edit-answer">Respuesta que se enviará (puedes editarla)<textarea v-model="answer" rows="6" maxlength="15000" required></textarea></label>
-      <label v-if="selectedCandidate" class="similar-edit-answer">Nota para el cliente (opcional)<textarea v-model="adminNote" rows="3" maxlength="5000"></textarea></label>
-      <div class="similar-actions"><button type="button" class="secondary-button" :disabled="saving" @click="resolve('forward')">No aplica: asignar a experto</button><button v-if="selectedCandidate" type="button" class="primary-button" :disabled="saving || !answer.trim()" @click="resolve('reuse')">{{ saving ? 'Enviando…' : 'Validar y enviar respuesta' }}</button></div>
+      <label v-if="selectedCandidate" class="similar-edit-answer">{{ t('Respuesta que se enviará (puedes editarla)', 'Response to send (you can edit it)') }}<textarea v-model="answer" rows="6" maxlength="15000" required></textarea></label>
+      <label v-if="selectedCandidate" class="similar-edit-answer">{{ t('Nota para el cliente (opcional)', 'Note for the client (optional)') }}<textarea v-model="adminNote" rows="3" maxlength="5000"></textarea></label>
+      <div class="similar-actions"><button type="button" class="secondary-button" :disabled="saving" @click="resolve('forward')">{{ t('No aplica: asignar a experto', 'Not applicable: assign to an expert') }}</button><button v-if="selectedCandidate" type="button" class="primary-button" :disabled="saving || !answer.trim()" @click="resolve('reuse')">{{ saving ? t('Enviando…', 'Sending…') : t('Validar y enviar respuesta', 'Approve and send response') }}</button></div>
     </section></div>
   </section>
 </template>

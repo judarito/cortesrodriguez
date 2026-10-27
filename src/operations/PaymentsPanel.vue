@@ -1,12 +1,15 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import ListView from '../shared/components/ListView.vue'
 
 const props = defineProps({
   token: { type: String, required: true },
   canOpenRequests: { type: Boolean, default: false },
+  locale: { type: String, default: 'es' },
 })
 const emit = defineEmits(['open-request'])
+const isEnglish = computed(() => props.locale === 'en')
+const t = (es, en) => isEnglish.value ? en : es
 const items = ref([])
 const loading = ref(true)
 const error = ref('')
@@ -15,18 +18,19 @@ const filters = ref({ search: '', status: '', dateFrom: '', dateTo: '' })
 const pagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
 
 const paymentStatuses = [
-  { value: 'approved', label: 'Pagado' },
-  { value: 'duplicate_approved', label: 'Pago duplicado · revisar' },
-  { value: 'pending', label: 'Pendiente' },
-  { value: 'in_process', label: 'En proceso' },
-  { value: 'rejected', label: 'Rechazado' },
-  { value: 'cancelled', label: 'Cancelado' },
-  { value: 'refunded', label: 'Reembolsado' },
-  { value: 'charged_back', label: 'Contracargo' },
+  { value: 'approved', es: 'Pagado', en: 'Paid' },
+  { value: 'duplicate_approved', es: 'Pago duplicado · revisar', en: 'Duplicate payment · review' },
+  { value: 'pending', es: 'Pendiente', en: 'Pending' },
+  { value: 'in_process', es: 'En proceso', en: 'In process' },
+  { value: 'rejected', es: 'Rechazado', en: 'Rejected' },
+  { value: 'cancelled', es: 'Cancelado', en: 'Cancelled' },
+  { value: 'refunded', es: 'Reembolsado', en: 'Refunded' },
+  { value: 'charged_back', es: 'Contracargo', en: 'Chargeback' },
 ]
 
 function statusLabel(status) {
-  return paymentStatuses.find((item) => item.value === status)?.label || status || 'Desconocido'
+  const item = paymentStatuses.find((candidate) => candidate.value === status)
+  return item ? item[isEnglish.value ? 'en' : 'es'] : status || t('Desconocido', 'Unknown')
 }
 
 function statusClass(status) {
@@ -38,7 +42,7 @@ function statusClass(status) {
 
 function formatMoney(cents, currency) {
   const amount = Number(cents || 0) / 100
-  return new Intl.NumberFormat('es-CO', {
+  return new Intl.NumberFormat(isEnglish.value ? 'en-US' : 'es-CO', {
     style: 'currency', currency, minimumFractionDigits: currency === 'USD' ? 2 : 0,
     maximumFractionDigits: currency === 'USD' ? 2 : 0,
   }).format(amount)
@@ -46,7 +50,7 @@ function formatMoney(cents, currency) {
 
 function formatDate(value) {
   if (!value) return '—'
-  return new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+  return new Intl.DateTimeFormat(isEnglish.value ? 'en-US' : 'es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
 
 async function load(page = 1) {
@@ -59,7 +63,7 @@ async function load(page = 1) {
       headers: { Authorization: `Bearer ${props.token}` },
     })
     const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data.error || 'No se pudo cargar el listado de pagos.')
+    if (!response.ok) throw new Error(t('No se pudo cargar el listado de pagos. Inténtalo de nuevo.', 'Could not load the payments list. Please try again.'))
     items.value = data.items || []
     pagination.value = data.pagination || pagination.value
   } catch (loadError) {
@@ -81,32 +85,33 @@ onMounted(() => load())
 <template>
   <section class="module-view payments-view">
     <div class="module-heading">
-      <div><p class="eyebrow">Control financiero</p><h1>Pagos</h1><p>Consulta los intentos de pago, su estado y la solicitud asociada. Los estados se actualizan automáticamente.</p></div>
-      <button type="button" class="secondary-button compact" :disabled="loading" @click="load(pagination.page)">↻ Actualizar</button>
+      <div><p class="eyebrow">{{ t('Control financiero', 'Financial overview') }}</p><h1>{{ t('Pagos', 'Payments') }}</h1><p>{{ t('Consulta los intentos de pago, su estado y la solicitud asociada. Los estados se actualizan automáticamente.', 'Review payment attempts, their status, and the associated request. Statuses update automatically.') }}</p></div>
+      <button type="button" class="secondary-button compact" :disabled="loading" @click="load(pagination.page)">↻ {{ t('Actualizar', 'Refresh') }}</button>
     </div>
     <p v-if="error" class="request-error" role="alert">{{ error }}</p>
     <ListView
-      title="Historial de pagos"
-      description="Cada fila corresponde a un intento de pago registrado en Mercado Pago."
+      :locale="locale"
+      :title="t('Historial de pagos', 'Payment history')"
+      :description="t('Cada fila corresponde a un intento de pago registrado en Mercado Pago.', 'Each row represents a payment attempt recorded in Mercado Pago.')"
       :count="pagination.totalItems"
       :page="pagination.page"
       :total-pages="pagination.totalPages"
       :loading="loading"
       :empty="!items.length && !loading"
-      empty-text="No hay pagos que coincidan con estos filtros."
+      :empty-text="t('No hay pagos que coincidan con estos filtros.', 'No payments match these filters.')"
       @previous="load(pagination.page - 1)"
       @next="load(pagination.page + 1)"
     >
       <template #toolbar>
         <form class="payments-filters" @submit.prevent="applyFilters">
-          <label class="payments-search"><span aria-hidden="true">⌕</span><input v-model="searchInput" type="search" placeholder="Buscar pago, solicitud o cliente…" aria-label="Buscar pagos" /></label>
-          <label><span class="sr-only">Estado del pago</span><select v-model="filters.status"><option value="">Todos los estados</option><option v-for="status in paymentStatuses" :key="status.value" :value="status.value">{{ status.label }}</option></select></label>
-          <label><span class="sr-only">Desde</span><input v-model="filters.dateFrom" type="date" aria-label="Fecha desde" /></label>
-          <label><span class="sr-only">Hasta</span><input v-model="filters.dateTo" type="date" aria-label="Fecha hasta" /></label>
-          <button class="primary-button compact" type="submit">Buscar</button>
+          <label class="payments-search"><span aria-hidden="true">⌕</span><input v-model="searchInput" type="search" :placeholder="t('Buscar pago, solicitud o cliente…', 'Search payment, request, or client…')" :aria-label="t('Buscar pagos', 'Search payments')" /></label>
+          <label><span class="sr-only">{{ t('Estado del pago', 'Payment status') }}</span><select v-model="filters.status"><option value="">{{ t('Todos los estados', 'All statuses') }}</option><option v-for="status in paymentStatuses" :key="status.value" :value="status.value">{{ statusLabel(status.value) }}</option></select></label>
+          <label><span class="sr-only">{{ t('Desde', 'From') }}</span><input v-model="filters.dateFrom" type="date" :aria-label="t('Fecha desde', 'Date from')" /></label>
+          <label><span class="sr-only">{{ t('Hasta', 'To') }}</span><input v-model="filters.dateTo" type="date" :aria-label="t('Fecha hasta', 'Date to')" /></label>
+          <button class="primary-button compact" type="submit">{{ t('Buscar', 'Search') }}</button>
         </form>
       </template>
-      <template #columns><th>Solicitud</th><th>Cliente</th><th>Servicio</th><th>Estado del pago</th><th>Valor USD</th><th>Valor COP</th><th>Referencia de pago</th><th>Fecha</th></template>
+      <template #columns><th>{{ t('Solicitud', 'Request') }}</th><th>{{ t('Cliente', 'Client') }}</th><th>{{ t('Servicio', 'Service') }}</th><th>{{ t('Estado del pago', 'Payment status') }}</th><th>{{ t('Valor USD', 'Amount USD') }}</th><th>{{ t('Valor COP', 'Amount COP') }}</th><th>{{ t('Referencia de pago', 'Payment reference') }}</th><th>{{ t('Fecha', 'Date') }}</th></template>
       <template #rows>
         <tr v-for="payment in items" :key="payment.id">
           <td><button v-if="canOpenRequests" type="button" class="payment-request-link" @click="emit('open-request', { id: payment.requestId })">{{ payment.requestReference }}</button><strong v-else>{{ payment.requestReference }}</strong></td>

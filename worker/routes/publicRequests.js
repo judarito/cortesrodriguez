@@ -4,7 +4,10 @@ import { normalizeClientEmail } from '../lib/clientIdentity.js'
 
 export async function handlePublicRequests(request, env) {
   const url = new URL(request.url)
-  if (url.pathname === '/api/public/request-attribution-token' && request.method === 'GET') {
+  if (url.pathname === '/api/public/request-attribution-token') {
+    return response({ error: 'Abre el formulario desde la página principal.' }, 404, { 'cache-control': 'no-store' })
+  }
+  if (url.pathname === '/api/public/request-start' && request.method === 'GET') {
     if (!env.NEON_DATABASE_URL) return response({ error: 'La base de datos operativa no está configurada.' }, 500)
     const limited = await enforcePublicRateLimit(request, env, 'token', 20, 60)
     if (limited) return limited
@@ -12,7 +15,11 @@ export async function handlePublicRequests(request, env) {
     const sql = neon(env.NEON_DATABASE_URL)
     const token = createOpaqueToken()
     await sql`INSERT INTO operations.public_request_attribution_tokens (token_hash, attribution_type, expires_at) VALUES (${await sha256(token)}, 'direct_web', NOW() + INTERVAL '2 hours')`
-    return response({ token, type: 'direct_web' }, 200, { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' })
+    return new Response(null, { status: 302, headers: {
+      location: new URL(`/solicitud#originToken=${encodeURIComponent(token)}`, url).toString(),
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+    } })
   }
   if (url.pathname === '/api/public/turnstile-config' && request.method === 'GET') {
     const siteKey = typeof env.TURNSTILE_SITE_KEY === 'string' && /^[A-Za-z0-9_-]{20,64}$/.test(env.TURNSTILE_SITE_KEY)
@@ -29,7 +36,12 @@ export async function handlePublicRequests(request, env) {
     if (!rows[0]) return response({ error: 'El servicio no está disponible.' }, 404)
     return response({ code: String(rows[0].code), name: String(rows[0].name), amountCents: Number(rows[0].amount_cents), currency: String(rows[0].currency) })
   }
-  if (url.pathname === '/api/public/payments/preference' && request.method === 'POST') return createPaymentPreference(request, env)
+  if (url.pathname === '/api/public/payments/preference' && request.method === 'POST') {
+    if (!env.NEON_DATABASE_URL) return response({ error: 'El pago no está configurado.' }, 503)
+    const limited = await enforcePublicRateLimit(request, env, 'payment_preference', 10, 900)
+    if (limited) return limited
+    return createPaymentPreference(request, env)
+  }
   if (url.pathname === '/api/public/payments/verify' && request.method === 'POST') return verifyReturnedPayment(request, env)
   if (url.pathname === '/api/public/payments/webhook' && request.method === 'POST') return handlePaymentWebhook(request, env)
   if (url.pathname !== '/api/public/requests' || request.method !== 'POST') return null
@@ -50,6 +62,7 @@ export async function handlePublicRequests(request, env) {
   if (limited) return limited
 
   const input = validate(parsed.fields)
+  input.locale = parsed.fields.locale === 'en' ? 'en' : 'es'
   const idempotencyKey = text(parsed.fields.idempotencyKey)
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey)) {
     return response({ error: 'La clave de envío no es válida. Recarga el formulario e inténtalo de nuevo.' }, 400)
@@ -158,14 +171,14 @@ export async function handlePublicRequests(request, env) {
       service_name, service_amount_cents, service_currency, service_type, freight_agent, product_type, status,
       source_channel, agent_id, agent_link_id, specialty_id, specialty_name, specialty_description, question,
       general_service_code, general_service_name, consultation_type_id, consultation_type_code, consultation_type_name, consultation_type_description, payment_required,
-      assigned_expert_id, public_idempotency_key_hash, public_payload_hash
+      assigned_expert_id, public_idempotency_key_hash, public_payload_hash, preferred_locale
     )
     SELECT ${requestId}, new_client.id, ${reference}, ${source}, ${input.legalEntityType},
       ${input.email || null}, ${input.phone || null}, ${input.whatsapp || null},
       ${service.service_name}, ${service.amount_cents}, ${service.currency}, ${input.serviceType}, ${input.freightAgent || null}, ${input.productType}, 'pending',
       ${sourceChannel}, ${agentId}, ${agentLinkId}, NULL, NULL, NULL, ${input.question || null},
       ${input.serviceType}, ${service.service_name}, ${service.consultation_type_id}, ${input.consultationType}, ${service.consultation_name}, ${service.consultation_description}, ${service.payment_required},
-      ${assignedExpertId}, ${keyHash}, ${payloadHash}
+      ${assignedExpertId}, ${keyHash}, ${payloadHash}, ${input.locale}
     FROM new_client
     ON CONFLICT (public_idempotency_key_hash) WHERE public_idempotency_key_hash IS NOT NULL DO NOTHING
     RETURNING id, reference
@@ -291,18 +304,26 @@ async function createPaymentPreference(request, env, verifiedEmail = null) {
   const body = await request.json().catch(() => ({}))
   const reference = text(body.reference)
   const idempotencyKey = text(body.idempotencyKey)
+  const submissionToken = text(body.submissionToken)
   if (!reference) return response({ error: 'Falta la referencia de la solicitud.' }, 400)
   if (!/^[0-9a-f-]{36}$/i.test(idempotencyKey)) return response({ error: 'La clave de intento de pago no es válida.' }, 400)
+  if (!verifiedEmail && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(submissionToken)) {
+    return response({ error: 'No se pudo autorizar el pago de esta solicitud.' }, 401)
+  }
+  const submissionTokenHash = verifiedEmail ? null : await sha256(submissionToken)
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   await ensurePaymentSchema(sql)
-  const rows = await sql`SELECT id, reference, service_amount_cents, service_currency, payment_required, status
+  const rows = await sql`SELECT id, reference, service_amount_cents, service_currency, payment_required, status, confirmed_payment_attempt_id
     FROM operations.requests WHERE reference = ${reference}
-      AND (${verifiedEmail}::text IS NULL OR lower(trim(email)) = ${verifiedEmail}) LIMIT 1`
-  if (!rows[0] && verifiedEmail) return response({ error: 'Solicitud no encontrada.' }, 404)
-  if (!rows[0] || String(rows[0].service_currency).toUpperCase() !== 'USD') return response({ error: 'La solicitud no tiene un precio USD válido.' }, 400)
+      AND (${verifiedEmail}::text IS NULL OR lower(trim(email)) = ${verifiedEmail})
+      AND (${verifiedEmail}::text IS NOT NULL OR (public_idempotency_key_hash = ${submissionTokenHash}
+        AND public_submission_completed_at > NOW() - INTERVAL '2 hours')) LIMIT 1`
+  if (!rows[0]) return response({ error: 'Solicitud no encontrada.' }, 404)
+  if (String(rows[0].service_currency).toUpperCase() !== 'USD') return response({ error: 'La solicitud no tiene un precio USD válido.' }, 400)
   if (!rows[0].payment_required) return response({ error: 'Esta solicitud no requiere pago.' }, 409)
   if (['closed', 'cancelled'].includes(String(rows[0].status))) return response({ error: 'Esta solicitud ya no admite pagos.' }, 409)
+  if (rows[0].confirmed_payment_attempt_id) return response({ error: 'Esta solicitud ya tuvo un pago confirmado. Contacta a administración para revisar su estado antes de iniciar otro cobro.' }, 409)
   const approved = await sql`SELECT 1 FROM operations.request_payments WHERE request_id = ${rows[0].id} AND status = 'approved' LIMIT 1`
   if (approved.length) return response({ error: 'Esta solicitud ya tiene un pago confirmado.' }, 409)
   const previousAttempt = await sql`
@@ -462,7 +483,7 @@ export async function verifyRequestPayment(sql, requestId, env, actorId = null) 
   if (!requests[0]) return null
   const request = requests[0]
   const attempts = await sql`
-    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, status
+    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, status, provider_updated_at
     FROM operations.request_payments WHERE request_id = ${requestId}
     ORDER BY created_at DESC
   `
@@ -508,7 +529,7 @@ async function recordVerifiedPayment(payment, paymentId, env, database = null, s
   const reference = text(payment.external_reference)
   const sql = database || (await import('@neondatabase/serverless')).neon(env.NEON_DATABASE_URL)
   const candidates = reference ? await sql`
-    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, status
+    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, status, provider_updated_at
     FROM operations.request_payments WHERE reference = ${reference}
     ORDER BY created_at DESC
   ` : []
@@ -519,6 +540,10 @@ async function recordVerifiedPayment(payment, paymentId, env, database = null, s
   const expectedAttempt = record || candidates[0] || null
   const reasonCode = paymentMatchReason(payment, expectedAttempt, targetReference)
   const resolvedRequestId = targetRequestId || expectedAttempt?.request_id || null
+  const observedStatus = String(payment.status || '').toLowerCase()
+  const diagnosticReason = reasonCode && reasonCode !== 'payment_not_approved'
+    ? reasonCode
+    : observedStatus === 'approved' ? 'verified' : `payment_${observedStatus || 'unknown'}`
   await writePaymentDiagnostic(sql, {
     requestId: resolvedRequestId,
     actorId,
@@ -530,8 +555,8 @@ async function recordVerifiedPayment(payment, paymentId, env, database = null, s
     currency: payment.currency_id,
     amountCents: Number.isFinite(Number(payment.transaction_amount)) ? Math.round(Number(payment.transaction_amount) * 100) : null,
     expectedAmountCents: expectedAttempt?.cop_amount_cents,
-    matchStatus: reasonCode ? (reasonCode === 'payment_not_approved' ? 'unapproved' : 'mismatch') : (payment.status === 'approved' ? 'matched' : 'unapproved'),
-    reasonCode: reasonCode || (payment.status === 'approved' ? 'verified' : 'payment_not_approved'),
+    matchStatus: reasonCode && reasonCode !== 'payment_not_approved' ? 'mismatch' : expectedAttempt ? 'matched' : 'unmatched',
+    reasonCode: diagnosticReason,
   })
   if (!record || reasonCode && reasonCode !== 'payment_not_approved') {
     return {
@@ -545,40 +570,81 @@ async function recordVerifiedPayment(payment, paymentId, env, database = null, s
   const status = ['approved', 'rejected', 'cancelled', 'refunded', 'charged_back', 'in_process', 'pending'].includes(normalizedStatus)
     ? normalizedStatus
     : 'pending'
-  if (status === 'approved') {
-    const claimed = await sql`UPDATE operations.requests
-      SET confirmed_payment_attempt_id = ${record.id}::uuid, updated_at = NOW()
-      WHERE id = ${record.request_id}
-        AND (confirmed_payment_attempt_id IS NULL OR confirmed_payment_attempt_id = ${record.id}::uuid)
-      RETURNING id`
-    if (!claimed.length) {
-      await sql`UPDATE operations.request_payments
-        SET mercado_pago_payment_id = ${paymentId}, status = 'duplicate_approved', updated_at = NOW()
-        WHERE id = ${record.id} AND status <> 'approved'`
-      await writePaymentDiagnostic(sql, {
-        requestId: record.request_id, actorId, source, reference, paymentId,
-        preferenceId: payment.preference_id, paymentStatus: payment.status,
-        currency: payment.currency_id,
-        amountCents: Number.isFinite(Number(payment.transaction_amount)) ? Math.round(Number(payment.transaction_amount) * 100) : null,
-        expectedAmountCents: record.cop_amount_cents,
-        matchStatus: 'mismatch', reasonCode: 'duplicate_approved_attempt',
-      })
-      return {
-        matched: true, approved: false, reconciled: false, status: 'duplicate_approved',
-        reasonCode: 'duplicate_approved_attempt',
-        payment: safePaymentSummary(payment, record.cop_amount_cents),
-        expectedAmountCents: Number(record.cop_amount_cents),
-      }
+  const providerUpdatedAt = validProviderTimestamp(payment.date_last_updated)
+  if (record.provider_updated_at && !providerUpdatedAt) {
+    const current = await sql`SELECT status FROM operations.request_payments WHERE id = ${record.id} LIMIT 1`
+    await writePaymentDiagnostic(sql, {
+      requestId: record.request_id, actorId, source, reference, paymentId,
+      preferenceId: payment.preference_id, paymentStatus: payment.status, currency: payment.currency_id,
+      expectedAmountCents: record.cop_amount_cents, matchStatus: 'unverified', reasonCode: 'provider_updated_at_missing',
+    })
+    return {
+      matched: true, approved: String(current[0]?.status || record.status) === 'approved', reconciled: false,
+      status: String(current[0]?.status || record.status), reasonCode: 'provider_updated_at_missing',
+      payment: safePaymentSummary(payment, record.cop_amount_cents), expectedAmountCents: Number(record.cop_amount_cents),
     }
   }
   const updated = await sql`
-    UPDATE operations.request_payments
-    SET mercado_pago_payment_id = ${paymentId},
-        status = CASE WHEN status = 'approved' THEN status ELSE ${status} END,
-        updated_at = NOW()
-    WHERE id = ${record.id}
-    RETURNING request_id, status
+    WITH eligible AS MATERIALIZED (
+      SELECT payment.id, payment.request_id
+      FROM operations.request_payments payment
+      WHERE payment.id = ${record.id}
+        AND (
+          payment.provider_updated_at IS NULL
+          OR (${providerUpdatedAt}::timestamptz IS NOT NULL AND ${providerUpdatedAt}::timestamptz > payment.provider_updated_at)
+          OR (${providerUpdatedAt}::timestamptz = payment.provider_updated_at AND payment.status = ${status})
+        )
+      FOR UPDATE
+    ), claimed AS (
+      UPDATE operations.requests request
+      SET confirmed_payment_attempt_id = eligible.id, updated_at = NOW()
+      FROM eligible
+      WHERE request.id = eligible.request_id AND ${status} = 'approved'
+        AND (request.confirmed_payment_attempt_id IS NULL OR request.confirmed_payment_attempt_id = eligible.id)
+      RETURNING request.id
+    ), claim_state AS (
+      SELECT EXISTS (SELECT 1 FROM claimed) AS accepted
+    ), changed AS (
+      UPDATE operations.request_payments payment
+      SET mercado_pago_payment_id = ${paymentId},
+          status = CASE WHEN ${status} = 'approved' AND NOT claim_state.accepted THEN 'duplicate_approved' ELSE ${status} END,
+          provider_updated_at = COALESCE(${providerUpdatedAt}::timestamptz, payment.provider_updated_at),
+          updated_at = NOW()
+      FROM eligible CROSS JOIN claim_state
+      WHERE payment.id = eligible.id
+      RETURNING payment.request_id, payment.status
+    )
+    SELECT changed.request_id, changed.status FROM changed
   `
+  if (!updated[0]) {
+    const current = await sql`SELECT status FROM operations.request_payments WHERE id = ${record.id} LIMIT 1`
+    await writePaymentDiagnostic(sql, {
+      requestId: record.request_id, actorId, source, reference, paymentId,
+      preferenceId: payment.preference_id, paymentStatus: payment.status, currency: payment.currency_id,
+      expectedAmountCents: record.cop_amount_cents, matchStatus: 'stale', reasonCode: 'stale_provider_update',
+    })
+    return {
+      matched: true, approved: String(current[0]?.status || record.status) === 'approved', reconciled: false,
+      status: String(current[0]?.status || record.status), reasonCode: 'stale_provider_update',
+      payment: safePaymentSummary(payment, record.cop_amount_cents), expectedAmountCents: Number(record.cop_amount_cents),
+    }
+  }
+  if (updated[0].status === 'duplicate_approved') {
+    await writePaymentDiagnostic(sql, {
+      requestId: record.request_id, actorId, source, reference, paymentId,
+      preferenceId: payment.preference_id, paymentStatus: payment.status,
+      currency: payment.currency_id,
+      amountCents: Number.isFinite(Number(payment.transaction_amount)) ? Math.round(Number(payment.transaction_amount) * 100) : null,
+      expectedAmountCents: record.cop_amount_cents,
+      matchStatus: 'mismatch', reasonCode: 'duplicate_approved_attempt',
+    })
+    return {
+      matched: true, approved: false, reconciled: false, status: 'duplicate_approved',
+      reasonCode: 'duplicate_approved_attempt',
+      payment: safePaymentSummary(payment, record.cop_amount_cents),
+      expectedAmountCents: Number(record.cop_amount_cents),
+    }
+  }
   if (updated[0]?.request_id && status === 'approved') {
     try { await enqueueNotification(sql, updated[0].request_id, 'payment_approved', { env, idempotencyKey: `payment_approved/${updated[0].request_id}`, actorId, retryFailed: source === 'admin_verify' }) }
     catch (error) { console.error(JSON.stringify({ event: 'payment_approval_email_enqueue_failed', severity: 'error', requestId: String(updated[0].request_id), errorCode: 'outbox_enqueue_failed' })) }
@@ -591,7 +657,7 @@ async function recordVerifiedPayment(payment, paymentId, env, database = null, s
     approved: Boolean(updated[0]?.request_id && status === 'approved'),
     reconciled: status === 'approved' && record.status !== 'approved',
     status: String(updated[0]?.status || record.status || status),
-    reasonCode: status === 'approved' ? (record.status === 'approved' ? 'already_approved' : 'payment_reconciled') : 'payment_not_approved',
+    reasonCode: status === 'approved' ? (record.status === 'approved' ? 'already_approved' : 'payment_reconciled') : ['refunded', 'charged_back'].includes(status) ? `payment_${status}` : 'payment_not_approved',
     payment: safePaymentSummary(payment, record.cop_amount_cents),
     expectedAmountCents: Number(record.cop_amount_cents),
   }
@@ -675,6 +741,7 @@ async function ensurePaymentSchema(sql) {
   await sql`ALTER TABLE operations.request_payments DROP CONSTRAINT IF EXISTS request_payments_reference_key`
   await sql`ALTER TABLE operations.request_payments ADD COLUMN IF NOT EXISTS idempotency_key TEXT`
   await sql`ALTER TABLE operations.request_payments ADD COLUMN IF NOT EXISTS init_point TEXT`
+  await sql`ALTER TABLE operations.request_payments ADD COLUMN IF NOT EXISTS provider_updated_at TIMESTAMPTZ`
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS request_payments_request_attempt_idx ON operations.request_payments(request_id, idempotency_key) WHERE idempotency_key IS NOT NULL`
   await sql`CREATE INDEX IF NOT EXISTS request_payments_request_id_idx ON operations.request_payments(request_id)`
 }
@@ -704,6 +771,12 @@ function constantTimeEqual(left, right) {
   let difference = 0
   for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index)
   return difference === 0
+}
+
+function validProviderTimestamp(value) {
+  if (typeof value !== 'string' || !value) return null
+  const timestamp = new Date(value)
+  return Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : null
 }
 
 function paymentPreferenceResponse(attempt) {

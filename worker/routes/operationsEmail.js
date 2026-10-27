@@ -35,9 +35,10 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     if (!current) return { sent: false, reason: 'assignment_superseded' }
   }
   const requests = await sql`
-    SELECT r.id, r.reference, r.email, r.service_name, r.service_type, r.product_type, r.status, r.source, r.payment_required,
+    SELECT r.id, r.reference, r.email, r.preferred_locale, r.service_name, r.service_type, r.product_type, r.status, r.source, r.payment_required,
       r.agent_id, r.assigned_expert_id, r.consultation_type_id, r.source_channel, c.full_name AS client_name,
-      agent.email AS agent_email, expert.email AS expert_email
+      agent.email AS agent_email, expert.email AS expert_email,
+      payment.usd_amount_cents AS paid_usd_amount_cents, payment.cop_amount_cents AS paid_cop_amount_cents
     FROM operations.requests r
     JOIN operations.clients c ON c.id = r.client_id
     LEFT JOIN operations.users agent ON agent.id = r.agent_id
@@ -47,6 +48,13 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
         SELECT 1 FROM operations.consultation_type_experts cte
         WHERE cte.consultation_type_id = r.consultation_type_id AND cte.user_id = expert.id AND cte.active = TRUE
       ))
+    LEFT JOIN LATERAL (
+      SELECT usd_amount_cents, cop_amount_cents
+      FROM operations.request_payments
+      WHERE request_id = r.id AND status = 'approved'
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT 1
+    ) payment ON TRUE
     WHERE r.id = ${requestId}
     LIMIT 1
   `
@@ -126,20 +134,25 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     : []
   const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
   const validEmails = (values) => [...new Set(values.filter((value) => /^\S+@\S+\.\S+$/.test(normalizeEmail(value))).map(normalizeEmail))]
+  const clientEmail = normalizeEmail(request.email)
   const expertEmail = normalizeEmail(assignedExpertRecipient(request))
   const expertIsRecipient = Boolean(expertEmail && dynamic.some((email) => normalizeEmail(email) === expertEmail))
+  const clientIsRecipient = Boolean(!paymentPolicy.adminOnly && clientEmail && shouldNotifyClient(eventCode, audiences) && dynamic.some((email) => normalizeEmail(email) === clientEmail) && clientEmail !== expertEmail)
   const generalRecipients = validEmails([
     ...configured.map((recipient) => recipient.email),
-    ...dynamic.filter((email) => normalizeEmail(email) !== expertEmail),
-  ]).filter((email) => email !== expertEmail)
+    ...dynamic.filter((email) => normalizeEmail(email) !== expertEmail && normalizeEmail(email) !== clientEmail),
+  ]).filter((email) => email !== expertEmail && email !== clientEmail)
   const deliveries = [
-    ...generalRecipients.map((email) => ({ email, expert: false })),
-    ...(expertIsRecipient ? [{ email: expertEmail, expert: true }] : []),
+    ...generalRecipients.map((email) => ({ email, audience: 'general' })),
+    ...(clientIsRecipient ? [{ email: clientEmail, audience: 'client' }] : []),
+    ...(expertIsRecipient ? [{ email: expertEmail, audience: 'expert' }] : []),
   ]
   if (!deliveries.length) return { sent: false, reason: 'email_not_required' }
   if (!(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.RESEND_FROM_EMAIL) throw new Error('mail_configuration_missing')
 
   const eventLabel = { payment_approved: 'Pago recibido', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida', expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', similar_question_review: 'Pregunta similar pendiente de validación', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
+  const clientLocale = request.preferred_locale === 'en' ? 'en' : 'es'
+  const clientEventLabel = localizedNotificationLabel(eventCode, clientLocale)
   const subject = `${eventLabel} · ${request.reference}`
   // Notification rules may include the assigned expert. Keep shared mail
   // content free of client identity and operation details; authorized users
@@ -163,13 +176,29 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     // generic operational notice. They contain no request, client, or event data.
     const expertText = 'CORTÉS RODRÍGUEZ ASESORES\n\nTienes una notificación operativa. Ingresa al panel autorizado para consultarla.'
     const expertHtml = '<!doctype html><html lang="es"><body><p>CORTÉS RODRÍGUEZ ASESORES</p><p>Tienes una notificación operativa. Ingresa al panel autorizado para consultarla.</p></body></html>'
-    const templateVersion = delivery.expert ? 'expert-v1' : 'general-v1'
+    const isExpertDelivery = delivery.audience === 'expert'
+    const isPaymentClient = delivery.audience === 'client' && eventCode === 'payment_approved'
+    const isClientDelivery = delivery.audience === 'client'
+    const portalUrl = clientPortalUrl(env)
+    const usdAmount = Number.isFinite(Number(request.paid_usd_amount_cents)) ? `${(Number(request.paid_usd_amount_cents) / 100).toFixed(2)} USD` : ''
+    const copAmount = Number.isFinite(Number(request.paid_cop_amount_cents)) ? `${(Number(request.paid_cop_amount_cents) / 100).toLocaleString('es-CO')} COP` : ''
+    const paymentText = isPaymentClient
+      ? clientLocale === 'en'
+        ? ['Hello,', '', 'We received and confirmed the payment for your request. Our team is reviewing your case and will contact you with a response soon.', '', `Reference: ${request.reference}`, usdAmount ? `Consultation price: ${usdAmount}` : '', copAmount ? `Total paid: ${copAmount}` : '', '', `View your requests in the client portal: ${portalUrl}`, '', 'Cortés Rodríguez Asesores'].filter(Boolean).join('\n')
+        : ['Hola,', '', 'Recibimos y confirmamos el pago de tu solicitud. Nuestro equipo está revisando tu caso y pronto te contactaremos con la respuesta correspondiente.', '', `Referencia: ${request.reference}`, usdAmount ? `Valor de la consulta: ${usdAmount}` : '', copAmount ? `Total pagado: ${copAmount}` : '', '', `Consulta tus solicitudes en el portal de clientes: ${portalUrl}`, '', 'Cortés Rodríguez Asesores'].filter(Boolean).join('\n')
+      : ''
+    const clientText = isClientDelivery && !isPaymentClient
+      ? [clientLocale === 'en' ? 'Hello,' : 'Hola,', '', notificationDescription(eventCode, clientLocale), '', `${clientLocale === 'en' ? 'Reference' : 'Referencia'}: ${request.reference}`, '', `${clientLocale === 'en' ? 'View your requests in the client portal' : 'Consulta tus solicitudes en el portal de clientes'}: ${portalUrl}`, '', 'Cortés Rodríguez Asesores'].join('\n')
+      : ''
+    const paymentHtml = isPaymentClient ? paymentConfirmationTemplate(request.reference, usdAmount, copAmount, portalUrl, clientLocale) : ''
+    const clientHtml = isClientDelivery && !isPaymentClient ? clientNotificationTemplate(clientEventLabel, request.reference, notificationDescription(eventCode, clientLocale), portalUrl, clientLocale) : ''
+    const templateVersion = isExpertDelivery ? 'expert-v1' : isClientDelivery ? `client-${clientLocale}-v1` : 'general-v1'
     const emailPayload = {
       from: env.RESEND_FROM_EMAIL,
       to: [delivery.email],
-      subject: delivery.expert ? 'Notificación operativa' : subject,
-      text: delivery.expert ? expertText : text,
-      html: delivery.expert ? expertHtml : html,
+      subject: isExpertDelivery ? 'Notificación operativa' : isClientDelivery ? `${clientEventLabel} · ${request.reference}` : subject,
+      text: isExpertDelivery ? expertText : isPaymentClient ? paymentText : isClientDelivery ? clientText : text,
+      html: isExpertDelivery ? expertHtml : isPaymentClient ? paymentHtml : isClientDelivery ? clientHtml : html,
     }
     const effectKey = `${options.idempotencyKey || `request/${request.id}/${eventCode}`}/${templateVersion}`
     const result = await sendEmailEffect(sql, env, {
@@ -680,7 +709,21 @@ async function isCurrentAssignment(sql, requestId, assignmentId, expertId) {
   return rows.length > 0
 }
 
-export function notificationDescription(eventCode) {
+export function notificationDescription(eventCode, locale = 'es') {
+  if (locale === 'en') {
+    const descriptions = {
+      payment_approved: 'We received and confirmed your payment. Our team is reviewing your case and will contact you with a response soon.',
+      payment_rejected: 'The payment for this request was not approved. Please review the payment in the client portal.',
+      request_created: 'Your request was received and registered.',
+      expert_assigned: 'An expert has been assigned to your request.',
+      assignment_failed: 'Your request is being reviewed by our operations team.',
+      similar_question_review: 'Your request is being reviewed by our operations team.',
+      status_changed: 'The status of your request has been updated.',
+      expert_response_submitted: 'A response to your request is being reviewed by our team.',
+      expert_response_approved: 'The response reviewed by our team is ready for you.',
+    }
+    return descriptions[eventCode] || 'There is an update regarding your request.'
+  }
   const descriptions = {
     payment_approved: 'Recibimos y confirmamos el pago de tu solicitud. Nuestro equipo está revisando tu caso y pronto te contactaremos con la respuesta correspondiente.',
     payment_rejected: 'El pago asociado a esta solicitud no fue aprobado. Revisa el caso en el panel.',
@@ -695,6 +738,22 @@ export function notificationDescription(eventCode) {
     feedback_low: 'Se recibió una calificación baja que requiere seguimiento administrativo.',
   }
   return descriptions[eventCode] || 'Hay una novedad relacionada con esta solicitud.'
+}
+
+function localizedNotificationLabel(eventCode, locale) {
+  const labels = {
+    en: {
+      payment_approved: 'Payment received', payment_rejected: 'Payment not approved', request_created: 'Request received',
+      expert_assigned: 'Expert assigned', assignment_failed: 'Request under review', similar_question_review: 'Request under review',
+      status_changed: 'Request updated', expert_response_submitted: 'Response under review', feedback_received: 'Feedback received', feedback_low: 'Feedback follow-up',
+    },
+    es: {
+      payment_approved: 'Pago recibido', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida',
+      expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', similar_question_review: 'Pregunta similar pendiente de validación',
+      status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación',
+    },
+  }
+  return labels[locale]?.[eventCode] || labels.es[eventCode] || 'Actualización de solicitud'
 }
 
 function notificationTemplate(title, reference, description) {
@@ -716,5 +775,36 @@ function notificationTemplate(title, reference, description) {
 </body></html>`
 }
 
+function paymentConfirmationTemplate(reference, usdAmount, copAmount, portalUrl, locale = 'es') {
+  const english = locale === 'en'
+  const safeReference = escapeHtml(reference)
+  const amountRows = [
+    usdAmount ? `<tr><td style="padding:10px 0;color:#64788a">${english ? 'Consultation price' : 'Valor de la consulta'}</td><td align="right" style="padding:10px 0;color:#173b58;font-weight:700">${escapeHtml(usdAmount)}</td></tr>` : '',
+    copAmount ? `<tr><td style="padding:10px 0;color:#64788a">${english ? 'Total paid' : 'Total pagado'}</td><td align="right" style="padding:10px 0;color:#173b58;font-weight:700">${escapeHtml(copAmount)}</td></tr>` : '',
+  ].join('')
+  const copy = english
+    ? { lang: 'en', kicker: 'Payment received', title: 'Your payment is confirmed', intro: 'We received the payment for your request. Our team is reviewing your case and will contact you with a response soon.', reference: 'Request reference', action: 'View my requests', footer: 'Automated message from Cortés Rodríguez Asesores.' }
+    : { lang: 'es', kicker: 'Pago recibido', title: 'Confirmamos tu pago', intro: 'Recibimos el pago de tu solicitud. Nuestro equipo está revisando tu caso y pronto te contactaremos con la respuesta correspondiente.', reference: 'Referencia de solicitud', action: 'Consultar mis solicitudes', footer: 'Mensaje automático de Cortés Rodríguez Asesores.' }
+  return `<!doctype html><html lang="${copy.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:28px 12px;background:#f3f6f9;font-family:Arial,Helvetica,sans-serif;color:#243b53"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center"><table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #e1e8ef;border-radius:12px"><tr><td style="padding:22px 28px;background:#0b3553;color:#fff;font-size:14px;font-weight:700">CORTÉS RODRÍGUEZ ASESORES</td></tr><tr><td style="padding:30px 28px"><p style="margin:0 0 8px;color:#54829a;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase">${copy.kicker}</p><h1 style="margin:0;color:#173b58;font-size:23px">${copy.title}</h1><p style="margin:14px 0;color:#63788b;font-size:14px;line-height:1.6">${copy.intro}</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-top:1px solid #e8edf2;border-bottom:1px solid #e8edf2"><tr><td style="padding:10px 0;color:#64788a">${copy.reference}</td><td align="right" style="padding:10px 0;color:#173b58;font-weight:700">${safeReference}</td></tr>${amountRows}</table><p style="margin:24px 0;text-align:center"><a href="${escapeHtml(portalUrl)}" style="display:inline-block;padding:13px 22px;border-radius:7px;background:#104b6d;color:#fff;font-size:14px;font-weight:700;text-decoration:none">${copy.action}</a></p><p style="margin:0;color:#8796a5;font-size:11px;line-height:1.5">${copy.footer}</p></td></tr></table></td></tr></table></body></html>`
+}
+
+function clientNotificationTemplate(title, reference, description, portalUrl, locale) {
+  const english = locale === 'en'
+  const safeTitle = escapeHtml(title)
+  const safeReference = escapeHtml(reference)
+  const safeDescription = escapeHtml(description)
+  const copy = english
+    ? { lang: 'en', kicker: 'Request update', reference: 'Request reference', action: 'View my requests', footer: 'Automated message from Cortés Rodríguez Asesores.' }
+    : { lang: 'es', kicker: 'Actualización de solicitud', reference: 'Referencia de solicitud', action: 'Consultar mis solicitudes', footer: 'Mensaje automático de Cortés Rodríguez Asesores.' }
+  return `<!doctype html><html lang="${copy.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:28px 12px;background:#f3f6f9;font-family:Arial,Helvetica,sans-serif;color:#243b53"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center"><table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #e1e8ef;border-radius:12px"><tr><td style="padding:22px 28px;background:#0b3553;color:#fff;font-size:14px;font-weight:700">CORTÉS RODRÍGUEZ ASESORES</td></tr><tr><td style="padding:30px 28px"><p style="margin:0 0 8px;color:#54829a;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase">${copy.kicker}</p><h1 style="margin:0;color:#173b58;font-size:23px">${safeTitle}</h1><p style="margin:14px 0;color:#63788b;font-size:14px;line-height:1.6">${safeDescription}</p><p style="margin:0 0 8px;color:#64788a;font-size:12px">${copy.reference}</p><div style="padding:15px 17px;border:1px solid #dce7ef;border-radius:8px;background:#f7fafc;color:#174b6b;font-size:16px;font-weight:700">${safeReference}</div><p style="margin:24px 0;text-align:center"><a href="${escapeHtml(portalUrl)}" style="display:inline-block;padding:13px 22px;border-radius:7px;background:#104b6d;color:#fff;font-size:14px;font-weight:700;text-decoration:none">${copy.action}</a></p><p style="margin:0;color:#8796a5;font-size:11px;line-height:1.5">${copy.footer}</p></td></tr></table></td></tr></table></body></html>`
+}
+
 function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;') }
+function clientPortalUrl(env) {
+  let base
+  try { base = new URL(env.PUBLIC_APP_URL || 'https://cortes-rodriguez-asesores-dev.juan-d-ricardo-t.workers.dev') }
+  catch { throw new Error('client_portal_url_invalid') }
+  if (base.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(base.hostname)) throw new Error('client_portal_url_must_use_https')
+  return new URL('/portal-cliente', base.origin).toString()
+}
 function response(payload, status = 200) { return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json; charset=utf-8' } }) }

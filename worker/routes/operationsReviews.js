@@ -105,7 +105,6 @@ export async function handleOperationsReviews(request, env) {
       version: Number(reviewed.version),
       status: String(reviewed.status),
       publicNote: reviewed.public_note || '',
-      internalNote: reviewed.internal_note || '',
     },
   }, action === 'approve' ? 202 : 200)
 }

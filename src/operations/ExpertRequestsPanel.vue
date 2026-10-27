@@ -1,8 +1,9 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue'
 import ListView from '../shared/components/ListView.vue'
+import { localeTag } from '../lib/locale.js'
 
-const props = defineProps({ token: { type: String, required: true }, openRequestId: { type: String, default: '' }, refreshKey: { type: Number, default: 0 } })
+const props = defineProps({ token: { type: String, required: true }, locale: { type: String, default: 'es' }, openRequestId: { type: String, default: '' }, refreshKey: { type: Number, default: 0 } })
 const emit = defineEmits(['request-opened'])
 const loading = ref(true)
 const saving = ref(false)
@@ -14,11 +15,34 @@ const pagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
 const search = ref('')
 const selected = ref(null)
 const responseBody = ref('')
+const isEnglish = () => props.locale === 'en'
+const t = (es, en) => isEnglish() ? en : es
+function localizedError(message, fallback) {
+  if (!isEnglish()) return message || fallback
+  const translations = {
+    'No se pudo completar la operación.': 'Could not complete the operation.',
+    'No se pudo descargar el adjunto.': 'Could not download the attachment.',
+    'No se pudieron cargar las solicitudes.': 'Could not load requests.',
+    'Sesión requerida.': 'Sign-in required.',
+    'No tienes permisos para consultar solicitudes de experto.': 'You do not have permission to view expert requests.',
+    'No tienes permisos para responder solicitudes de experto.': 'You do not have permission to respond to expert requests.',
+    'La base de datos operativa no está configurada.': 'The operations database is not configured.',
+    'Identificador de solicitud inválido.': 'Invalid request identifier.',
+    'La respuesta no puede estar vacía.': 'The response cannot be empty.',
+    'La respuesta no puede superar 20.000 caracteres.': 'The response cannot exceed 20,000 characters.',
+    'La solicitud no está asignada a este experto.': 'This request is not assigned to this expert.',
+    'La solicitud requiere un pago aprobado antes de responder.': 'The request requires an approved payment before you can respond.',
+    'La solicitud ya no está habilitada para recibir respuestas.': 'The request can no longer receive responses.',
+    'La asignación, el pago o el estado de la solicitud cambió. Actualiza la bandeja e inténtalo de nuevo.': 'The assignment, payment, or request status changed. Refresh the inbox and try again.',
+  }
+  return translations[message] || message || fallback
+}
+function formatDate(value) { return new Intl.DateTimeFormat(localeTag(props.locale), { dateStyle: 'medium' }).format(new Date(value)) }
 
 async function request(url, options = {}) {
   const response = await fetch(url, { ...options, headers: { Authorization: `Bearer ${props.token}`, ...(options.headers || {}) } })
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.error || 'No se pudo completar la operación.')
+  if (!response.ok) throw new Error(localizedError(data.error, t('No se pudo completar la operación.', 'Could not complete the operation.')))
   return data
 }
 
@@ -62,7 +86,7 @@ async function downloadAttachment(attachment) {
     })
     if (!response.ok) {
       const data = await response.json().catch(() => ({}))
-      throw new Error(data.error || 'No se pudo descargar el adjunto.')
+      throw new Error(localizedError(data.error, t('No se pudo descargar el adjunto.', 'Could not download the attachment.')))
     }
     const objectUrl = URL.createObjectURL(await response.blob())
     const link = document.createElement('a')
@@ -70,7 +94,7 @@ async function downloadAttachment(attachment) {
     link.download = attachment.name || 'adjunto'
     link.click()
     URL.revokeObjectURL(objectUrl)
-  } catch (downloadError) { error.value = downloadError.message }
+  } catch (downloadError) { error.value = localizedError(downloadError.message, t('No se pudo descargar el adjunto.', 'Could not download the attachment.')) }
 }
 
 async function submitResponse() {
@@ -80,14 +104,17 @@ async function submitResponse() {
   notice.value = ''
   try {
     await request(`/api/app/expert/requests/${selected.value.id}/response`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: responseBody.value }) })
-    notice.value = 'Respuesta enviada a revisión administrativa.'
+    notice.value = t('Respuesta enviada a revisión administrativa.', 'Response submitted for administrative review.')
     close()
     await load()
   } catch (saveError) { error.value = saveError.message } finally { saving.value = false }
 }
 
 function responseLabel(status) {
-  return { none: 'Sin respuesta', draft: 'Borrador', pending_admin_review: 'En revisión', rejected: 'Devuelta', approved: 'Aprobada', sent: 'Enviada' }[status] || status
+  const labels = isEnglish()
+    ? { none: 'No response', draft: 'Draft', pending_admin_review: 'Under review', rejected: 'Returned', approved: 'Approved', sent: 'Sent' }
+    : { none: 'Sin respuesta', draft: 'Borrador', pending_admin_review: 'En revisión', rejected: 'Devuelta', approved: 'Aprobada', sent: 'Enviada' }
+  return labels[status] || status
 }
 
 watch(() => props.openRequestId, (requestId) => {
@@ -101,10 +128,10 @@ onMounted(load)
 
 <template>
   <section class="module-view expert-requests-view">
-    <div class="module-heading"><div><p class="eyebrow">Bandeja de experto</p><h1>Solicitudes asignadas</h1><p>Responde únicamente las preguntas de tu especialidad. Los datos del cliente están protegidos.</p></div><button type="button" class="secondary-button compact" @click="load">↻ Actualizar</button></div>
+    <div class="module-heading"><div><p class="eyebrow">{{ t('Bandeja de experto', 'Expert inbox') }}</p><h1>{{ t('Solicitudes asignadas', 'Assigned requests') }}</h1><p>{{ t('Responde únicamente las preguntas de tu especialidad. Los datos del cliente están protegidos.', 'Answer only questions in your area of expertise. Client data is protected.') }}</p></div><button type="button" class="secondary-button compact" @click="load">↻ {{ t('Actualizar', 'Refresh') }}</button></div>
     <p v-if="notice" class="security-notice">{{ notice }}</p><p v-if="error" class="request-error">{{ error }}</p>
-    <ListView title="Mis solicitudes" description="Casos asignados para revisión y respuesta." :count="pagination.totalItems" :page="pagination.page" :total-pages="pagination.totalPages" :loading="loading" :empty="!items.length && !loading" empty-text="No tienes solicitudes asignadas." @previous="load(page - 1)" @next="load(page + 1)"><template #toolbar><form class="expert-search" @submit.prevent="load(1)"><span>⌕</span><input v-model="search" type="search" placeholder="Buscar por referencia o pregunta..." /><button type="submit">Buscar</button></form></template><template #columns><th>Solicitud</th><th>Consulta</th><th>Pregunta</th><th>Adjuntos</th><th>Respuesta</th><th>Acción</th></template><template #rows><tr v-for="item in items" :key="item.id"><td><strong class="request-id">{{ item.reference }}</strong><br /><span class="muted-cell">{{ new Date(item.createdAt).toLocaleDateString('es-CO') }}</span></td><td><strong>{{ item.consultationType || 'Consulta' }}</strong><br /><span class="muted-cell">{{ item.serviceName || item.serviceType }}</span></td><td class="question-cell">{{ item.question }}</td><td><span class="count-badge">{{ item.attachmentCount }}</span></td><td><span class="security-status" :class="{ inactive: item.responseStatus === 'rejected' }">{{ responseLabel(item.responseStatus) }}</span></td><td><button type="button" class="secondary-button compact" @click="open(item)">Responder</button></td></tr></template></ListView>
-    <div v-if="selected" class="expert-response-backdrop" @click.self="close"><form class="expert-response-panel" @submit.prevent="submitResponse"><div class="panel-heading"><div><p class="eyebrow">{{ selected.reference }}</p><h2>{{ selected.consultationType || 'Solicitud de asesoría' }}</h2><p>{{ selected.serviceName }}</p></div><button type="button" class="secondary-button compact" @click="close">Cerrar</button></div><div class="question-box"><strong>Pregunta del cliente</strong><p>{{ selected.question }}</p><div v-if="selected.attachments?.length" class="attachment-actions"><strong>Imágenes adjuntas</strong><button v-for="attachment in selected.attachments" :key="attachment.id" type="button" class="secondary-button compact" @click="downloadAttachment(attachment)">Descargar {{ attachment.name }}</button></div></div><label>Respuesta para revisión administrativa<textarea v-model="responseBody" rows="9" maxlength="20000" placeholder="Redacta la orientación técnica para que administración la revise..." required></textarea></label><div class="form-actions"><button type="button" class="secondary-button compact" @click="close">Cancelar</button><button type="submit" class="primary-button" :disabled="saving">{{ saving ? 'Enviando…' : 'Enviar a revisión' }} <span>→</span></button></div></form></div>
+    <ListView :locale="locale" :title="t('Mis solicitudes', 'My requests')" :description="t('Casos asignados para revisión y respuesta.', 'Cases assigned for review and response.')" :count="pagination.totalItems" :page="pagination.page" :total-pages="pagination.totalPages" :loading="loading" :empty="!items.length && !loading" :empty-text="t('No tienes solicitudes asignadas.', 'You have no assigned requests.')" @previous="load(page - 1)" @next="load(page + 1)"><template #toolbar><form class="expert-search" @submit.prevent="load(1)"><span>⌕</span><input v-model="search" type="search" :placeholder="t('Buscar por referencia o pregunta...', 'Search by reference or question...')" /><button type="submit">{{ t('Buscar', 'Search') }}</button></form></template><template #columns><th>{{ t('Solicitud', 'Request') }}</th><th>{{ t('Consulta', 'Consultation') }}</th><th>{{ t('Pregunta', 'Question') }}</th><th>{{ t('Adjuntos', 'Attachments') }}</th><th>{{ t('Respuesta', 'Response') }}</th><th>{{ t('Acción', 'Action') }}</th></template><template #rows><tr v-for="item in items" :key="item.id"><td><strong class="request-id">{{ item.reference }}</strong><br /><span class="muted-cell">{{ formatDate(item.createdAt) }}</span></td><td><strong>{{ item.consultationType || t('Consulta', 'Consultation') }}</strong><br /><span class="muted-cell">{{ item.serviceName || item.serviceType }}</span></td><td class="question-cell">{{ item.question }}</td><td><span class="count-badge">{{ item.attachmentCount }}</span></td><td><span class="security-status" :class="{ inactive: item.responseStatus === 'rejected' }">{{ responseLabel(item.responseStatus) }}</span></td><td><button type="button" class="secondary-button compact" @click="open(item)">{{ t('Responder', 'Respond') }}</button></td></tr></template></ListView>
+    <div v-if="selected" class="expert-response-backdrop" @click.self="close"><form class="expert-response-panel" @submit.prevent="submitResponse"><div class="panel-heading"><div><p class="eyebrow">{{ selected.reference }}</p><h2>{{ selected.consultationType || t('Solicitud de asesoría', 'Consultation request') }}</h2><p>{{ selected.serviceName }}</p></div><button type="button" class="secondary-button compact" @click="close">{{ t('Cerrar', 'Close') }}</button></div><div class="question-box"><strong>{{ t('Pregunta del cliente', 'Client question') }}</strong><p>{{ selected.question }}</p><div v-if="selected.attachments?.length" class="attachment-actions"><strong>{{ t('Imágenes adjuntas', 'Attached images') }}</strong><button v-for="attachment in selected.attachments" :key="attachment.id" type="button" class="secondary-button compact" @click="downloadAttachment(attachment)">{{ t('Descargar', 'Download') }} {{ attachment.name }}</button></div></div><label>{{ t('Respuesta para revisión administrativa', 'Response for administrative review') }}<textarea v-model="responseBody" rows="9" maxlength="20000" :placeholder="t('Redacta la orientación técnica para que administración la revise...', 'Write the technical guidance for the administration team to review...')" required></textarea></label><div class="form-actions"><button type="button" class="secondary-button compact" @click="close">{{ t('Cancelar', 'Cancel') }}</button><button type="submit" class="primary-button" :disabled="saving">{{ saving ? t('Enviando…', 'Sending…') : t('Enviar a revisión', 'Submit for review') }} <span>→</span></button></div></form></div>
   </section>
 </template>
 

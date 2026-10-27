@@ -7,6 +7,7 @@ defineProps({
   count: { type: [Number, String], default: null },
   page: { type: Number, default: 1 },
   totalPages: { type: Number, default: 1 },
+  locale: { type: String, default: 'es' },
   loading: { type: Boolean, default: false },
   empty: { type: Boolean, default: false },
   emptyText: { type: String, default: 'No encontramos registros.' },
@@ -38,14 +39,14 @@ onUpdated(syncResponsiveLabels)
   <section ref="listViewRoot" class="list-view panel">
     <header class="list-view-header">
       <div>
-        <div v-if="count !== null" class="list-view-summary"><strong>{{ count }}</strong><span>registros encontrados</span></div>
+        <div v-if="count !== null" class="list-view-summary"><strong>{{ count }}</strong><span>{{ locale === 'en' ? 'records found' : 'registros encontrados' }}</span></div>
         <h2 v-if="title">{{ title }}</h2>
         <p v-if="description">{{ description }}</p>
       </div>
       <div class="list-view-header-actions"><slot name="actions" /></div>
     </header>
     <div v-if="$slots.toolbar" class="list-view-toolbar"><slot name="toolbar" /></div>
-    <div v-if="loading" class="list-view-skeleton" aria-busy="true" aria-label="Cargando listado">
+    <div v-if="loading" class="list-view-skeleton" aria-busy="true" :aria-label="locale === 'en' ? 'Loading list' : 'Cargando listado'">
       <div v-for="row in skeletonRows" :key="row" class="list-view-skeleton-row">
         <span v-for="column in columnCount" :key="column" :class="['skeleton-bar', `skeleton-bar-${column % 3}`]"></span>
       </div>
@@ -60,8 +61,8 @@ onUpdated(syncResponsiveLabels)
       </table>
     </div>
     <footer class="list-view-pagination">
-      <span>Página {{ page }} de {{ totalPages }}</span>
-      <div><button type="button" :disabled="page <= 1 || loading" @click="$emit('previous')">Anterior</button><button type="button" :disabled="page >= totalPages || loading" @click="$emit('next')">Siguiente</button></div>
+      <span>{{ locale === 'en' ? 'Page' : 'Página' }} {{ page }} {{ locale === 'en' ? 'of' : 'de' }} {{ totalPages }}</span>
+      <div><button type="button" :disabled="page <= 1 || loading" @click="$emit('previous')">{{ locale === 'en' ? 'Previous' : 'Anterior' }}</button><button type="button" :disabled="page >= totalPages || loading" @click="$emit('next')">{{ locale === 'en' ? 'Next' : 'Siguiente' }}</button></div>
     </footer>
   </section>
 </template>

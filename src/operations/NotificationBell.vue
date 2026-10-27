@@ -1,7 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { localeTag } from '../lib/locale.js'
 
-const props = defineProps({ token: { type: String, required: true } })
+const props = defineProps({ token: { type: String, required: true }, locale: { type: String, default: 'es' } })
 const emit = defineEmits(['open', 'request-updated'])
 const items = ref([])
 const unreadCount = ref(0)
@@ -20,9 +21,20 @@ let disposed = false
 let notificationsInitialized = false
 const knownNotificationIds = new Set()
 
+const isEnglish = computed(() => props.locale === 'en')
+const t = (es, en) => isEnglish.value ? en : es
 const visibleCount = computed(() => unreadCount.value > 99 ? '99+' : unreadCount.value)
 function emailStatusLabel(status) {
-  return ({ not_sent: 'No aplica', accepted: 'Aceptado por Resend', sent: 'Enviado', delivered: 'Entregado', opened: 'Abierto', failed: 'Fallido', bounced: 'Rebotado', complained: 'Reportado', pending_retry: 'Pendiente de reintento' })[status] || status
+  const labels = isEnglish.value
+    ? { not_sent: 'Not applicable', accepted: 'Accepted by Resend', sent: 'Sent', delivered: 'Delivered', opened: 'Opened', failed: 'Failed', bounced: 'Bounced', complained: 'Reported', pending_retry: 'Retry pending' }
+    : { not_sent: 'No aplica', accepted: 'Aceptado por Resend', sent: 'Enviado', delivered: 'Entregado', opened: 'Abierto', failed: 'Fallido', bounced: 'Rebotado', complained: 'Reportado', pending_retry: 'Pendiente de reintento' }
+  return labels[status] || status
+}
+function formatDate(value) { return new Intl.DateTimeFormat(localeTag(props.locale), { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
+function localizedError(message, fallback) {
+  if (!isEnglish.value) return message || fallback
+  const translations = { 'No se pudieron cargar las notificaciones.': 'Could not load notifications.', 'No se pudo actualizar la notificación.': 'Could not update the notification.', 'Realtime no disponible.': 'Realtime is unavailable.' }
+  return translations[message] || message || fallback
 }
 
 async function load({ before = null, append = false, announce = !before && !append } = {}) {
@@ -33,7 +45,7 @@ async function load({ before = null, append = false, announce = !before && !appe
     if (before) params.set('before', before)
     const response = await fetch(`/api/app/notifications?${params}`, { headers: { Authorization: `Bearer ${props.token}` }, cache: 'no-store' })
     const data = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(data.error || 'No se pudieron cargar las notificaciones.')
+    if (!response.ok) throw new Error(localizedError(data.error, t('No se pudieron cargar las notificaciones.', 'Could not load notifications.')))
     const incoming = data.items || []
     if (!notificationsInitialized) {
       incoming.forEach((item) => knownNotificationIds.add(item.id))
@@ -52,7 +64,7 @@ async function load({ before = null, append = false, announce = !before && !appe
     nextCursor.value = data.nextCursor || null
     error.value = ''
   } catch (loadError) {
-    error.value = loadError.message
+    error.value = localizedError(loadError.message, t('No se pudieron cargar las notificaciones.', 'Could not load notifications.'))
   } finally {
     loading.value = false
   }
@@ -84,7 +96,7 @@ async function connect() {
   try {
     const ticketResponse = await fetch('/api/app/notifications/realtime-ticket', { method: 'POST', headers: { Authorization: `Bearer ${props.token}` } })
     const ticketData = await ticketResponse.json().catch(() => ({}))
-    if (!ticketResponse.ok) throw new Error(ticketData.error || 'Realtime no disponible.')
+    if (!ticketResponse.ok) throw new Error(localizedError(ticketData.error, t('Realtime no disponible.', 'Realtime is unavailable.')))
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     socket = new WebSocket(`${protocol}//${window.location.host}/api/app/notifications/realtime?ticket=${encodeURIComponent(ticketData.ticket)}`)
     socket.onopen = () => { reconnectAttempt = 0; socketState.value = 'online'; emit('request-updated', { requestId: '', eventCode: 'reconnected' }) }
@@ -115,11 +127,11 @@ async function markRead(item) {
     try {
       const response = await fetch(`/api/app/notifications/${encodeURIComponent(item.id)}/read`, { method: 'POST', headers: { Authorization: `Bearer ${props.token}` } })
       const data = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(data.error || 'No se pudo actualizar la notificación.')
+      if (!response.ok) throw new Error(localizedError(data.error, t('No se pudo actualizar la notificación.', 'Could not update the notification.')))
       unreadCount.value = Number(data.unreadCount || 0)
       const index = items.value.findIndex((entry) => entry.id === item.id)
       if (index >= 0) items.value[index] = data.item
-    } catch (readError) { error.value = readError.message; return }
+    } catch (readError) { error.value = localizedError(readError.message, t('No se pudo actualizar la notificación.', 'Could not update the notification.')); return }
   }
   open.value = false
   emit('open', item)
@@ -151,27 +163,27 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="notification-bell">
-    <button class="bell-trigger" type="button" aria-label="Notificaciones" :aria-expanded="open" @click="open = !open; open && load()">
+    <button class="bell-trigger" type="button" :aria-label="t('Notificaciones', 'Notifications')" :aria-expanded="open" @click="open = !open; open && load()">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
       <span v-if="unreadCount" class="bell-count">{{ visibleCount }}</span>
-      <span class="connection-dot" :class="socketState" :aria-label="socketState === 'online' ? 'Conectada' : 'Reconectando'" />
+      <span class="connection-dot" :class="socketState" :aria-label="socketState === 'online' ? t('Conectada', 'Connected') : t('Reconectando', 'Reconnecting')" />
     </button>
-    <section v-if="open" class="notification-popover" aria-label="Bandeja de notificaciones">
-      <header><div><strong>Notificaciones</strong><small>{{ unreadCount }} sin leer</small></div><button type="button" @click="load">Actualizar</button></header>
+    <section v-if="open" class="notification-popover" :aria-label="t('Bandeja de notificaciones', 'Notification inbox')">
+      <header><div><strong>{{ t('Notificaciones', 'Notifications') }}</strong><small>{{ t(`${unreadCount} sin leer`, `${unreadCount} unread`) }}</small></div><button type="button" @click="load">{{ t('Actualizar', 'Refresh') }}</button></header>
       <p v-if="error" class="notification-error" role="alert">{{ error }}</p>
-      <div v-if="loading && !items.length" class="notification-empty">Cargando…</div>
-      <div v-else-if="!items.length" class="notification-empty">No tienes notificaciones.</div>
+      <div v-if="loading && !items.length" class="notification-empty">{{ t('Cargando…', 'Loading…') }}</div>
+      <div v-else-if="!items.length" class="notification-empty">{{ t('No tienes notificaciones.', 'You have no notifications.') }}</div>
       <button v-for="item in items" :key="item.id" type="button" class="notification-item" :class="{ unread: !item.readAt }" @click="markRead(item)">
-        <span class="notification-copy"><strong>{{ item.title }}</strong><span>{{ item.message }}</span><small>{{ new Date(item.createdAt).toLocaleString('es-CO') }} · Correo: {{ emailStatusLabel(item.emailStatus) }}</small></span>
-        <i v-if="!item.readAt" aria-label="Sin leer" />
+        <span class="notification-copy"><strong>{{ item.title }}</strong><span>{{ item.message }}</span><small>{{ formatDate(item.createdAt) }} · {{ t('Correo:', 'Email:') }} {{ emailStatusLabel(item.emailStatus) }}</small></span>
+        <i v-if="!item.readAt" :aria-label="t('Sin leer', 'Unread')" />
       </button>
-      <button v-if="nextCursor" class="notification-more" type="button" :disabled="loading" @click="loadMore">{{ loading ? 'Cargando…' : 'Cargar anteriores' }}</button>
+      <button v-if="nextCursor" class="notification-more" type="button" :disabled="loading" @click="loadMore">{{ loading ? t('Cargando…', 'Loading…') : t('Cargar anteriores', 'Load earlier') }}</button>
     </section>
     <Transition name="notification-toast">
       <div v-if="toastNotification" class="notification-toast" role="status" aria-live="polite">
         <span class="notification-toast-icon" aria-hidden="true">♢</span>
-        <button class="notification-toast-content" type="button" @click="openToast"><strong>{{ toastNotification.title }}</strong><span>{{ toastNotification.message }}</span><small>Ver solicitud</small></button>
-        <button class="notification-toast-close" type="button" aria-label="Cerrar aviso" @click="dismissToast">×</button>
+        <button class="notification-toast-content" type="button" @click="openToast"><strong>{{ toastNotification.title }}</strong><span>{{ toastNotification.message }}</span><small>{{ t('Ver solicitud', 'View request') }}</small></button>
+        <button class="notification-toast-close" type="button" :aria-label="t('Cerrar aviso', 'Dismiss notification')" @click="dismissToast">×</button>
       </div>
     </Transition>
   </div>

@@ -48,6 +48,23 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - Seguridad basada únicamente en ocultar menús.
 - Confirmación de pago basada solo en el retorno del navegador.
 
+## Requisito transversal: español e inglés
+
+La landing ya tiene contenido editorial en español e inglés, metadatos localizados y selector de idioma. Esto no significa que toda la aplicación esté traducida: los módulos operativos y el portal de clientes siguen principalmente en español. La internacionalización debe completar el producto sin cambiar el contenido ni el funcionamiento de la landing existente.
+
+- [x] Usar español (`es`) como idioma predeterminado y ofrecer un selector visible español/inglés en la landing, el acceso público, el portal de clientes y la aplicación operativa.
+- [x] Mantener la elección del visitante entre páginas y sesiones, con una opción clara para volver al idioma predeterminado.
+- [ ] Centralizar las traducciones de interfaz en recursos por idioma; evitar textos de interfaz duplicados o traducciones automáticas en componentes.
+- [ ] Traducir navegación, botones, formularios, validaciones, estados, filtros, paginación, mensajes de error/vacío/carga, diálogos y notificaciones de la interfaz.
+- [x] Localizar correos transaccionales por idioma preferido del cliente; cuando no exista preferencia guardada, usar el idioma seleccionado al crear la solicitud y recurrir a español si falta traducción.
+- [x] Mantener en el idioma original los textos escritos por clientes, expertos y agentes; no traducir contenido del usuario ni valores legales o financieros almacenados.
+- [x] Formatear fechas, números y moneda según el idioma y la región, sin alterar importes ni cálculos de pago.
+- [x] Actualizar idioma del documento (`lang`) en las vistas que exponen selector; conservar `hreflang` y SEO bilingüe de la landing.
+- [ ] Revisar diseño responsivo y accesibilidad con textos en ambos idiomas; ninguna traducción debe truncar controles o cambiar el sentido de una confirmación sensible.
+- [ ] Verificar el flujo en ambos idiomas: landing, formulario, pago/retorno, portal cliente, panel operativo, correos y notificaciones.
+
+Estado de implementación (2026-10-26): se añadió selector persistente `ES/EN`, localización de las vistas públicas, portal de clientes y paneles operativos principales, formato localizado en fechas y moneda, y preferencia de idioma por solicitud para correos al cliente. La migración `042_request_preferred_locale.sql` debe aplicarse al entorno dev antes de desplegar esta versión. La traducción todavía no está centralizada en catálogos de recursos y falta completar una revisión de cobertura visual/copy y verificar los recorridos completos en ambos idiomas; esos puntos siguen abiertos.
+
 ## Plan de trabajo priorizado
 
 ### Fase 1: identidad, autorización y administración base
@@ -120,6 +137,7 @@ La landing no se migra, no comparte tablas operativas y no comparte usuarios adm
 - [ ] Añadir auditoría de accesos, permisos, estados, pagos, documentos y configuraciones.
 - [ ] Crear migraciones Neon versionadas para identidad, autorización, solicitudes, pagos, documentos y notificaciones.
 - [ ] Crear pruebas integrales de autenticación, autorización, solicitudes multifuente, pagos condicionales y webhooks repetidos.
+- [ ] Completar la internacionalización español/inglés descrita en el requisito transversal y validar que la landing siga funcionando sin regresiones.
 - [x] Configurar secretos independientes de dev, incluyendo `MP_ACCESS_TOKEN`, `NEON_DATABASE_URL` y credenciales de Resend.
 - [x] Probar en dev con Neon dev, Mercado Pago sandbox, retorno aprobado y visualización del pago en el panel.
 - [ ] Desplegar producción únicamente mediante Pull Request aprobado hacia `main`.

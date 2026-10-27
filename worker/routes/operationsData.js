@@ -357,7 +357,7 @@ async function getRequestDetail(sql, requestId, claims) {
       ORDER BY r.created_at DESC
     `,
     sql`
-      SELECT er.id, er.version, er.body, er.status, er.admin_note, er.created_at, er.updated_at,
+      SELECT er.id, er.version, er.body, er.status, er.admin_note, er.internal_note, er.created_at, er.updated_at,
         er.reviewed_at, er.sent_at, er.response_origin, COALESCE(u.full_name, 'Administración') AS expert_name
       FROM operations.expert_responses er
       LEFT JOIN operations.users u ON u.id = er.expert_id
@@ -395,7 +395,7 @@ async function getRequestDetail(sql, requestId, claims) {
   return response({
     request: serializeRequestDetail(requestRows[0]),
     history: historyRows.map(serializeRequestHistory),
-    responses: responseRows.map((row) => serializeRequestResponse(row, isAdmin || ['approved', 'sent'].includes(String(row.status)))),
+    responses: responseRows.map((row) => serializeRequestResponse(row, isAdmin || ['approved', 'sent'].includes(String(row.status)), isAdmin)),
     assignment: { expertId: requestRows[0].assigned_expert_id ? String(requestRows[0].assigned_expert_id) : null, expertName: requestRows[0].assigned_expert_name ? String(requestRows[0].assigned_expert_name) : '', history: assignmentHistory.map((row) => ({ id: String(row.id), expertId: row.expert_id ? String(row.expert_id) : null, expertName: row.expert_name ? String(row.expert_name) : '', status: String(row.status), strategy: String(row.strategy), candidateCount: Number(row.candidate_count), reason: row.reason ? String(row.reason) : '', assignedAt: String(row.assigned_at) })) },
     eligibleExperts: eligibleExperts.map((row) => ({ id: String(row.id), name: String(row.full_name) })),
     paymentDiagnostic: paymentDiagnosticRows[0] ? {
@@ -681,13 +681,14 @@ function serializeRequestHistory(row) {
   }
 }
 
-function serializeRequestResponse(row, canViewBody) {
+function serializeRequestResponse(row, canViewBody, canViewInternalNote = false) {
   return {
     id: String(row.id),
     version: Number(row.version),
     body: canViewBody ? String(row.body) : '',
     status: String(row.status),
-    adminNote: canViewBody && row.admin_note ? String(row.admin_note) : '',
+    publicNote: canViewBody && row.admin_note ? String(row.admin_note) : '',
+    internalNote: canViewInternalNote && row.internal_note ? String(row.internal_note) : '',
     expertName: row.response_origin === 'reused_answer' ? 'Administración (respuesta reutilizada)' : String(row.expert_name),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),

@@ -7,7 +7,11 @@ const props = defineProps({
   token: { type: String, required: true },
   user: { type: Object, required: true },
   section: { type: String, default: 'catalog' },
+  locale: { type: String, default: 'es' },
 })
+
+const isEnglish = computed(() => props.locale === 'en')
+const t = (es, en) => isEnglish.value ? en : es
 
 const loading = ref(true)
 const saving = ref(false)
@@ -34,7 +38,7 @@ const consultationOptions = computed(() => catalog.value.services.flatMap((servi
 async function request(url, options = {}) {
   const response = await fetch(url, { ...options, headers: { Authorization: `Bearer ${props.token}`, ...(options.headers || {}) } })
   const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.error || 'No se pudo completar la operación.')
+  if (!response.ok) throw new Error(t('No se pudo completar la operación. Inténtalo de nuevo.', 'The operation could not be completed. Please try again.'))
   return data
 }
 
@@ -61,7 +65,7 @@ async function createLink() {
   try {
     const data = await request('/api/app/agent-links', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...newLink.value, ...(canManageCatalog.value && selectedAgentId.value ? { agentId: selectedAgentId.value } : {}) }) })
     createdLink.value = data.link
-    notice.value = 'Enlace creado. Cópialo y compártelo con tus clientes.'
+    notice.value = t('Enlace creado. Cópialo y compártelo con tus clientes.', 'Link created. Copy and share it with your clients.')
     linkFormOpen.value = false
     newLink.value = { label: 'Enlace principal' }
     selectedAgentId.value = ''
@@ -85,9 +89,9 @@ function searchLinks() {
 }
 
 async function revokeLink(link) {
-  if (!window.confirm(`¿Revocar el enlace ${link.label}? Los clientes ya no podrán usarlo.`)) return
+  if (!window.confirm(t(`¿Revocar el enlace ${link.label}? Los clientes ya no podrán usarlo.`, `Revoke the link ${link.label}? Clients will no longer be able to use it.`))) return
   saving.value = true
-  try { await request(`/api/app/agent-links/${link.id}`, { method: 'DELETE' }); notice.value = 'Enlace revocado correctamente.'; await load() } catch (revokeError) { error.value = revokeError.message } finally { saving.value = false }
+  try { await request(`/api/app/agent-links/${link.id}`, { method: 'DELETE' }); notice.value = t('Enlace revocado correctamente.', 'Link revoked successfully.'); await load() } catch (revokeError) { error.value = revokeError.message } finally { saving.value = false }
 }
 
 function editConsultation(item) {
@@ -117,7 +121,7 @@ async function saveConsultation() {
   try {
     const url = editingConsultationId.value ? `/api/app/catalog/consultation-types/${editingConsultationId.value}` : '/api/app/catalog/consultation-types'
     await request(url, { method: editingConsultationId.value ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(consultationForm.value) })
-    notice.value = 'Tipo de consulta guardado correctamente.'
+    notice.value = t('Tipo de consulta guardado correctamente.', 'Consultation type saved successfully.')
     resetConsultation()
     await load()
   } catch (saveError) {
@@ -130,30 +134,30 @@ async function saveConsultation() {
 async function copyLink() {
   if (!createdLink.value) return
   await navigator.clipboard.writeText(`${origin}${createdLink.value.path}`)
-  notice.value = 'Enlace copiado al portapapeles.'
+  notice.value = t('Enlace copiado al portapapeles.', 'Link copied to clipboard.')
 }
 
 function money(amountCents, currency) {
-  return new Intl.NumberFormat('es-CO', { style: 'currency', currency, maximumFractionDigits: 0 }).format(Number(amountCents || 0) / 100)
+  return new Intl.NumberFormat(isEnglish.value ? 'en-US' : 'es-CO', { style: 'currency', currency, maximumFractionDigits: 0 }).format(Number(amountCents || 0) / 100)
 }
 
 onMounted(load)
 </script>
 
 <template>
-  <ConsultationCatalogPanel v-if="showCatalog" :token="token" />
+  <ConsultationCatalogPanel v-if="showCatalog" :token="token" :locale="locale" />
   <section v-else class="module-view catalog-view">
-    <div class="module-heading"><div><p class="eyebrow">Configuración operativa</p><h1>{{ showCatalog ? 'Servicios y consultas' : 'Enlaces de agentes' }}</h1><p>{{ showCatalog ? 'Configura la oferta, los precios y los expertos que responden cada consulta.' : 'Crea y comparte enlaces para identificar las solicitudes de cada agente.' }}</p></div><div class="module-heading-actions"><button v-if="showCatalog" type="button" class="primary-button compact" @click="openNewConsultation">+ Nueva consulta</button><button type="button" class="secondary-button compact" @click="load">↻ Actualizar</button></div></div>
+    <div class="module-heading"><div><p class="eyebrow">{{ t('Configuración operativa', 'Operations settings') }}</p><h1>{{ showCatalog ? t('Servicios y consultas', 'Services and consultations') : t('Enlaces de agentes', 'Agent links') }}</h1><p>{{ showCatalog ? t('Configura la oferta, los precios y los expertos que responden cada consulta.', 'Configure the offer, prices, and experts who answer each consultation.') : t('Crea y comparte enlaces para identificar las solicitudes de cada agente.', 'Create and share links to identify requests from each agent.') }}</p></div><div class="module-heading-actions"><button v-if="showCatalog" type="button" class="primary-button compact" @click="openNewConsultation">+ {{ t('Nueva consulta', 'New consultation') }}</button><button type="button" class="secondary-button compact" @click="load">↻ {{ t('Actualizar', 'Refresh') }}</button></div></div>
     <p v-if="notice" class="security-notice">{{ notice }}</p><p v-if="error" class="request-error">{{ error }}</p>
-    <div v-if="loading" class="module-state panel">Cargando configuración…</div>
+    <div v-if="loading" class="module-state panel">{{ t('Cargando configuración…', 'Loading settings…') }}</div>
     <template v-else>
-      <ConsultationCatalogPanel v-if="showCatalog" :token="token" />
+      <ConsultationCatalogPanel v-if="showCatalog" :token="token" :locale="locale" />
       <div v-if="false && showCatalog" class="catalog-grid">
         <article class="panel catalog-card consultation-editor"><div class="panel-heading"><div><h2>{{ editingConsultationId ? 'Editar tipo de consulta' : 'Nuevo tipo de consulta' }}</h2><p>Define precio y expertos disponibles para responder.</p></div><span class="metric-icon tone-violet">CO</span></div><form class="consultation-form" @submit.prevent="saveConsultation"><label>Código<input v-model="consultationForm.code" :disabled="Boolean(editingConsultationId)" pattern="[a-z][a-z0-9_-]{2,50}" placeholder="consulta_basica" required /></label><label>Servicio general<select v-model="consultationForm.serviceCode" required><option value="" disabled>Selecciona un servicio</option><option v-for="service in catalog.services" :key="service.id" :value="service.code">{{ service.name }}</option></select></label><label>Nombre<input v-model="consultationForm.name" required placeholder="Consulta básica" /></label><label>Precio<input v-model.number="consultationForm.amountCents" type="number" min="0" step="1" required /></label><label>Moneda<select v-model="consultationForm.currency"><option value="USD">USD</option><option value="COP">COP</option></select></label><label class="full-label">Descripción<textarea v-model="consultationForm.description" rows="3" required placeholder="Describe qué incluye la consulta."></textarea></label><fieldset class="expert-picker"><legend>Expertos asociados</legend><label v-for="expert in catalog.allExperts" :key="expert.id" class="expert-option"><input v-model="consultationForm.expertIds" type="checkbox" :value="expert.id" /><span>{{ expert.name }}<small>{{ expert.email }}</small></span></label><small v-if="!catalog.allExperts?.length" class="empty-inline">Primero crea usuarios con rol Experto.</small></fieldset><div class="consultation-actions"><button type="button" class="secondary-button compact" @click="resetConsultation">Limpiar</button><button type="submit" class="primary-button" :disabled="saving">{{ saving ? 'Guardando…' : 'Guardar consulta' }} <span>→</span></button></div></form></article>
         <article class="panel catalog-card"><div class="panel-heading"><div><h2>Servicios generales</h2><p>Clasificación principal de la operación aduanera.</p></div><span class="metric-icon tone-blue">$</span></div><div v-for="service in catalog.services" :key="service.id" class="catalog-service"><div><strong>{{ service.name }}</strong><span>{{ service.description || 'Sin descripción' }}</span></div><span :class="['security-status', { inactive: !service.active }]">{{ service.active ? 'Activo' : 'Inactivo' }}</span><div v-for="item in service.consultations" :key="item.id" class="catalog-specialty"><span>{{ item.consultationName }}</span><strong>{{ money(item.amountCents, item.currency) }}</strong></div></div><p v-if="!catalog.services.length" class="empty-row">No hay servicios configurados.</p></article>
         <article class="panel catalog-card"><div class="panel-heading"><div><h2>Tipos de consulta</h2><p>Haz clic en una consulta para editar su precio y expertos.</p></div><span class="metric-icon tone-violet">EX</span></div><button v-for="consultation in catalog.consultationTypes" :key="consultation.id" type="button" class="catalog-specialty-row catalog-specialty-button" @click="editConsultation(consultation)"><span><strong>{{ consultation.name }}</strong><small>{{ consultation.description || 'Sin descripción' }}</small></span><span class="count-badge">{{ catalog.experts.filter((expert) => expert.consultationTypeId === consultation.id).length }} expertos</span></button><p v-if="!catalog.consultationTypes?.length" class="empty-row">No hay tipos de consulta configurados.</p></article>
       </div>
-      <ListView v-if="showLinks" title="Enlaces de agentes" description="Cada enlace identifica el origen del cliente y conserva la atribución al agente." :count="linkPagination.totalItems" :page="linkPagination.page" :total-pages="linkPagination.totalPages" :empty="!links.length" empty-text="Aún no hay enlaces creados." @previous="changeLinkPage(linkPagination.page - 1)" @next="changeLinkPage(linkPagination.page + 1)"><template #actions><button type="button" class="primary-button compact" @click="linkFormOpen = !linkFormOpen">+ Crear enlace</button></template><template #toolbar><form v-if="linkFormOpen" class="link-form" @submit.prevent="createLink"><label v-if="canManageCatalog">Agente<select v-model="selectedAgentId" required><option value="" disabled>Selecciona un agente</option><option v-for="agent in catalog.agents" :key="agent.id" :value="agent.id">{{ agent.name }} · {{ agent.email }}</option></select></label><label>Nombre del enlace<input v-model="newLink.label" type="text" maxlength="80" required /></label><button type="submit" class="primary-button" :disabled="saving">{{ saving ? 'Creando…' : 'Guardar enlace' }} <span>→</span></button></form><form class="module-search" @submit.prevent="searchLinks"><span>⌕</span><input v-model="linkSearch" type="search" placeholder="Buscar por enlace o agente..." /><button type="submit">Buscar</button></form><div v-if="createdLink" class="created-link"><div><strong>{{ createdLink.label }}</strong><span>{{ origin }}{{ createdLink.path }}</span></div><button type="button" class="secondary-button compact" @click="copyLink">Copiar enlace</button></div></template><template #columns><th>Enlace</th><th>Agente</th><th>Estado</th><th>Creado</th><th>Acciones</th></template><template #rows><tr v-for="link in links" :key="link.id"><td><strong>{{ link.label }}</strong></td><td>{{ link.agentName }}<br /><span class="muted-cell">{{ link.agentEmail }}</span></td><td><span :class="['security-status', { inactive: !link.active }]">{{ link.active ? 'Activo' : 'Revocado' }}</span></td><td>{{ new Date(link.createdAt).toLocaleDateString('es-CO') }}</td><td><button v-if="link.active" type="button" class="danger-link" @click="revokeLink(link)">Revocar</button></td></tr></template></ListView>
+      <ListView v-if="showLinks" :locale="locale" :title="t('Enlaces de agentes', 'Agent links')" :description="t('Cada enlace identifica el origen del cliente y conserva la atribución al agente.', 'Each link identifies the client source and preserves agent attribution.')" :count="linkPagination.totalItems" :page="linkPagination.page" :total-pages="linkPagination.totalPages" :empty="!links.length" :empty-text="t('Aún no hay enlaces creados.', 'No links have been created yet.')" @previous="changeLinkPage(linkPagination.page - 1)" @next="changeLinkPage(linkPagination.page + 1)"><template #actions><button type="button" class="primary-button compact" @click="linkFormOpen = !linkFormOpen">+ {{ t('Crear enlace', 'Create link') }}</button></template><template #toolbar><form v-if="linkFormOpen" class="link-form" @submit.prevent="createLink"><label v-if="canManageCatalog">{{ t('Agente', 'Agent') }}<select v-model="selectedAgentId" required><option value="" disabled>{{ t('Selecciona un agente', 'Select an agent') }}</option><option v-for="agent in catalog.agents" :key="agent.id" :value="agent.id">{{ agent.name }} · {{ agent.email }}</option></select></label><label>{{ t('Nombre del enlace', 'Link name') }}<input v-model="newLink.label" type="text" maxlength="80" required /></label><button type="submit" class="primary-button" :disabled="saving">{{ saving ? t('Creando…', 'Creating…') : t('Guardar enlace', 'Save link') }} <span>→</span></button></form><form class="module-search" @submit.prevent="searchLinks"><span>⌕</span><input v-model="linkSearch" type="search" :placeholder="t('Buscar por enlace o agente...', 'Search by link or agent...')" /><button type="submit">{{ t('Buscar', 'Search') }}</button></form><div v-if="createdLink" class="created-link"><div><strong>{{ createdLink.label }}</strong><span>{{ origin }}{{ createdLink.path }}</span></div><button type="button" class="secondary-button compact" @click="copyLink">{{ t('Copiar enlace', 'Copy link') }}</button></div></template><template #columns><th>{{ t('Enlace', 'Link') }}</th><th>{{ t('Agente', 'Agent') }}</th><th>{{ t('Estado', 'Status') }}</th><th>{{ t('Creado', 'Created') }}</th><th>{{ t('Acciones', 'Actions') }}</th></template><template #rows><tr v-for="link in links" :key="link.id"><td><strong>{{ link.label }}</strong></td><td>{{ link.agentName }}<br /><span class="muted-cell">{{ link.agentEmail }}</span></td><td><span :class="['security-status', { inactive: !link.active }]">{{ link.active ? t('Activo', 'Active') : t('Revocado', 'Revoked') }}</span></td><td>{{ new Date(link.createdAt).toLocaleDateString(isEnglish ? 'en-US' : 'es-CO') }}</td><td><button v-if="link.active" type="button" class="danger-link" @click="revokeLink(link)">{{ t('Revocar', 'Revoke') }}</button></td></tr></template></ListView>
     </template>
   </section>
 </template>
