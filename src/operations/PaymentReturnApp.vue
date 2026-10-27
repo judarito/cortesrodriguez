@@ -13,6 +13,10 @@ function tr(es, en) { return locale.value === 'en' ? en : es }
 const state = ref('checking')
 const reference = ref('')
 const verificationMessage = ref('')
+const pendingPaymentMessage = () => tr(
+  'Mercado Pago todavía no confirma el resultado. Si ya ves el cobro, no vuelvas a pagar; guarda tu código de seguimiento y vuelve a consultar en unos minutos.',
+  'Mercado Pago has not confirmed the result yet. If you can see the charge, do not pay again; keep your tracking code and check again in a few minutes.',
+)
 
 const content = computed(() => ({
   checking: {
@@ -46,21 +50,31 @@ onMounted(async () => {
       return
     }
 
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000)
     try {
       const response = await fetch('/api/public/payments/verify', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ paymentId, reference: reference.value }),
+        signal: controller.signal,
       })
       const result = await response.json().catch(() => ({}))
       if (response.ok && result.reference) reference.value = result.reference
       if (response.ok && result.status === 'approved') state.value = 'approved'
       else if (response.ok && ['rejected', 'cancelled', 'refunded', 'charged_back'].includes(result.status)) state.value = 'failed'
-      else state.value = 'pending'
-      if (!response.ok) verificationMessage.value = tr('La confirmación puede tardar unos minutos.', 'Confirmation may take a few minutes.')
+      else {
+        state.value = 'pending'
+        verificationMessage.value = pendingPaymentMessage()
+      }
     } catch {
       state.value = 'pending'
-      verificationMessage.value = tr('La confirmación puede tardar unos minutos.', 'Confirmation may take a few minutes.')
+      verificationMessage.value = tr(
+        'La verificación está tardando más de lo esperado. Si ya ves el cobro, no vuelvas a pagar; guarda tu código de seguimiento y vuelve a consultar en unos minutos.',
+        'Verification is taking longer than expected. If you can see the charge, do not pay again; keep your tracking code and check again in a few minutes.',
+      )
+    } finally {
+      window.clearTimeout(timeoutId)
     }
     return
   }

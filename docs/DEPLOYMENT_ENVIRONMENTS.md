@@ -73,6 +73,19 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - No guardar tokens en el repositorio ni documentar su valor; usar `wrangler secret`.
 - `MP_WEBHOOK_SECRET` debe contener la firma secreta configurada para el webhook sandbox; no es el Access Token.
 
+### Acceso operativo y retorno de Mercado Pago
+
+- El inicio de sesión de la plataforma operativa valida usuarios y contraseñas contra `operations.users` y `operations.user_credentials` en Neon. Los secretos heredados `ADMIN_EMAIL` y `ADMIN_PASSWORD` no son las credenciales de acceso de este flujo; `ADMIN_EMAIL` sigue siendo usado por el script explícito de seed, por lo que no se debe ejecutar ese script para recuperar una cuenta sin revisar antes el correo configurado.
+- Si cambia el correo de un administrador, debe iniciar sesión con el correo vigente en `operations.users`; la contraseña se conserva mientras no se restablezca explícitamente.
+- La pantalla `/solicitud/resultado-pago` limita a 15 segundos la verificación iniciada por el navegador. Si Mercado Pago o la base de datos tardan, muestra el pago como pendiente de confirmación y aconseja no pagar de nuevo si el cliente ya ve el cargo. La confirmación del webhook y la conciliación administrativa siguen siendo las fuentes para actualizar el estado.
+
+#### Ajuste de retorno de pago en Dev (2026-10-27)
+
+- La verificación iniciada desde el navegador se cancela a los 15 segundos y pasa a un mensaje de confirmación pendiente con la instrucción explícita de no pagar de nuevo si el cargo ya aparece.
+- Diagnóstico de acceso: el usuario administrador actual de Neon Dev está activo y conserva credencial; el correo del login es el que figura en `operations.users`. `.env.dev` aún contiene un correo anterior en `ADMIN_EMAIL`, variable que el login operativo no consulta.
+- Publicado en `cortes-rodriguez-asesores-dev`, versión `e635d8f3-96eb-40d2-bf95-4db03f51a7f5`. Verificación HTTP: retorno de pago 200; ruta de login accesible (400 ante cuerpo vacío, sin intento de contraseña); verificación de pago configurada (400 ante datos vacíos, sin consultar una transacción). Build y `git diff --check` aprobados.
+- No se modificó producción, `main`, credenciales ni estado de pagos.
+
 ### Portal de clientes — despliegue y estado actual en dev (2026-10-25)
 
 - Se inició el detalle autenticado de solicitudes, el historial de pago y el inicio/reanudación del checkout sobre la solicitud existente.
