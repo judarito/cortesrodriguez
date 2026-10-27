@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getInitialLocale, localeTag, persistLocale } from '../lib/locale.js'
 import LanguageToggle from '../shared/components/LanguageToggle.vue'
+import MercadoPagoPaymentBrick from './components/MercadoPagoPaymentBrick.vue'
 import logoUrl from '../assets/logo-cortes-rodriguez.png'
 
 const locale = ref('es')
@@ -91,6 +92,8 @@ const paymentNotice = ref('')
 const paymentRequired = ref(false)
 const paymentAttemptKey = ref('')
 const pendingPayment = ref(null)
+const checkoutMode = ref('pro')
+const pendingBrickIntent = ref(null)
 const paymentRedirecting = ref(false)
 const requestIdempotencyKey = ref('')
 const requestPayloadSignature = ref('')
@@ -106,6 +109,15 @@ function formatPrice(item) { return new Intl.NumberFormat(localeTag(locale.value
 
 onMounted(async () => {
   setLocale(getInitialLocale())
+  try {
+    const featureResponse = await fetch('/api/public/features', { cache: 'no-store' })
+    if (featureResponse.ok) {
+      const features = await featureResponse.json().catch(() => ({}))
+      if (features.checkoutMode === 'bricks') checkoutMode.value = 'bricks'
+    }
+  } catch {
+    // Checkout Pro remains the safe default when feature configuration is unavailable.
+  }
   const query = new URLSearchParams(window.location.search)
   const paymentStatus = query.get('payment')
   if (paymentStatus === 'success') {
@@ -345,6 +357,34 @@ async function requestPaymentPreference() {
   loading.value = true
   error.value = ''
   try {
+    if (checkoutMode.value === 'bricks') {
+      const response = await fetch('/api/public/payments/bricks/intent', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          reference: reference.value,
+          idempotencyKey: paymentAttemptKey.value,
+          submissionToken: requestIdempotencyKey.value,
+          locale: locale.value === 'en' ? 'en-US' : 'es-CO',
+        }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(localizedError(data.error || tr('No fue posible iniciar el pago integrado.', 'Could not start the integrated payment.')))
+      if (
+        typeof data.attemptId !== 'string' || !data.attemptId ||
+        typeof data.publicKey !== 'string' || !data.publicKey ||
+        !Number.isSafeInteger(data.amountCents) || data.amountCents <= 0 ||
+        !Number.isSafeInteger(data.usdAmountCents) || data.usdAmountCents <= 0 ||
+        !Number.isFinite(data.trm) || data.trm <= 0 ||
+        typeof data.trmDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.trmDate) ||
+        data.currency !== 'COP' || !['es-CO', 'en-US'].includes(data.locale)
+      ) throw new Error(tr('La configuración del pago integrado no es válida. Contacta a soporte.', 'The integrated payment configuration is invalid. Contact support.'))
+      pendingBrickIntent.value = { ...data, processIdempotencyKey: crypto.randomUUID() }
+      pendingPayment.value = null
+      return
+    }
+
+    // Keep the current Checkout Pro request and response contract unchanged.
     const response = await fetch('/api/public/payments/preference', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -358,6 +398,43 @@ async function requestPaymentPreference() {
   } finally {
     loading.value = false
   }
+}
+
+function handleBrickProcessed(result) {
+  const status = String(result?.status || '').toLowerCase()
+  if (status === 'approved') {
+    paymentNotice.value = tr('Pago aprobado para la solicitud', 'Payment approved for request') + ` ${reference.value}.`
+  } else if (status === 'pending' || status === 'in_process' || status === 'in_mediation') {
+    paymentNotice.value = tr('Pago recibido y pendiente de confirmación. Actualizaremos el estado cuando Mercado Pago lo confirme.', 'Payment received and awaiting confirmation. We will update the status when Mercado Pago confirms it.')
+  }
+}
+
+async function processBrickPayment(submission) {
+  try {
+    const response = await fetch('/api/public/payments/bricks/process', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        attemptId: submission.attemptId,
+        idempotencyKey: submission.idempotencyKey,
+        ...submission.payload,
+      }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || typeof data.status !== 'string') {
+      throw new Error(localizedError(data.error || tr('No fue posible procesar el pago. Puedes volver a intentarlo.', 'Could not process the payment. You can try again.')))
+    }
+    submission.complete(data)
+    handleBrickProcessed(data)
+  } catch (paymentError) {
+    submission.fail(localizedError(paymentError.message || tr('No fue posible procesar el pago. Puedes volver a intentarlo.', 'Could not process the payment. You can try again.')))
+  }
+}
+
+async function retryBrickPayment() {
+  pendingBrickIntent.value = null
+  paymentAttemptKey.value = crypto.randomUUID()
+  await requestPaymentPreference()
 }
 
 function continueToPayment() {
@@ -390,10 +467,14 @@ function goToLanding() {
         <section v-if="reference && paymentRequired" class="payment-review" aria-live="polite">
           <p class="form-step">{{ tr('Solicitud registrada', 'Request submitted') }}</p><h2>{{ tr('Revisa el valor antes de pagar', 'Review the amount before paying') }}</h2>
           <dl v-if="pendingPayment" class="payment-summary"><div><dt>{{ tr('Solicitud', 'Request') }}</dt><dd>{{ reference }}</dd></div><div><dt>{{ tr('Valor del servicio', 'Service amount') }}</dt><dd>{{ (pendingPayment.usdAmountCents / 100).toFixed(2) }} USD</dd></div><div><dt>{{ tr('Tasa de conversión (TRM)', 'Exchange rate') }}</dt><dd>{{ Number(pendingPayment.trm).toLocaleString(localeTag(locale), { maximumFractionDigits: 4 }) }} COP/USD · {{ pendingPayment.trmDate }}</dd></div><div class="payment-total"><dt>{{ tr('Total en Mercado Pago', 'Total in Mercado Pago') }}</dt><dd>{{ (pendingPayment.copAmountCents / 100).toLocaleString(localeTag(locale)) }} COP</dd></div></dl>
+          <dl v-else-if="pendingBrickIntent" class="payment-summary"><div><dt>{{ tr('Solicitud', 'Request') }}</dt><dd>{{ reference }}</dd></div><div><dt>{{ tr('Precio del servicio', 'Service price') }}</dt><dd>{{ (pendingBrickIntent.usdAmountCents / 100).toLocaleString(localeTag(locale), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} USD</dd></div><div><dt>{{ tr('Tasa de conversión (TRM)', 'Exchange rate') }}</dt><dd>{{ Number(pendingBrickIntent.trm).toLocaleString(localeTag(locale), { maximumFractionDigits: 4 }) }} COP/USD · {{ pendingBrickIntent.trmDate }}</dd></div><div class="payment-total"><dt>{{ tr('Total a pagar en Mercado Pago', 'Total due in Mercado Pago') }}</dt><dd>{{ (pendingBrickIntent.amountCents / 100).toLocaleString(localeTag(locale)) }} COP</dd></div></dl>
+          <p v-if="pendingBrickIntent" class="payment-currency-note">{{ tr('El precio del servicio está en dólares (USD). Mercado Pago y tu entidad financiera procesarán el cobro en pesos colombianos (COP), con la conversión indicada arriba.', 'The service price is in US dollars (USD). Mercado Pago and your financial institution will process the charge in Colombian pesos (COP), using the conversion shown above.') }}</p>
           <p v-else-if="loading" class="field-help">{{ tr('Calculando el valor en pesos colombianos…', 'Calculating the amount in Colombian pesos…') }}</p>
           <p v-else class="field-help">{{ tr('La solicitud ya está registrada. Puedes volver a intentar calcular el pago.', 'Your request is registered. You can try calculating the payment again.') }}</p>
           <p v-if="error" class="request-error" role="alert">{{ error }}</p>
-          <div class="form-actions"><button v-if="!pendingPayment" type="button" class="back-button" :disabled="loading" @click="requestPaymentPreference">{{ loading ? tr('Consultando…', 'Loading…') : tr('Reintentar cálculo', 'Retry quote') }}</button><button v-else type="button" class="submit-request" :disabled="loading || paymentRedirecting" @click="continueToPayment">{{ paymentRedirecting ? tr('Abriendo pago…', 'Opening payment…') : tr('Pagar', 'Pay') }} <span>→</span></button></div>
+          <div v-if="checkoutMode === 'pro'" class="form-actions"><button v-if="!pendingPayment" type="button" class="back-button" :disabled="loading" @click="requestPaymentPreference">{{ loading ? tr('Consultando…', 'Loading…') : tr('Reintentar cálculo', 'Retry quote') }}</button><button v-else type="button" class="submit-request" :disabled="loading || paymentRedirecting" @click="continueToPayment">{{ paymentRedirecting ? tr('Abriendo pago…', 'Opening payment…') : tr('Pagar', 'Pay') }} <span>→</span></button></div>
+          <MercadoPagoPaymentBrick v-if="checkoutMode === 'bricks' && pendingBrickIntent" :intent="pendingBrickIntent" :locale="locale === 'en' ? 'en-US' : 'es-CO'" :payer-email="form.email" @submit="processBrickPayment" @retry="retryBrickPayment" />
+          <button v-else-if="checkoutMode === 'bricks' && !loading && !pendingBrickIntent" type="button" class="submit-request" :disabled="loading" @click="requestPaymentPreference">{{ tr('Reintentar iniciar el pago', 'Retry payment setup') }} <span>→</span></button>
           <a class="portal-link" href="/portal-cliente">{{ tr('¿Quieres continuar después? Consulta aquí tus solicitudes.', 'Would you like to continue later? View your requests here.') }}</a>
         </section>
         <div v-else-if="originLoading" class="request-origin-error" role="status"><p>{{ tr('Preparando el formulario…', 'Preparing your form…') }}</p></div>
@@ -418,7 +499,7 @@ function goToLanding() {
 .retry-turnstile{justify-self:start;padding:8px 12px;border:1px solid #dfe6ef;border-radius:7px;color:#0c3c78;background:#fff;font-size:11px;font-weight:700;cursor:pointer}.retry-turnstile:disabled{opacity:.6;cursor:wait}
 .payment-notice{margin:0 0 18px;padding:11px 13px;border:1px solid #cfe6db;border-radius:7px;color:#28694f;background:#edf9f3;font-size:11px;font-weight:700}
 .request-origin-error{display:grid;gap:12px;padding:18px;border:1px solid #f0c9cc;border-radius:8px;color:#8d2e36;background:#fff5f5;font-size:13px;line-height:1.5}.request-origin-error p{margin:0}.request-origin-error a{color:#164f70;font-weight:700;text-decoration:none}
-.payment-review{display:grid;gap:12px;padding:20px;border:1px solid #dfe6ef;border-radius:10px;background:#fff}.payment-review h2{margin:0;color:#062653;font-size:20px}.payment-summary{display:grid;gap:0;margin:0;border:1px solid #dfe6ef;border-radius:8px;overflow:hidden}.payment-summary>div{display:flex;justify-content:space-between;gap:18px;padding:12px 14px;border-bottom:1px solid #e9eef4;font-size:12px}.payment-summary>div:last-child{border-bottom:0}.payment-summary dt{color:#586780}.payment-summary dd{margin:0;color:#173b58;font-weight:700;text-align:right}.payment-summary .payment-total{background:#f5f8fc;font-size:14px;font-weight:800}.payment-summary .payment-total dd{color:#0c6c4c}.payment-review .form-actions{justify-content:flex-end}
+.payment-review{display:grid;gap:12px;padding:20px;border:1px solid #dfe6ef;border-radius:10px;background:#fff}.payment-review h2{margin:0;color:#062653;font-size:20px}.payment-summary{display:grid;gap:0;margin:0;border:1px solid #dfe6ef;border-radius:8px;overflow:hidden}.payment-summary>div{display:flex;justify-content:space-between;gap:18px;padding:12px 14px;border-bottom:1px solid #e9eef4;font-size:12px}.payment-summary>div:last-child{border-bottom:0}.payment-summary dt{color:#586780}.payment-summary dd{margin:0;color:#173b58;font-weight:700;text-align:right}.payment-summary .payment-total{background:#f5f8fc;font-size:14px;font-weight:800}.payment-summary .payment-total dd{color:#0c6c4c}.payment-currency-note{margin:0;padding:11px 13px;border-radius:7px;background:#f3f8fc;color:#52677c;font-size:11px;line-height:1.55}.payment-review .form-actions{justify-content:flex-end}
 .request-intro{justify-content:flex-start}
 .header-tools{display:flex;align-items:center;gap:16px}
 .request-brand>img{display:block;width:48px;height:48px;padding:2px;border:1px solid #dfe6ef;border-radius:9px;background:#fff;object-fit:contain}

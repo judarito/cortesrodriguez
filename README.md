@@ -2,11 +2,13 @@
 
 Sitio web Vue configurable desde un panel administrador con persistencia en Turso/libSQL y API en Cloudflare Worker.
 
-La plataforma operativa usa Neon y Mercado Pago Checkout Pro. La landing mantiene Turso de forma independiente.
+La plataforma operativa usa Neon y Mercado Pago Checkout Pro. Checkout Bricks está integrado como alternativa controlada por el flag de servidor `payment_checkout_bricks_enabled`, apagado por defecto; mientras esté apagado, se mantiene Checkout Pro. La landing mantiene Turso de forma independiente.
 
 ## Flujo de pagos en dev
 
 En dev se usa una app sandbox de Mercado Pago y el secreto `MP_ACCESS_TOKEN` en Cloudflare. La solicitud se crea con una referencia, el pago se inicia desde `/solicitud` y el webhook `/api/public/payments/webhook` confirma el estado consultando Mercado Pago. El retorno del navegador solo muestra el resultado; no confirma por sí mismo el pago.
+
+Bricks usa credenciales distintas de Checkout Pro: `MP_BRICKS_PUBLIC_KEY` y `MP_BRICKS_ACCESS_TOKEN`, ya configuradas como secretos en Cloudflare Dev para la app sandbox `CortesRodriguezBricksDev`. El Worker devuelve modo `pro` si el flag está apagado o falta la configuración Brick. No reutilizar ni cambiar el secreto `MP_ACCESS_TOKEN` de Pro. Ver [flujo de entornos y pagos](docs/DEPLOYMENT_ENVIRONMENTS.md).
 
 Las solicitudes pagadas no notifican a expertos al crearse. Solo un pago confirmado como `approved` dispara `payment_approved`; el estado y los datos de pago se consultan en el panel administrativo. Ver [flujo de entornos y pagos](docs/DEPLOYMENT_ENVIRONMENTS.md) para la configuración de dev.
 

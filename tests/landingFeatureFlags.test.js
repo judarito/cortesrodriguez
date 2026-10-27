@@ -6,6 +6,9 @@ import {
   isLandingRequestButtonEnabled,
   isLandingRequestPage,
   LANDING_REQUEST_BUTTON_FLAG,
+  isPaymentCheckoutBricksEnabled,
+  isPaymentCheckoutBricksConfigured,
+  PAYMENT_CHECKOUT_BRICKS_FLAG,
 } from '../worker/lib/landingFeatureFlags.js'
 
 function mockEnv(flags) {
@@ -36,6 +39,35 @@ test('feature flag reads the expected Flagship boolean and preserves enabled sta
     },
   }
   assert.equal(await isLandingRequestButtonEnabled({ LANDING_FLAGS: flags }), true)
+})
+
+test('Checkout Bricks flag defaults to disabled when Flagship is missing or fails', async () => {
+  assert.equal(await isPaymentCheckoutBricksEnabled({}), false)
+  assert.equal(await isPaymentCheckoutBricksEnabled({
+    LANDING_FLAGS: { getBooleanValue: async (_key, fallback) => fallback },
+  }), false)
+  assert.equal(await isPaymentCheckoutBricksEnabled({
+    LANDING_FLAGS: { getBooleanValue: async () => { throw new Error('unavailable') } },
+  }), false)
+})
+
+test('Checkout Bricks flag reads its independent Flagship boolean', async () => {
+  const flags = {
+    getBooleanValue: async (key, fallback) => {
+      assert.equal(key, PAYMENT_CHECKOUT_BRICKS_FLAG)
+      assert.equal(fallback, false)
+      return true
+    },
+  }
+  assert.equal(await isPaymentCheckoutBricksEnabled({ LANDING_FLAGS: flags }), true)
+})
+
+test('Checkout Bricks requires separate public and access keys before it can be advertised', () => {
+  assert.equal(isPaymentCheckoutBricksConfigured({}), false)
+  assert.equal(isPaymentCheckoutBricksConfigured({ MP_BRICKS_PUBLIC_KEY: 'pk' }), false)
+  assert.equal(isPaymentCheckoutBricksConfigured({ MP_BRICKS_PUBLIC_KEY: 'pk', MP_ACCESS_TOKEN: 'pro' }), false)
+  assert.equal(isPaymentCheckoutBricksConfigured({ MP_BRICKS_PUBLIC_KEY: 'pk', MP_BRICKS_ACCESS_TOKEN: 'pro', MP_ACCESS_TOKEN: 'pro' }), false)
+  assert.equal(isPaymentCheckoutBricksConfigured({ MP_BRICKS_PUBLIC_KEY: 'pk', MP_BRICKS_ACCESS_TOKEN: 'bricks', MP_ACCESS_TOKEN: 'pro' }), true)
 })
 
 test('only the new request routes are gated; landing quote and client feedback remain outside the flag', () => {
@@ -72,14 +104,35 @@ test('request API is unavailable while the flag is off', async () => {
 test('enabled request page reaches the SPA assets and flag endpoint is never cached', async () => {
   const flags = { getBooleanValue: async () => true }
   const env = mockEnv(flags)
+  env.MP_BRICKS_PUBLIC_KEY = 'bricks-public-key'
+  env.MP_BRICKS_ACCESS_TOKEN = 'bricks-access-token'
+  env.MP_ACCESS_TOKEN = 'pro-access-token'
   const page = await worker.fetch(new Request('https://example.test/solicitud'), env)
   assert.equal(page.status, 200)
   assert.equal(await page.text(), '/solicitud')
 
   const response = await worker.fetch(new Request('https://example.test/api/public/features'), env)
   assert.equal(response.status, 200)
-  assert.deepEqual(await response.json(), { landingRequestButton: true })
+  assert.deepEqual(await response.json(), { landingRequestButton: true, checkoutMode: 'bricks' })
   assert.equal(response.headers.get('cache-control'), 'no-store')
+})
+
+test('Bricks is not exposed when Flagship enables it but dedicated credentials are missing', async () => {
+  const response = await worker.fetch(
+    new Request('https://example.test/api/public/features'),
+    mockEnv({ getBooleanValue: async (key) => key === LANDING_REQUEST_BUTTON_FLAG || key === PAYMENT_CHECKOUT_BRICKS_FLAG }),
+  )
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { landingRequestButton: true, checkoutMode: 'pro' })
+})
+
+test('public feature endpoint defaults checkout to Pro independently from the landing flag', async () => {
+  const flags = {
+    getBooleanValue: async (key, fallback) => key === LANDING_REQUEST_BUTTON_FLAG ? true : fallback,
+  }
+  const response = await worker.fetch(new Request('https://example.test/api/public/features'), mockEnv(flags))
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { landingRequestButton: true, checkoutMode: 'pro' })
 })
 
 test('existing landing path does not depend on Flagship availability', async () => {

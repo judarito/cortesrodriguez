@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { getInitialLocale, localeTag, persistLocale } from '../lib/locale.js'
 import LanguageToggle from '../shared/components/LanguageToggle.vue'
 import OperationsShell from './OperationsShell.vue'
+import MercadoPagoPaymentBrick from './components/MercadoPagoPaymentBrick.vue'
 import logoUrl from '../assets/logo-cortes-rodriguez.png'
 
 const locale = ref(getInitialLocale())
@@ -29,6 +30,11 @@ const copy = {
     paymentLabels: { not_started: 'Pendiente de pago', not_required: 'No requiere pago', pending: 'Pendiente', in_process: 'En proceso', approved: 'Pagado', duplicate_approved: 'Pago duplicado · requiere revisión', rejected: 'Rechazado', cancelled: 'Cancelado', refunded: 'Reembolsado', charged_back: 'En disputa', creation_uncertain: 'Verificando intento', creating: 'Preparando pago', creation_failed: 'No se pudo iniciar' },
     careLabels: { pending: 'Pendiente de revisión', in_review: 'En revisión', in_progress: 'En gestión', closed: 'Cerrada', cancelled: 'Cancelada' },
     paymentActions: { pay: 'Pagar', retry: 'Reintentar pago', resume: 'Continuar pago', checking: 'Verificando pago' },
+    bricksUnavailable: 'Este intento se inició con el pago integrado, que ahora está desactivado. No vuelvas a pagar; contacta a soporte para verificarlo.',
+    bricksChecking: 'Estamos verificando este pago con Mercado Pago. No vuelvas a pagar ni inicies otro intento.',
+    refreshPayment: 'Actualizar estado del pago',
+    bricksRecoveryFailed: 'No pudimos confirmar el estado del intento anterior. No vuelvas a pagar; actualiza más tarde o contacta a soporte.',
+    bricksIntentFailed: 'No pudimos recuperar el formulario seguro del intento. No inicies otro pago; actualiza el estado o contacta a soporte.',
     service: 'Servicio', requestTitle: 'Solicitud de asesoría',
     checkoutInvalid: 'El enlace de pago no pertenece a Mercado Pago.', amountInvalid: 'No se pudo validar el valor convertido. Inténtalo de nuevo más tarde.',
     genericError: 'No se pudo completar la operación. Inténtalo de nuevo.',
@@ -64,6 +70,11 @@ const copy = {
     paymentLabels: { not_started: 'Payment not started', not_required: 'Payment not required', pending: 'Pending', in_process: 'Processing', approved: 'Paid', duplicate_approved: 'Duplicate payment · review required', rejected: 'Rejected', cancelled: 'Cancelled', refunded: 'Refunded', charged_back: 'Disputed', creation_uncertain: 'Checking payment attempt', creating: 'Preparing payment', creation_failed: 'Could not start payment' },
     careLabels: { pending: 'Awaiting review', in_review: 'Under review', in_progress: 'In progress', closed: 'Closed', cancelled: 'Cancelled' },
     paymentActions: { pay: 'Pay', retry: 'Retry payment', resume: 'Continue payment', checking: 'Checking payment' },
+    bricksUnavailable: 'This attempt was started with integrated checkout, which is now disabled. Do not pay again; contact support to verify it.',
+    bricksChecking: 'We are verifying this payment with Mercado Pago. Do not pay again or start another attempt.',
+    refreshPayment: 'Refresh payment status',
+    bricksRecoveryFailed: 'We could not confirm the previous attempt. Do not pay again; refresh later or contact support.',
+    bricksIntentFailed: 'We could not retrieve the secure form for this attempt. Do not start another payment; refresh its status or contact support.',
     service: 'Service', requestTitle: 'Advisory request',
     checkoutInvalid: 'This payment link does not belong to Mercado Pago.', amountInvalid: 'We could not validate the converted amount. Please try again later.',
     genericError: 'We could not complete the request. Please try again.',
@@ -96,6 +107,11 @@ const requests = ref([])
 const pagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
 const detail = ref(null)
 const paymentQuote = ref(null)
+const checkoutMode = ref('pro')
+const brickIntent = ref(null)
+const brickIntentLoading = ref(false)
+const brickRecoveryError = ref(false)
+const brickRecoveryMessage = ref('')
 const loading = ref(true)
 const detailLoading = ref(false)
 const sending = ref(false)
@@ -131,6 +147,13 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
+    const features = await api('/api/public/features')
+    checkoutMode.value = features.checkoutMode === 'bricks' ? 'bricks' : 'pro'
+  } catch {
+    // Checkout Pro remains the default when public feature configuration is unavailable.
+    checkoutMode.value = 'pro'
+  }
+  try {
     const data = await api('/api/client/session')
     user.value = data.user
     await loadRequests()
@@ -159,22 +182,174 @@ async function verifyCode() {
 
 async function openRequest(reference) {
   paymentQuote.value = null
+  brickIntent.value = null
+  brickRecoveryError.value = false
+  brickRecoveryMessage.value = ''
   detailLoading.value = true; error.value = ''
   try {
     const data = await api(`/api/client/requests/${encodeURIComponent(reference)}`)
-    detail.value = data.item
+    const item = data.item
+    const attempts = Array.isArray(item.paymentAttempts) ? item.paymentAttempts.map((attempt) => ({ ...attempt })) : []
+    const latestIndex = attempts.findIndex((attempt) => attempt.id === item.paymentAttemptId || attempt.attemptId === item.paymentAttemptId)
+    const currentIndex = latestIndex >= 0 ? latestIndex : 0
+    if (attempts[currentIndex]) {
+      attempts[currentIndex] = {
+        ...attempts[currentIndex],
+        id: attempts[currentIndex].id || item.paymentAttemptId || undefined,
+        checkoutMode: attempts[currentIndex].checkoutMode || item.checkoutMode || 'pro',
+        paymentSubmitted: attempts[currentIndex].paymentSubmitted ?? item.paymentSubmitted,
+      }
+    }
+    detail.value = { ...item, paymentAttempts: attempts }
+    await prepareBrickAttempt()
   } catch (detailError) { error.value = detailError.message }
   finally { detailLoading.value = false }
 }
 
+function latestPaymentAttempt() {
+  return detail.value?.paymentAttempts?.[0] || null
+}
+
+function currentRequestCheckoutMode() {
+  return detail.value?.checkoutMode || latestPaymentAttempt()?.checkoutMode || 'pro'
+}
+
+function currentPaymentAttemptId() {
+  const attempt = latestPaymentAttempt()
+  return detail.value?.paymentAttemptId || attempt?.attemptId || attempt?.id || ''
+}
+
+function paymentWasSubmitted() {
+  const attempt = latestPaymentAttempt()
+  return Boolean(detail.value?.paymentSubmitted ?? attempt?.paymentSubmitted ?? attempt?.providerSubmissionStartedAt)
+}
+
+function paymentAttemptStatus() {
+  return String(detail.value?.paymentStatus || latestPaymentAttempt()?.status || '').toLowerCase()
+}
+
+function isTerminalPaymentStatus(status = paymentAttemptStatus()) {
+  return ['approved', 'rejected', 'cancelled', 'refunded', 'charged_back', 'duplicate_approved', 'creation_failed'].includes(status)
+}
+
+function hasUnresolvedBrickAttempt() {
+  return currentRequestCheckoutMode() === 'bricks' && !['pay', 'retry'].includes(detail.value?.paymentAction) && !isTerminalPaymentStatus()
+}
+
+function brickIntentPayload(data, expectedAttemptId = '') {
+  if (
+    typeof data.attemptId !== 'string' || !data.attemptId ||
+    typeof data.publicKey !== 'string' || !data.publicKey ||
+    !Number.isSafeInteger(data.amountCents) || data.amountCents <= 0 ||
+    data.currency !== 'COP' || !['es-CO', 'en-US'].includes(data.locale)
+  ) throw new Error(t.value.bricksIntentFailed)
+  if (expectedAttemptId && data.attemptId !== expectedAttemptId) {
+    throw new Error(t.value.bricksIntentFailed)
+  }
+  return { ...data, processIdempotencyKey: crypto.randomUUID() }
+}
+
+async function requestBrickIntent(existingAttempt = false) {
+  if (!detail.value || brickIntentLoading.value) return
+  brickIntentLoading.value = true
+  brickRecoveryError.value = false
+  brickRecoveryMessage.value = ''
+  try {
+    const body = { idempotencyKey: crypto.randomUUID() }
+    const data = await api(`/api/client/requests/${encodeURIComponent(detail.value.reference)}/payment-bricks-intent`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+    brickIntent.value = brickIntentPayload(data, existingAttempt ? currentPaymentAttemptId() : '')
+    detail.value.paymentAttemptId = data.attemptId
+    detail.value.checkoutMode = 'bricks'
+    detail.value.paymentStatus = detail.value.paymentStatus === 'not_started' ? 'pending' : detail.value.paymentStatus
+    detail.value.paymentAction = 'resume'
+    detail.value.paymentSubmitted = false
+  } catch (intentError) {
+    brickRecoveryError.value = true
+    brickRecoveryMessage.value = intentError.message || t.value.bricksIntentFailed
+  } finally { brickIntentLoading.value = false }
+}
+
+async function recoverBrickAttempt() {
+  const attemptId = currentPaymentAttemptId()
+  if (!attemptId) {
+    brickRecoveryError.value = true
+    brickRecoveryMessage.value = t.value.bricksRecoveryFailed
+    return
+  }
+  brickRecoveryError.value = false
+  brickRecoveryMessage.value = t.value.bricksChecking
+  try {
+    const result = await api(`/api/client/requests/${encodeURIComponent(detail.value.reference)}/payment-bricks-recover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reference: detail.value.reference, attemptId }),
+    })
+    const status = String(result.status || '').toLowerCase()
+    if (result.confirmed === true || status === 'approved') {
+      detail.value.paymentApproved = true
+      detail.value.paymentStatus = 'approved'
+      detail.value.paymentAction = 'none'
+      brickRecoveryMessage.value = ''
+      await loadRequests(pagination.value.page)
+      return
+    }
+    if (['rejected', 'cancelled'].includes(status)) {
+      detail.value.paymentStatus = status
+      detail.value.paymentAction = 'retry'
+      detail.value.paymentSubmitted = false
+      brickRecoveryMessage.value = ''
+      return
+    }
+    brickRecoveryMessage.value = t.value.bricksChecking
+  } catch {
+    brickRecoveryError.value = true
+    brickRecoveryMessage.value = t.value.bricksRecoveryFailed
+  }
+}
+
+async function prepareBrickAttempt() {
+  if (currentRequestCheckoutMode() !== 'bricks' || ['pay', 'retry'].includes(detail.value?.paymentAction) || isTerminalPaymentStatus()) return
+  if (paymentWasSubmitted()) {
+    await recoverBrickAttempt()
+    return
+  }
+  if (checkoutMode.value !== 'bricks') {
+    brickRecoveryMessage.value = t.value.bricksUnavailable
+    return
+  }
+  if (currentPaymentAttemptId()) await requestBrickIntent(true)
+}
+
 async function startPayment() {
   if (!detail.value || sending.value) return
+  if (currentRequestCheckoutMode() === 'bricks') {
+    if (checkoutMode.value !== 'bricks') {
+      brickRecoveryMessage.value = t.value.bricksUnavailable
+      return
+    }
+    if (hasUnresolvedBrickAttempt()) {
+      if (paymentWasSubmitted()) {
+        await recoverBrickAttempt()
+        return
+      }
+      if (!brickIntent.value && currentPaymentAttemptId()) await requestBrickIntent(true)
+      else if (!brickIntent.value) brickRecoveryMessage.value = t.value.bricksIntentFailed
+      return
+    }
+    await requestBrickIntent(false)
+    return
+  }
   if (paymentQuote.value) {
     window.location.assign(paymentQuote.value.initPoint)
     return
   }
   sending.value = true; error.value = ''
   try {
+    if (checkoutMode.value === 'bricks' && detail.value.paymentAction !== 'resume') {
+      await requestBrickIntent(false)
+      return
+    }
     const data = await api(`/api/client/requests/${encodeURIComponent(detail.value.reference)}/payment-preference`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }),
     })
@@ -192,8 +367,55 @@ async function logout() {
   await api('/api/client/logout', { method: 'POST' }).catch(() => {})
   user.value = null; requests.value = []; detail.value = null; email.value = ''; message.value = ''
 }
-function closeDetail() { detail.value = null; paymentQuote.value = null }
+function closeDetail() { detail.value = null; paymentQuote.value = null; brickIntent.value = null; brickRecoveryMessage.value = ''; brickRecoveryError.value = false }
 function selectClientMenu(item) { if (item.label === 'requests') closeDetail() }
+
+async function processBrickPayment(submission) {
+  if (detail.value) {
+    detail.value.paymentAttemptId = submission.attemptId
+    detail.value.checkoutMode = 'bricks'
+    detail.value.paymentSubmitted = true
+  }
+  try {
+    const result = await api(`/api/client/requests/${encodeURIComponent(detail.value.reference)}/payment-bricks-process`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ attemptId: submission.attemptId, ...submission.payload }),
+    })
+    if (typeof result.status !== 'string') throw new Error(t.value.genericError)
+    submission.complete(result)
+    const status = String(result.status).toLowerCase()
+    if (result.confirmed === true || status === 'approved') {
+      detail.value.paymentApproved = true
+      detail.value.paymentStatus = 'approved'
+      detail.value.paymentAction = 'none'
+      brickIntent.value = null
+      await loadRequests(pagination.value.page)
+    } else if (['pending', 'in_process', 'in_mediation'].includes(status)) {
+      detail.value.paymentStatus = status
+      detail.value.paymentAction = 'checking'
+      detail.value.paymentSubmitted = true
+      brickRecoveryMessage.value = t.value.bricksChecking
+    } else if (['rejected', 'cancelled'].includes(status)) {
+      detail.value.paymentStatus = status
+      detail.value.paymentAction = 'retry'
+      detail.value.paymentSubmitted = false
+    }
+  } catch (processError) {
+    submission.fail(processError.message || t.value.genericError)
+  }
+}
+
+async function retryBrickPayment() {
+  brickIntent.value = null
+  brickRecoveryMessage.value = ''
+  brickRecoveryError.value = false
+  if (detail.value) {
+    detail.value.paymentStatus = 'rejected'
+    detail.value.paymentAction = 'retry'
+    detail.value.paymentSubmitted = false
+  }
+  await startPayment()
+}
 
 function paymentLabel(value) { return t.value.paymentLabels[value] || value || '—' }
 function careLabel(value) { return t.value.careLabels[value] || value || '—' }
@@ -249,7 +471,35 @@ onMounted(() => { document.documentElement.lang = locale.value; load() })
           <div v-if="error" class="client-error" role="alert">{{ error }}</div>
           <div class="status-grid"><section><span>{{ t.paymentStatus }}</span><strong :class="{ 'paid-text': detail.paymentApproved }">{{ paymentLabel(detail.paymentStatus) }}</strong></section><section><span>{{ t.careStatus }}</span><strong>{{ careLabel(detail.status) }}</strong></section></div>
           <section class="detail-section"><h2>{{ t.consultationValue }}</h2><strong class="detail-price">{{ money(detail.amountCents, detail.currency) }}</strong><p v-if="detail.paymentRequired && !detail.paymentApproved">{{ t.paymentEnables }}</p></section>
-          <section v-if="detail.paymentAction !== 'none'" class="payment-action-box"><template v-if="detail.paymentAction === 'checking'"><strong>{{ t.checkingTitle }}</strong><p>{{ t.checkingBody }}</p></template><template v-else><strong>{{ detail.paymentAction === 'resume' ? t.resume : detail.paymentAction === 'retry' ? t.retry : t.payPrompt }}</strong><p v-if="!paymentQuote">{{ t.reviewQuote }}</p><div v-if="paymentQuote" class="payment-quote" aria-live="polite"><div><span>{{ t.consultationValue }}</span><strong>{{ money(paymentQuote.usdAmountCents, 'USD') }}</strong></div><div><span>{{ t.trm }}{{ paymentQuote.trmDate ? ` · ${dateLabel(paymentQuote.trmDate)}` : '' }}</span><strong>{{ decimal(paymentQuote.trm) }} COP/USD</strong></div><div class="payment-quote-total"><span>{{ t.total }}</span><strong>{{ money(paymentQuote.copAmountCents, 'COP') }}</strong></div></div><p>{{ t.checkoutInfo }}</p><button class="client-primary" :disabled="sending" @click="startPayment">{{ sending ? t.preparing : paymentQuote ? t.confirmPay : paymentActionLabel(detail.paymentAction) }} <span>→</span></button></template></section>
+          <section v-if="detail.paymentAction !== 'none' || (currentRequestCheckoutMode() === 'bricks' && !detail.paymentApproved)" class="payment-action-box">
+            <template v-if="currentRequestCheckoutMode() === 'bricks' && paymentWasSubmitted() && !isTerminalPaymentStatus()">
+              <strong>{{ t.checkingTitle }}</strong><p>{{ brickRecoveryMessage || t.bricksChecking }}</p>
+              <button class="client-secondary" type="button" :disabled="detailLoading" @click="openRequest(detail.reference)">{{ t.refreshPayment }}</button>
+            </template>
+            <template v-else-if="currentRequestCheckoutMode() === 'bricks' && checkoutMode !== 'bricks'">
+              <strong>{{ t.bricksUnavailable }}</strong><p>{{ t.bricksChecking }}</p>
+            </template>
+            <template v-else-if="brickRecoveryError">
+              <strong>{{ t.bricksRecoveryFailed }}</strong><p>{{ brickRecoveryMessage || t.bricksRecoveryFailed }}</p>
+            </template>
+            <template v-else-if="brickIntent">
+              <strong>{{ t.payPrompt }}</strong><p>{{ t.checkoutInfo }}</p>
+              <MercadoPagoPaymentBrick :intent="brickIntent" :locale="locale === 'en' ? 'en-US' : 'es-CO'" :payer-email="user?.email || ''" @submit="processBrickPayment" @retry="retryBrickPayment" />
+            </template>
+            <template v-else-if="currentRequestCheckoutMode() === 'bricks' && brickRecoveryMessage">
+              <strong>{{ t.bricksChecking }}</strong><p>{{ brickRecoveryMessage }}</p>
+            </template>
+            <template v-else-if="detail.paymentAction === 'checking'">
+              <strong>{{ t.checkingTitle }}</strong><p>{{ t.checkingBody }}</p>
+            </template>
+            <template v-else>
+              <strong>{{ detail.paymentAction === 'resume' ? t.resume : detail.paymentAction === 'retry' ? t.retry : t.payPrompt }}</strong>
+              <p v-if="!paymentQuote">{{ t.reviewQuote }}</p>
+              <div v-if="paymentQuote" class="payment-quote" aria-live="polite"><div><span>{{ t.consultationValue }}</span><strong>{{ money(paymentQuote.usdAmountCents, 'USD') }}</strong></div><div><span>{{ t.trm }}{{ paymentQuote.trmDate ? ` · ${dateLabel(paymentQuote.trmDate)}` : '' }}</span><strong>{{ decimal(paymentQuote.trm) }} COP/USD</strong></div><div class="payment-quote-total"><span>{{ t.total }}</span><strong>{{ money(paymentQuote.copAmountCents, 'COP') }}</strong></div></div>
+              <p>{{ t.checkoutInfo }}</p><p v-if="brickIntentLoading" role="status">{{ t.preparing }}</p>
+              <button class="client-primary" :disabled="sending || brickIntentLoading" @click="startPayment">{{ sending || brickIntentLoading ? t.preparing : paymentQuote ? t.confirmPay : paymentActionLabel(detail.paymentAction) }} <span>→</span></button>
+            </template>
+          </section>
           <section v-if="detail.question" class="detail-section"><h2>{{ t.yourQuestion }}</h2><p class="question-text">{{ detail.question }}</p></section>
           <section v-if="detail.attachments.length" class="detail-section"><h2>{{ t.attachments }}</h2><div class="client-attachments"><a v-for="file in detail.attachments" :key="file.id" :href="file.url" target="_blank" rel="noreferrer"><img :src="file.url" :alt="file.name"/><span>{{ file.name }}</span></a></div></section>
           <section v-if="detail.paymentAttempts.length" class="detail-section"><h2>{{ t.paymentHistory }}</h2><div class="attempt-row" v-for="(attempt, index) in detail.paymentAttempts" :key="`${attempt.createdAt}-${index}`"><div><strong>{{ paymentLabel(attempt.status) }}</strong><small>{{ dateLabel(attempt.createdAt) }}</small></div><div><strong>{{ money(attempt.usdAmountCents, 'USD') }}</strong><small>{{ money(attempt.copAmountCents, 'COP') }} · {{ t.trm }} {{ decimal(attempt.trm) }}</small></div></div></section>

@@ -1,4 +1,9 @@
-import { createClientPaymentPreference } from './publicRequests.js'
+import {
+  createClientPaymentPreference,
+  createClientBricksPaymentIntent,
+  processClientBricksPayment,
+  recoverClientBricksPayment,
+} from './publicRequests.js'
 
 const encoder = new TextEncoder()
 const SESSION_SECONDS = 60 * 60 * 24 * 14
@@ -11,6 +16,9 @@ export async function handleClientPortal(request, env) {
   const requestMatch = url.pathname.match(/^\/api\/client\/requests\/([^/]+)$/)
   const attachmentMatch = url.pathname.match(/^\/api\/client\/requests\/([^/]+)\/attachments\/([^/]+)$/)
   const paymentMatch = url.pathname.match(/^\/api\/client\/requests\/([^/]+)\/payment-preference$/)
+  const bricksIntentMatch = url.pathname.match(/^\/api\/client\/requests\/([^/]+)\/payment-bricks-intent$/)
+  const bricksProcessMatch = url.pathname.match(/^\/api\/client\/requests\/([^/]+)\/payment-bricks-process$/)
+  const bricksRecoverMatch = url.pathname.match(/^\/api\/client\/requests\/([^/]+)\/payment-bricks-recover$/)
   const routes = {
     '/api/client/access-code': request.method === 'POST',
     '/api/client/session': request.method === 'POST' || request.method === 'GET',
@@ -21,7 +29,10 @@ export async function handleClientPortal(request, env) {
   const isRequestDetail = Boolean(requestMatch) && request.method === 'GET'
   const isAttachment = Boolean(attachmentMatch) && request.method === 'GET'
   const isPaymentPreference = Boolean(paymentMatch) && request.method === 'POST'
-  if (!routes[url.pathname] && !isRequestList && !isRequestDetail && !isAttachment && !isPaymentPreference) return null
+  const isBricksIntent = Boolean(bricksIntentMatch) && request.method === 'POST'
+  const isBricksProcess = Boolean(bricksProcessMatch) && request.method === 'POST'
+  const isBricksRecover = Boolean(bricksRecoverMatch) && request.method === 'POST'
+  if (!routes[url.pathname] && !isRequestList && !isRequestDetail && !isAttachment && !isPaymentPreference && !isBricksIntent && !isBricksProcess && !isBricksRecover) return null
   if (!env.NEON_DATABASE_URL) return response({ error: 'El portal no está disponible temporalmente.' }, 503)
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
@@ -46,6 +57,7 @@ export async function handleClientPortal(request, env) {
   if (isPaymentPreference) {
     const reference = decodeSegment(paymentMatch[1])
     if (!requestReferencePattern.test(reference)) return response({ error: 'Solicitud no encontrada.' }, 404)
+    if (Number(request.headers.get('content-length') || 0) > 16_384) return response({ error: 'Los datos del pago superan el tamaño permitido.' }, 413)
     const input = await request.json().catch(() => ({}))
     const idempotencyKey = typeof input.idempotencyKey === 'string' ? input.idempotencyKey : ''
     if (!uuidPattern.test(idempotencyKey)) return response({ error: 'La clave del intento de pago no es válida.' }, 400)
@@ -54,6 +66,42 @@ export async function handleClientPortal(request, env) {
       body: JSON.stringify({ reference, idempotencyKey }),
     })
     return createClientPaymentPreference(paymentRequest, env, email)
+  }
+  if (isBricksIntent || isBricksProcess || isBricksRecover) {
+    const match = bricksIntentMatch || bricksProcessMatch || bricksRecoverMatch
+    const reference = decodeSegment(match[1])
+    if (!requestReferencePattern.test(reference)) return response({ error: 'Solicitud no encontrada.' }, 404)
+    if (Number(request.headers.get('content-length') || 0) > 16_384) return response({ error: 'Los datos del pago superan el tamaño permitido.' }, 413)
+    const input = await request.json().catch(() => ({}))
+    if (isBricksIntent) {
+      const idempotencyKey = typeof input.idempotencyKey === 'string' ? input.idempotencyKey : ''
+      if (!uuidPattern.test(idempotencyKey)) return response({ error: 'La clave del intento de pago no es válida.' }, 400)
+      const paymentRequest = new Request(request.url, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reference, idempotencyKey }),
+      })
+      return createClientBricksPaymentIntent(paymentRequest, env, email)
+    }
+    if (isBricksRecover) {
+      const paymentRequest = new Request(request.url, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reference }),
+      })
+      const result = await recoverClientBricksPayment(paymentRequest, env, email)
+      return result || response({ checkoutMode: 'pro' }, 200, { 'cache-control': 'no-store' })
+    }
+    const attemptId = typeof input.attemptId === 'string' ? input.attemptId : ''
+    if (!uuidPattern.test(attemptId)) return response({ error: 'El intento de pago no es válido.' }, 400)
+    const ownedAttempt = await sql`
+      SELECT 1 FROM operations.request_payments payment
+      JOIN operations.requests request ON request.id = payment.request_id
+      WHERE payment.id = ${attemptId}::uuid AND payment.checkout_mode = 'bricks'
+        AND request.reference = ${reference} AND lower(trim(request.email)) = ${email}
+      LIMIT 1
+    `
+    if (!ownedAttempt.length) return response({ error: 'El intento de pago no pertenece a esta solicitud.' }, 404)
+    return processClientBricksPayment(new Request(request.url, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input),
+    }), env, email)
   }
 
   const page = Math.max(1, Math.min(100000, Number(url.searchParams.get('page')) || 1))
@@ -96,7 +144,7 @@ async function requestDetail(sql, email, reference) {
   const request = requests[0]
   if (!request) return response({ error: 'Solicitud no encontrada.' }, 404)
   const [attempts, attachments, responses] = await Promise.all([
-    sql`SELECT status, init_point, usd_amount_cents, cop_amount_cents, trm_cop_per_usd, trm_effective_date, created_at
+    sql`SELECT id, status, checkout_mode, provider_submission_started_at, init_point, usd_amount_cents, cop_amount_cents, trm_cop_per_usd, trm_effective_date, created_at
       FROM operations.request_payments WHERE request_id = ${request.id} ORDER BY created_at DESC LIMIT 20`,
     sql`SELECT id, original_name, mime_type, created_at FROM operations.request_attachments
       WHERE request_id = ${request.id} AND status = 'available' AND storage_key LIKE ${`requests/${request.id}/%`}
@@ -111,6 +159,7 @@ async function requestDetail(sql, email, reference) {
   if (Boolean(request.payment_required) && !paymentApproved && !requestClosed) {
     if (!latest || ['rejected', 'cancelled', 'creation_failed'].includes(String(latest.status))) paymentAction = latest ? 'retry' : 'pay'
     else if (['pending', 'in_process'].includes(String(latest.status)) && latest.init_point) paymentAction = 'resume'
+    else if (String(latest?.checkout_mode || 'pro') === 'bricks' && ['pending', 'in_process'].includes(String(latest.status))) paymentAction = latest.provider_submission_started_at ? 'checking' : 'resume'
     else if (['creating', 'creation_uncertain'].includes(String(latest.status))) paymentAction = 'checking'
   }
   return response({
@@ -124,7 +173,12 @@ async function requestDetail(sql, email, reference) {
       amountCents: Number(request.service_amount_cents || 0), currency: String(request.service_currency || 'USD'),
       paymentStatus: latest ? String(latest.status) : (request.payment_required ? 'not_started' : 'not_required'),
       paymentAction,
+      checkoutMode: String(latest?.checkout_mode || 'pro'),
+      paymentAttemptId: latest?.id ? String(latest.id) : null,
+      paymentSubmitted: Boolean(latest?.provider_submission_started_at),
       paymentAttempts: attempts.map((attempt) => ({
+        id: String(attempt.id), checkoutMode: String(attempt.checkout_mode || 'pro'),
+        paymentSubmitted: Boolean(attempt.provider_submission_started_at),
         status: String(attempt.status), usdAmountCents: Number(attempt.usd_amount_cents),
         copAmountCents: Number(attempt.cop_amount_cents), trm: Number(attempt.trm_cop_per_usd),
         trmDate: String(attempt.trm_effective_date), createdAt: String(attempt.created_at),

@@ -20,6 +20,8 @@ import {
   isLandingRequestApi,
   isLandingRequestButtonEnabled,
   isLandingRequestPage,
+  isPaymentCheckoutBricksConfigured,
+  isPaymentCheckoutBricksEnabled,
 } from './lib/landingFeatureFlags.js'
 
 const jsonHeaders = {
@@ -45,7 +47,12 @@ export default {
         const requestButtonEnabled = await isLandingRequestButtonEnabled(env)
 
         if (isFeatureFlagRequest) {
-          return json({ landingRequestButton: requestButtonEnabled }, request, 200, {
+          const checkoutBricksEnabled = await isPaymentCheckoutBricksEnabled(env)
+            && isPaymentCheckoutBricksConfigured(env)
+          return json({
+            landingRequestButton: requestButtonEnabled,
+            checkoutMode: checkoutBricksEnabled ? 'bricks' : 'pro',
+          }, request, 200, {
             'cache-control': 'no-store',
           })
         }

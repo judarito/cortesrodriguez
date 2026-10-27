@@ -1,6 +1,7 @@
 import { enqueueNotification } from './operationsEmail.js'
 import { rankSimilarQuestions } from '../lib/questionSimilarity.js'
 import { normalizeClientEmail } from '../lib/clientIdentity.js'
+import { isPaymentCheckoutBricksEnabled } from '../lib/landingFeatureFlags.js'
 
 export async function handlePublicRequests(request, env) {
   const url = new URL(request.url)
@@ -47,6 +48,19 @@ export async function handlePublicRequests(request, env) {
     const limited = await enforcePublicRateLimit(request, env, 'payment_preference', 10, 900)
     if (limited) return limited
     return createPaymentPreference(request, env)
+  }
+  if (url.pathname === '/api/public/payments/bricks/intent' && request.method === 'POST') {
+    if (!await isPaymentCheckoutBricksEnabled(env)) return response({ error: 'Este medio de pago no está disponible.' }, 404)
+    if (!env.NEON_DATABASE_URL || !getBricksPublicKey(env) || !getPaymentAccessToken(env, 'bricks')) return response({ error: 'El pago Bricks no está configurado.' }, 503)
+    const limited = await enforcePublicRateLimit(request, env, 'payment_bricks_intent', 10, 900)
+    if (limited) return limited
+    return createBricksPaymentIntent(request, env)
+  }
+  if (url.pathname === '/api/public/payments/bricks/process' && request.method === 'POST') {
+    if (!env.NEON_DATABASE_URL || !getPaymentAccessToken(env, 'bricks')) return response({ error: 'El pago Bricks no está configurado.' }, 503)
+    const limited = await enforcePublicRateLimit(request, env, 'payment_bricks_process', 10, 900)
+    if (limited) return limited
+    return processBricksPayment(request, env)
   }
   if (url.pathname === '/api/public/payments/verify' && request.method === 'POST') return verifyReturnedPayment(request, env)
   if (url.pathname === '/api/public/payments/webhook' && request.method === 'POST') return handlePaymentWebhook(request, env)
@@ -305,6 +319,511 @@ export async function createClientPaymentPreference(request, env, verifiedEmail)
   return createPaymentPreference(request, env, String(verifiedEmail || '').trim().toLowerCase())
 }
 
+async function createBricksPaymentIntent(request, env) {
+  return createBricksPaymentIntentForEmail(request, env, null)
+}
+
+// Portal callers must authenticate and rate-limit first; this helper rechecks
+// request ownership against the verified session email before creating an intent.
+export async function createClientBricksPaymentIntent(request, env, verifiedEmail) {
+  const email = normalizeClientEmail(String(verifiedEmail || ''))
+  if (!email) return response({ error: 'La sesión del cliente no es válida.' }, 401)
+  if (!await isPaymentCheckoutBricksEnabled(env)) return response({ error: 'Este medio de pago no está disponible.' }, 404)
+  if (!env.NEON_DATABASE_URL || !getBricksPublicKey(env) || !getPaymentAccessToken(env, 'bricks')) return response({ error: 'El pago Bricks no está configurado.' }, 503)
+  return createBricksPaymentIntentForEmail(request, env, email)
+}
+
+async function createBricksPaymentIntentForEmail(request, env, verifiedEmail) {
+  const body = await readSmallJson(request)
+  if (!body) return response({ error: 'Los datos del pago no son válidos.' }, 400)
+  const reference = text(body.reference)
+  const submissionToken = text(body.submissionToken)
+  const idempotencyKey = text(body.idempotencyKey)
+  if (!/^CRA-[A-Z0-9-]{8,40}$/i.test(reference)) return response({ error: 'La referencia de la solicitud no es válida.' }, 400)
+  if (!verifiedEmail && !isUuid(submissionToken)) return response({ error: 'No se pudo autorizar el pago de esta solicitud.' }, 401)
+  if (!isUuid(idempotencyKey)) return response({ error: 'La clave de intento de pago no es válida.' }, 400)
+
+  const { neon } = await import('@neondatabase/serverless')
+  const sql = neon(env.NEON_DATABASE_URL)
+  await ensurePaymentSchema(sql)
+  const submissionTokenHash = verifiedEmail ? null : await sha256(submissionToken)
+  const requests = await sql`
+    SELECT id, reference, service_amount_cents, service_currency, payment_required, status,
+      confirmed_payment_attempt_id, preferred_locale
+    FROM operations.requests
+    WHERE reference = ${reference}
+      AND ((${verifiedEmail}::text IS NOT NULL AND lower(trim(email)) = ${verifiedEmail}) OR
+        (${verifiedEmail}::text IS NULL AND public_idempotency_key_hash = ${submissionTokenHash}
+          AND public_submission_completed_at > NOW() - INTERVAL '2 hours'))
+    LIMIT 1
+  `
+  const requestRow = requests[0]
+  if (!requestRow) return response({ error: 'Solicitud no encontrada.' }, 404)
+  if (String(requestRow.service_currency).toUpperCase() !== 'USD' || !requestRow.payment_required) {
+    return response({ error: 'Esta solicitud no tiene un pago USD válido.' }, 409)
+  }
+  if (['closed', 'cancelled'].includes(String(requestRow.status))) return response({ error: 'Esta solicitud ya no admite pagos.' }, 409)
+  if (requestRow.confirmed_payment_attempt_id) return response({ error: 'Esta solicitud ya tiene un pago confirmado.' }, 409)
+
+  const approved = await sql`SELECT 1 FROM operations.request_payments WHERE request_id = ${requestRow.id} AND status = 'approved' LIMIT 1`
+  if (approved.length) return response({ error: 'Esta solicitud ya tiene un pago confirmado.' }, 409)
+
+  const existing = await sql`
+    SELECT id, checkout_mode, status, usd_amount_cents, cop_amount_cents,
+      trm_cop_per_usd, trm_effective_date
+    FROM operations.request_payments WHERE request_id = ${requestRow.id} AND idempotency_key = ${idempotencyKey}
+    LIMIT 1
+  `
+  if (existing[0]) {
+    if (String(existing[0].checkout_mode || 'pro') !== 'bricks') return response({ error: 'La clave ya pertenece a otro medio de pago.' }, 409)
+    if (!['creating', 'pending', 'in_process'].includes(String(existing[0].status))) return response({ error: 'Este intento ya terminó. Inicia un nuevo intento de pago.' }, 409)
+    return bricksIntentResponse(existing[0], getBricksPublicKey(env), requestRow.preferred_locale)
+  }
+
+  const active = await sql`
+    SELECT id, checkout_mode, status, usd_amount_cents, cop_amount_cents,
+      trm_cop_per_usd, trm_effective_date
+    FROM operations.request_payments WHERE request_id = ${requestRow.id}
+      AND status IN ('pending', 'in_process', 'creating', 'creation_uncertain')
+    ORDER BY created_at DESC LIMIT 1
+  `
+  if (active[0]) {
+    if (String(active[0].checkout_mode || 'pro') !== 'bricks') return response({ error: 'Esta solicitud ya tiene otro checkout en curso.' }, 409)
+    if (!['pending', 'in_process'].includes(String(active[0].status))) return response({ error: 'Estamos verificando el intento anterior. Espera antes de continuar.' }, 409)
+    return bricksIntentResponse(active[0], getBricksPublicKey(env), requestRow.preferred_locale)
+  }
+
+  let trm
+  try {
+    trm = await fetchOfficialTrm()
+  } catch (error) {
+    console.error('No fue posible consultar la TRM para iniciar Checkout Bricks:', error.message)
+    return response({ error: 'No fue posible consultar la TRM. Inténtalo nuevamente en unos minutos.' }, 503)
+  }
+  const usdCents = Number(requestRow.service_amount_cents)
+  if (!Number.isSafeInteger(usdCents) || usdCents <= 0 || !Number.isFinite(trm.value) || trm.value <= 0) {
+    return response({ error: 'El precio o la tasa de conversión no son válidos para iniciar el pago.' }, 409)
+  }
+  const copCents = Math.round((usdCents / 100) * trm.value) * 100
+  if (!Number.isSafeInteger(copCents) || copCents <= 0) return response({ error: 'El valor convertido no es válido.' }, 409)
+
+  const attemptId = crypto.randomUUID()
+  const leaseToken = crypto.randomUUID()
+  const lease = await sql`UPDATE operations.requests request
+    SET payment_preference_lease_token = ${leaseToken}::uuid,
+        payment_preference_lease_expires_at = NOW() + INTERVAL '5 minutes', updated_at = NOW()
+    WHERE request.id = ${requestRow.id}
+      AND (request.payment_preference_lease_expires_at IS NULL OR request.payment_preference_lease_expires_at < NOW())
+      AND NOT EXISTS (SELECT 1 FROM operations.request_payments p WHERE p.request_id = request.id AND p.status IN ('approved', 'pending', 'in_process', 'creating', 'creation_uncertain'))
+    RETURNING request.id`
+  if (!lease.length) return response({ error: 'Ya se está preparando otro intento. Espera un momento y vuelve a intentar.' }, 409)
+  try {
+    await sql`INSERT INTO operations.request_payments
+      (id, request_id, reference, idempotency_key, usd_amount_cents, trm_cop_per_usd, cop_amount_cents, trm_effective_date, status, checkout_mode)
+      VALUES (${attemptId}, ${requestRow.id}, ${reference}, ${idempotencyKey}, ${usdCents}, ${trm.value}, ${copCents}, ${trm.date}, 'pending', 'bricks')`
+  } catch (error) {
+    await sql`UPDATE operations.requests SET payment_preference_lease_token = NULL, payment_preference_lease_expires_at = NULL
+      WHERE id = ${requestRow.id} AND payment_preference_lease_token = ${leaseToken}::uuid`
+    throw error
+  }
+  await sql`UPDATE operations.requests SET payment_preference_lease_token = NULL, payment_preference_lease_expires_at = NULL, updated_at = NOW()
+    WHERE id = ${requestRow.id} AND payment_preference_lease_token = ${leaseToken}::uuid`
+  return bricksIntentResponse({
+    id: attemptId,
+    usd_amount_cents: usdCents,
+    trm_cop_per_usd: trm.value,
+    trm_effective_date: trm.date,
+    cop_amount_cents: copCents,
+  }, getBricksPublicKey(env), requestRow.preferred_locale)
+}
+
+// Portal callers must authenticate and rate-limit first; the attempt lookup is
+// scoped to the verified email and the server-side Bricks flag remains enforced.
+export async function processClientBricksPayment(request, env, verifiedEmail) {
+  const email = normalizeClientEmail(String(verifiedEmail || ''))
+  if (!email) return response({ error: 'La sesión del cliente no es válida.' }, 401)
+  if (!env.NEON_DATABASE_URL || !getPaymentAccessToken(env, 'bricks')) return response({ error: 'El pago Bricks no está configurado.' }, 503)
+  return processBricksPayment(request, env, email)
+}
+
+async function processBricksPayment(request, env, verifiedEmail = null) {
+  const bricksEnabled = await isPaymentCheckoutBricksEnabled(env)
+  const bricksAccessToken = getPaymentAccessToken(env, 'bricks')
+  if (!bricksAccessToken) return response({ error: 'El pago Bricks no está configurado.' }, 503)
+  const body = await readSmallJson(request)
+  if (!body) return response({ error: 'Los datos del pago no son válidos.' }, 400)
+  const input = validateBricksPaymentInput(body)
+  if (!input) return response({ error: 'Los datos del pago no tienen un formato válido.' }, 400)
+
+  const { neon } = await import('@neondatabase/serverless')
+  const sql = neon(env.NEON_DATABASE_URL)
+  const rows = await sql`
+    SELECT payment.id, payment.request_id, payment.reference, payment.usd_amount_cents,
+      payment.cop_amount_cents, payment.mercado_pago_payment_id, payment.provider_submission_started_at,
+      payment.status, payment.checkout_mode,
+      request.email
+    FROM operations.request_payments payment
+    JOIN operations.requests request ON request.id = payment.request_id
+    WHERE payment.id = ${input.attemptId}::uuid
+      AND (${verifiedEmail}::text IS NULL OR lower(trim(request.email)) = ${verifiedEmail})
+    LIMIT 1
+  `
+  const attempt = rows[0]
+  if (!attempt || String(attempt.checkout_mode || 'pro') !== 'bricks') return response({ error: 'El intento de pago no está disponible.' }, 404)
+  if (!attempt.email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(attempt.email))) return response({ error: 'La solicitud no tiene un correo de pago válido.' }, 409)
+  if (normalizeClientEmail(input.payerEmail) !== normalizeClientEmail(attempt.email)) return response({ error: 'El correo de pago debe coincidir con el correo registrado en la solicitud.' }, 409)
+
+  if (attempt.mercado_pago_payment_id) {
+    try {
+      const previous = await getProviderPaymentById(attempt.mercado_pago_payment_id, 'bricks', env)
+      const result = await recordVerifiedPayment(previous, String(previous.id || ''), env, sql, 'bricks_process', String(attempt.request_id), null, String(attempt.reference), String(attempt.id), 'bricks')
+      return bricksProcessResponse(attempt, result)
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'checkout_bricks_lookup_error', severity: 'warning', attemptId: String(attempt.id), statusCode: Number(error.status) || null }))
+      return response({ error: 'No fue posible recuperar el estado del pago. Inténtalo nuevamente.' }, 502)
+    }
+  }
+  if (!bricksChargeAllowed(bricksEnabled, attempt)) return response({ error: 'Este medio de pago está deshabilitado. No se inició un nuevo cobro.' }, 404)
+  if (!bricksEnabled) {
+    let recovery
+    try {
+      recovery = await findBricksPaymentByAttempt(attempt, env)
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'checkout_bricks_recovery_search_error', severity: 'warning', attemptId: String(attempt.id), statusCode: Number(error.status) || null }))
+      return bricksVerificationPending(attempt)
+    }
+    if (recovery.state === 'ambiguous') return bricksVerificationPending(attempt)
+    if (recovery.paymentId) {
+      try {
+        const providerPayment = await getProviderPaymentById(recovery.paymentId, 'bricks', env)
+        const result = await recordVerifiedPayment(providerPayment, String(providerPayment.id || ''), env, sql, 'bricks_process', String(attempt.request_id), null, String(attempt.reference), String(attempt.id), 'bricks')
+        return bricksProcessResponse(attempt, result)
+      } catch (error) {
+        console.error(JSON.stringify({ event: 'checkout_bricks_recovery_lookup_error', severity: 'warning', attemptId: String(attempt.id), statusCode: Number(error.status) || null }))
+        return bricksVerificationPending(attempt)
+      }
+    }
+  }
+  if (!['pending', 'in_process'].includes(String(attempt.status))) return response({ error: 'Este intento ya no admite un nuevo pago.' }, 409)
+
+  const amountCents = Number(attempt.cop_amount_cents)
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents % 100 !== 0) return response({ error: 'El valor guardado para este pago no es válido.' }, 409)
+  const origin = env.PUBLIC_APP_URL || new URL(request.url).origin
+  const providerPayload = buildBricksProviderPayload(attempt, input, `${origin}/api/public/payments/webhook`)
+  const started = await sql`UPDATE operations.request_payments
+    SET provider_submission_started_at = COALESCE(provider_submission_started_at, NOW()), updated_at = NOW()
+    WHERE id = ${attempt.id} AND checkout_mode = 'bricks' AND status IN ('pending', 'in_process')
+    RETURNING id`
+  if (!started.length) return response({ error: 'El estado de este intento cambió. Actualiza antes de volver a intentar.' }, 409)
+  let payment
+  try {
+    payment = await mercadoPago('/v1/payments', bricksAccessToken, providerPayload, { 'X-Idempotency-Key': stableBricksIdempotencyKey(attempt.id) })
+  } catch (error) {
+    console.error(JSON.stringify({ event: 'checkout_bricks_provider_error', severity: 'warning', attemptId: String(attempt.id), statusCode: Number(error.status) || null }))
+    if (Number(error.status) === 409) return bricksVerificationPending(attempt)
+    return response({ error: 'Mercado Pago no pudo procesar el pago. Verifica el medio de pago o inténtalo nuevamente.' }, 502)
+  }
+  if (!/^\d{1,32}$/.test(String(payment.id || ''))) return response({ error: 'Mercado Pago no devolvió una referencia de pago verificable.' }, 502)
+  const result = await recordVerifiedPayment(payment, String(payment.id), env, sql, 'bricks_process', String(attempt.request_id), null, String(attempt.reference), String(attempt.id), 'bricks')
+  if (!result.matched) return response({ error: 'La respuesta de Mercado Pago no coincide con este intento. El estado se verificará con la notificación del proveedor.' }, 409)
+  return bricksProcessResponse(attempt, result)
+}
+
+// Read-only recovery for the client's latest attempt. Returns null when the
+// latest attempt is Pro so the portal can continue through its existing Pro flow.
+export async function recoverClientBricksPayment(request, env, verifiedEmail) {
+  const email = normalizeClientEmail(String(verifiedEmail || ''))
+  if (!email) return response({ error: 'La sesión del cliente no es válida.' }, 401)
+  if (!env.NEON_DATABASE_URL) return response({ error: 'El estado del pago no está disponible.' }, 503)
+  const body = await readSmallJson(request)
+  const reference = text(body?.reference)
+  if (!/^CRA-[A-Z0-9-]{8,40}$/i.test(reference)) return response({ error: 'La referencia de la solicitud no es válida.' }, 400)
+
+  const { neon } = await import('@neondatabase/serverless')
+  const sql = neon(env.NEON_DATABASE_URL)
+  const rows = await sql`
+    SELECT payment.id, payment.request_id, payment.reference, payment.cop_amount_cents,
+      payment.mercado_pago_payment_id, payment.provider_submission_started_at, payment.status,
+      payment.checkout_mode, request.email
+    FROM operations.requests request
+    LEFT JOIN LATERAL (
+      SELECT * FROM operations.request_payments
+      WHERE request_id = request.id ORDER BY created_at DESC LIMIT 1
+    ) payment ON TRUE
+    WHERE request.reference = ${reference} AND lower(trim(request.email)) = ${email}
+    LIMIT 1
+  `
+  const attempt = rows[0]
+  if (!attempt || String(attempt.checkout_mode || '') !== 'bricks') return null
+  const bricksAccessToken = getPaymentAccessToken(env, 'bricks')
+  if (!bricksAccessToken) return response({ error: 'El estado del pago Bricks no está disponible.' }, 503)
+  if (attempt.status === 'approved') return bricksProcessResponse(attempt, { matched: true, approved: true, status: 'approved' })
+  if (attempt.mercado_pago_payment_id) {
+    try {
+      const payment = await getProviderPaymentById(attempt.mercado_pago_payment_id, 'bricks', env)
+      const result = await recordVerifiedPayment(payment, String(payment.id || ''), env, sql, 'bricks_process', String(attempt.request_id), null, String(attempt.reference), String(attempt.id), 'bricks')
+      return bricksProcessResponse(attempt, result)
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'checkout_bricks_portal_recovery_error', severity: 'warning', attemptId: String(attempt.id), statusCode: Number(error.status) || null }))
+      return bricksVerificationPending(attempt)
+    }
+  }
+  if (!attempt.provider_submission_started_at) return bricksVerificationPending(attempt)
+
+  try {
+    const recovery = await findBricksPaymentByAttempt(attempt, env)
+    if (!recovery.paymentId) return bricksVerificationPending(attempt)
+    const payment = await getProviderPaymentById(recovery.paymentId, 'bricks', env)
+    const result = await recordVerifiedPayment(payment, String(payment.id || ''), env, sql, 'bricks_process', String(attempt.request_id), null, String(attempt.reference), String(attempt.id), 'bricks')
+    return bricksProcessResponse(attempt, result)
+  } catch (error) {
+    console.error(JSON.stringify({ event: 'checkout_bricks_portal_search_error', severity: 'warning', attemptId: String(attempt.id), statusCode: Number(error.status) || null }))
+    return bricksVerificationPending(attempt)
+  }
+}
+
+export function validateBricksPaymentInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null
+  const attemptId = text(body.attemptId)
+  const token = text(body.token)
+  const paymentMethodId = text(body.payment_method_id)
+  const installments = Number(body.installments)
+  const email = text(body.payer?.email)
+  if (!isUuid(attemptId) || token.length < 1 || token.length > 4096 || /[\u0000-\u001F\u007F]/.test(token)) return null
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(paymentMethodId) || !Number.isInteger(installments) || installments < 1 || installments > 36) return null
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return null
+  return { attemptId, token, paymentMethodId, installments, payerEmail: email.toLowerCase() }
+}
+
+export function buildBricksProviderPayload(attempt, input, notificationUrl) {
+  const amountCents = Number(attempt.cop_amount_cents)
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents % 100 !== 0) throw new Error('Invalid stored COP amount')
+  const payerEmail = String(attempt.email || '').trim().toLowerCase()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(payerEmail)) throw new Error('Invalid stored payer email')
+  return {
+    token: input.token,
+    payment_method_id: input.paymentMethodId,
+    installments: input.installments,
+    transaction_amount: amountCents / 100,
+    payer: { email: payerEmail },
+    external_reference: String(attempt.reference),
+    notification_url: notificationUrl,
+    metadata: { cra_payment_attempt_id: String(attempt.id) },
+  }
+}
+
+export function selectPaymentAttemptCandidate(candidates, payment, targetAttemptId = null) {
+  const metadataAttemptId = text(payment?.metadata?.cra_payment_attempt_id)
+  const boundAttemptId = targetAttemptId || metadataAttemptId
+  if (boundAttemptId) return candidates.find((candidate) => String(candidate.id) === String(boundAttemptId)) || null
+  const preferenceId = text(payment?.preference_id)
+  if (preferenceId) return candidates.find((candidate) => String(candidate.mercado_pago_preference_id || '') === preferenceId) || candidates[0] || null
+  if (candidates.length !== 1) return null
+  return candidates[0]
+}
+
+export function getPaymentAccessToken(env, checkoutMode) {
+  const token = checkoutMode === 'bricks' ? env?.MP_BRICKS_ACCESS_TOKEN
+    : checkoutMode === 'pro' ? env?.MP_ACCESS_TOKEN
+      : null
+  if (typeof token !== 'string' || !token.trim()) return null
+  const normalized = token.trim()
+  if (checkoutMode === 'bricks' && normalized === String(env?.MP_ACCESS_TOKEN || '').trim()) return null
+  return normalized
+}
+
+export function getBricksPublicKey(env) {
+  const publicKey = typeof env?.MP_BRICKS_PUBLIC_KEY === 'string' ? env.MP_BRICKS_PUBLIC_KEY.trim() : ''
+  if (!publicKey || publicKey === String(env?.MP_PUBLIC_KEY || '').trim()) return null
+  return publicKey
+}
+
+export async function getProviderPaymentById(paymentId, checkoutMode, env) {
+  const token = getPaymentAccessToken(env, checkoutMode)
+  if (!token) throw new Error(`Missing ${checkoutMode} payment credential`)
+  return mercadoPago(`/v1/payments/${encodeURIComponent(String(paymentId))}`, token)
+}
+
+export function resolveWebhookPaymentCredential(providerResults, candidates, paymentId) {
+  for (const result of providerResults) {
+    const payment = result?.payment
+    const providerMode = result?.providerMode
+    if (!payment || !['pro', 'bricks'].includes(providerMode) || String(payment.id || '') !== String(paymentId)) continue
+    const reference = String(payment.external_reference || '')
+    if (!reference) continue
+    const modeCandidates = candidates.filter((candidate) => (candidate.checkout_mode || 'pro') === providerMode)
+    const attempt = selectPaymentAttemptCandidate(modeCandidates, payment)
+    if (!attempt || String(attempt.reference) !== reference) continue
+    if (providerMode === 'bricks' && !isBricksPaymentBoundToAttempt(payment, attempt.id)) continue
+    if (providerMode === 'pro' && payment.metadata?.cra_payment_attempt_id) continue
+    return { payment, providerMode, attempt }
+  }
+  return null
+}
+
+async function paymentAttemptsForReference(sql, reference) {
+  return sql`
+    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id,
+      checkout_mode, status, provider_updated_at, mercado_pago_payment_id
+    FROM operations.request_payments WHERE reference = ${reference}
+    ORDER BY created_at DESC
+  `
+}
+
+export async function searchPaymentsForModes(reference, env, modes) {
+  const payments = []
+  const unavailableModes = []
+  for (const providerMode of [...new Set(modes)]) {
+    const token = getPaymentAccessToken(env, providerMode)
+    if (!token) {
+      unavailableModes.push(providerMode)
+      continue
+    }
+    try {
+      const search = await mercadoPago(`/v1/payments/search?external_reference=${encodeURIComponent(reference)}&sort=date_created&criteria=desc&limit=50&offset=0`, token)
+      for (const payment of Array.isArray(search.results) ? search.results : []) payments.push({ payment, providerMode })
+    } catch {
+      unavailableModes.push(providerMode)
+    }
+  }
+  return { payments, unavailableModes }
+}
+
+async function fetchPaymentForReference(paymentId, reference, env, sql) {
+  const candidates = await paymentAttemptsForReference(sql, reference)
+  const modes = [...new Set(candidates.map((attempt) => attempt.checkout_mode || 'pro'))]
+  let unavailable = false
+  for (const providerMode of modes) {
+    const token = getPaymentAccessToken(env, providerMode)
+    if (!token) {
+      unavailable = true
+      continue
+    }
+    let payment
+    try {
+      payment = await getProviderPaymentById(paymentId, providerMode, env)
+    } catch {
+      unavailable = true
+      continue
+    }
+    const resolved = resolveWebhookPaymentCredential([{ payment, providerMode }], candidates, paymentId)
+    if (resolved) return resolved
+  }
+  return unavailable ? { unavailable: true } : null
+}
+
+export function isBricksPaymentBoundToAttempt(payment, attemptId) {
+  return Boolean(attemptId) && String(payment?.metadata?.cra_payment_attempt_id || '') === String(attemptId)
+}
+
+export function stableBricksIdempotencyKey(attemptId) {
+  return String(attemptId)
+}
+
+export function bricksChargeAllowed(bricksEnabled, attempt) {
+  return bricksEnabled === true || Boolean(attempt?.provider_submission_started_at)
+}
+
+export function classifyBricksPaymentSearch(attempt, results, total = null) {
+  const rows = Array.isArray(results) ? results : []
+  const match = rows.find((payment) => String(payment.external_reference || '') === String(attempt.reference)
+    && String(payment.metadata?.cra_payment_attempt_id || '') === String(attempt.id))
+  if (match && /^\d{1,32}$/.test(String(match.id || ''))) return { state: 'found', paymentId: String(match.id) }
+  if (total !== null && total !== undefined && Number.isFinite(Number(total))) return rows.length >= Number(total) ? { state: 'not_found' } : { state: 'ambiguous' }
+  return rows.length < 50 ? { state: 'not_found' } : { state: 'ambiguous' }
+}
+
+export async function findBricksPaymentByAttempt(attempt, env) {
+  const accessToken = getPaymentAccessToken(env, 'bricks')
+  if (!accessToken) throw new Error('Missing bricks payment credential')
+  const limit = 50
+  const maxResults = 1000
+  let offset = 0
+  let total = null
+  while (offset < maxResults) {
+    const query = new URLSearchParams({
+      external_reference: String(attempt.reference), sort: 'date_created', criteria: 'desc',
+      limit: String(limit), offset: String(offset),
+    })
+    const search = await mercadoPago(`/v1/payments/search?${query}`, accessToken)
+    const results = Array.isArray(search.results) ? search.results : []
+    total = Number.isFinite(Number(search.paging?.total)) ? Number(search.paging.total) : null
+    const classification = classifyBricksPaymentSearch(attempt, results, total == null ? null : total - offset)
+    if (classification.state === 'found') return classification
+    if (classification.state === 'not_found') return classification
+    if (!results.length) return { state: 'not_found' }
+    offset += results.length
+  }
+  return { state: 'ambiguous' }
+}
+
+function bricksVerificationPending(attempt) {
+  return response({
+    attemptId: String(attempt.id), reference: String(attempt.reference),
+    status: 'verification_pending', confirmed: false,
+    message: 'Estamos verificando este pago. No vuelvas a pagarlo; te notificaremos al confirmar el estado.',
+  }, 202, { 'cache-control': 'no-store' })
+}
+
+export function bricksIntentResponse(attempt, publicKey, locale) {
+  const usdAmountCents = Number(attempt.usd_amount_cents)
+  const trm = Number(attempt.trm_cop_per_usd)
+  const trmDate = String(attempt.trm_effective_date || '')
+  return response({
+    attemptId: String(attempt.id),
+    publicKey: String(publicKey),
+    amountCents: Number(attempt.cop_amount_cents),
+    currency: 'COP',
+    ...(Number.isSafeInteger(usdAmountCents) && usdAmountCents > 0 ? { usdAmountCents } : {}),
+    ...(Number.isFinite(trm) && trm > 0 ? { trm } : {}),
+    ...( /^\d{4}-\d{2}-\d{2}$/.test(trmDate) ? { trmDate } : {}),
+    locale: locale === 'en' ? 'en-US' : 'es-CO',
+  }, 200, { 'cache-control': 'no-store' })
+}
+
+export function bricksProcessResponse(attempt, result) {
+  const approved = result.matched === true && result.approved === true && result.status === 'approved'
+  return response({
+    attemptId: String(attempt.id),
+    reference: String(attempt.reference),
+    status: approved ? 'approved' : result.matched ? String(result.status || 'pending') : 'unverified',
+    confirmed: approved,
+    providerVerified: approved,
+  }, 200, { 'cache-control': 'no-store' })
+}
+
+async function readSmallJson(request) {
+  const declaredLength = Number(request.headers.get('content-length') || 0)
+  if (declaredLength > 16_384) return null
+  const reader = request.body?.getReader()
+  if (!reader) return null
+  const chunks = []
+  let size = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > 16_384) {
+      await reader.cancel()
+      return null
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(bytes))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''))
+}
+
 async function createPaymentPreference(request, env, verifiedEmail = null) {
   if (!env.NEON_DATABASE_URL || !env.MP_ACCESS_TOKEN) return response({ error: 'El pago no está configurado.' }, 503)
   const body = await request.json().catch(() => ({}))
@@ -423,7 +942,7 @@ async function createPaymentPreference(request, env, verifiedEmail = null) {
 }
 
 async function handlePaymentWebhook(request, env) {
-  if (!env.NEON_DATABASE_URL || !env.MP_ACCESS_TOKEN || !env.MP_WEBHOOK_SECRET) return response({ error: 'El webhook de pagos no está configurado.' }, 503)
+  if (!env.NEON_DATABASE_URL || (!getPaymentAccessToken(env, 'pro') && !getPaymentAccessToken(env, 'bricks')) || !env.MP_WEBHOOK_SECRET) return response({ error: 'El webhook de pagos no está configurado.' }, 503)
   const url = new URL(request.url)
   const signatureId = url.searchParams.get('data.id') || ''
   if (!await verifyMercadoPagoWebhookSignature(request.headers.get('x-signature') || '', request.headers.get('x-request-id') || '', signatureId, env.MP_WEBHOOK_SECRET)) {
@@ -437,11 +956,58 @@ async function handlePaymentWebhook(request, env) {
     logPaymentSecurityEvent('payment_webhook_resource_mismatch')
     return response({ error: 'El recurso firmado no coincide con el evento.' }, 401)
   }
-  const payment = await mercadoPago(`/v1/payments/${encodeURIComponent(paymentId)}`, env.MP_ACCESS_TOKEN)
-  const result = await recordVerifiedPayment(payment, paymentId, env, null, 'webhook')
+  const { neon } = await import('@neondatabase/serverless')
+  const sql = neon(env.NEON_DATABASE_URL)
+  const resolved = await fetchWebhookPayment(paymentId, env, sql)
+  if (resolved?.unavailable) return response({ error: 'La credencial del proveedor para verificar este pago no está disponible.' }, 503)
+  if (!resolved) {
+    logPaymentSecurityEvent('payment_webhook_payment_mismatch')
+    return response({ ok: true })
+  }
+  const result = await recordVerifiedPayment(resolved.payment, paymentId, env, sql, 'webhook', null, null, String(resolved.attempt.reference), null, resolved.providerMode)
   if (!result.matched) logPaymentSecurityEvent('payment_webhook_payment_mismatch')
   if (result.approved) logPaymentSecurityEvent('payment_webhook_payment_approved')
   return response({ ok: true })
+}
+
+async function fetchWebhookPayment(paymentId, env, sql) {
+  const knownAttempts = await sql`
+    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, checkout_mode,
+      status, provider_updated_at, mercado_pago_payment_id
+    FROM operations.request_payments WHERE mercado_pago_payment_id = ${paymentId}
+    ORDER BY created_at DESC
+  `
+  const modes = knownAttempts.length
+    ? [...new Set(knownAttempts.map((attempt) => attempt.checkout_mode || 'pro'))]
+    : ['bricks', 'pro']
+  let unavailable = false
+  for (const providerMode of modes) {
+    const accessToken = getPaymentAccessToken(env, providerMode)
+    if (!accessToken) {
+      unavailable = true
+      continue
+    }
+    let payment
+    try {
+      payment = await getProviderPaymentById(paymentId, providerMode, env)
+    } catch {
+      unavailable = true
+      continue
+    }
+    if (String(payment.id || '') !== String(paymentId)) continue
+    let candidates = knownAttempts
+    if (!candidates.length && payment.external_reference) {
+      candidates = await sql`
+        SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id,
+          checkout_mode, status, provider_updated_at
+        FROM operations.request_payments WHERE reference = ${String(payment.external_reference)}
+        ORDER BY created_at DESC
+      `
+    }
+    const resolved = resolveWebhookPaymentCredential([{ payment, providerMode }], candidates, paymentId)
+    if (resolved) return resolved
+  }
+  return unavailable ? { unavailable: true } : null
 }
 
 async function verifyReturnedPayment(request, env) {
@@ -466,31 +1032,37 @@ async function verifyReturnedPayment(request, env) {
   if (confirmedPayment[0]) return response({ ok: true, reference, status: 'approved' })
 
   if (!/^\d{1,32}$/.test(paymentId)) return response({ error: 'La referencia de pago no es válida.' }, 400)
-  if (!env.MP_ACCESS_TOKEN) return response({ error: 'La verificación de pagos no está configurada.' }, 503)
-  let payment
+  const attempts = await paymentAttemptsForReference(sql, reference)
+  const modes = [...new Set(attempts.map((attempt) => attempt.checkout_mode || 'pro'))]
+  if (!modes.length) return response({ error: 'No se encontró un intento de pago para esta solicitud.' }, 404)
+  let resolved
   try {
-    payment = await mercadoPago(`/v1/payments/${encodeURIComponent(paymentId)}`, env.MP_ACCESS_TOKEN)
+    resolved = await fetchPaymentForReference(paymentId, reference, env, sql)
   } catch (error) {
-    console.error('No se pudo verificar el pago al regresar de Mercado Pago:', error.message)
+    console.error(JSON.stringify({ event: 'payment_browser_return_lookup_failed', severity: 'warning' }))
     return response({ error: 'No fue posible confirmar el pago. Actualiza el estado en unos minutos.' }, 502)
   }
-  if (String(payment.external_reference || '') !== reference) return response({ error: 'El pago no corresponde a esta solicitud.' }, 409)
-  const result = await recordVerifiedPayment(payment, paymentId, env, null, 'browser_return')
+  if (resolved?.unavailable) return response({ error: 'La verificación de pagos no está configurada para este intento.' }, 503)
+  if (!resolved) return response({ error: 'El pago no corresponde a un intento disponible para esta solicitud.' }, 409)
+  const result = await recordVerifiedPayment(resolved.payment, paymentId, env, sql, 'browser_return', null, null, reference, null, resolved.providerMode)
   if (!result.matched) return response({ error: 'El pago no coincide con el valor registrado para esta solicitud.' }, 409)
   return response({ ok: true, reference, status: result.status })
 }
 
 export async function refreshRequestPayment(sql, requestId, env) {
-  if (!env.MP_ACCESS_TOKEN) throw new Error('La consulta de pagos de Mercado Pago no está configurada.')
   const rows = await sql`SELECT id, reference FROM operations.requests WHERE id = ${requestId} LIMIT 1`
   if (!rows[0]) return null
   const reference = String(rows[0].reference)
-  const search = await mercadoPago(`/v1/payments/search?external_reference=${encodeURIComponent(reference)}&sort=date_created&criteria=desc&limit=50&offset=0`, env.MP_ACCESS_TOKEN)
-  const payments = Array.isArray(search.results) ? search.results : []
-  for (const payment of payments) {
-    const result = await recordVerifiedPayment(payment, String(payment.id || ''), env, sql, 'list_reconcile')
+  const attempts = await sql`SELECT id, checkout_mode FROM operations.request_payments WHERE request_id = ${requestId}`
+  const modes = [...new Set(attempts.map((attempt) => attempt.checkout_mode || 'pro'))]
+  if (!modes.length) return { reference, status: 'not_started' }
+  if (modes.some((mode) => !getPaymentAccessToken(env, mode))) throw new Error('Falta la credencial del proveedor de pago para este intento.')
+  const search = await searchPaymentsForModes(reference, env, modes)
+  for (const { payment, providerMode } of search.payments) {
+    const result = await recordVerifiedPayment(payment, String(payment.id || ''), env, sql, 'list_reconcile', null, null, reference, null, providerMode)
     if (result.matched && result.status === 'approved') return { reference, status: 'approved' }
   }
+  if (search.unavailableModes.length) return { reference, status: 'unknown' }
   const latest = await sql`
     SELECT status FROM operations.request_payments
     WHERE request_id = ${requestId}
@@ -504,7 +1076,7 @@ export async function verifyRequestPayment(sql, requestId, env, actorId = null) 
   if (!requests[0]) return null
   const request = requests[0]
   const attempts = await sql`
-    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, status, provider_updated_at
+    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, checkout_mode, status, provider_updated_at
     FROM operations.request_payments WHERE request_id = ${requestId}
     ORDER BY created_at DESC
   `
@@ -512,22 +1084,20 @@ export async function verifyRequestPayment(sql, requestId, env, actorId = null) 
     await writePaymentDiagnostic(sql, { requestId, actorId, source: 'admin_verify', reference: request.reference, matchStatus: 'not_found', reasonCode: 'no_local_attempt' })
     return { status: 'not_started', reconciled: false, reasonCode: 'no_local_attempt' }
   }
-  if (!env.MP_ACCESS_TOKEN) throw new Error('La consulta de pagos de Mercado Pago no está configurada.')
-  let payments
-  try {
-    const search = await mercadoPago(`/v1/payments/search?external_reference=${encodeURIComponent(String(request.reference))}&sort=date_created&criteria=desc&limit=50&offset=0`, env.MP_ACCESS_TOKEN)
-    payments = Array.isArray(search.results) ? search.results : []
-  } catch {
+  const modes = [...new Set(attempts.map((attempt) => attempt.checkout_mode || 'pro'))]
+  if (modes.some((mode) => !getPaymentAccessToken(env, mode))) {
     await writePaymentDiagnostic(sql, { requestId, actorId, source: 'admin_verify', reference: request.reference, matchStatus: 'not_found', reasonCode: 'provider_unavailable' })
     return { status: 'unknown', reconciled: false, reasonCode: 'provider_unavailable' }
   }
-  if (!payments.length) {
-    await writePaymentDiagnostic(sql, { requestId, actorId, source: 'admin_verify', reference: request.reference, matchStatus: 'not_found', reasonCode: 'payment_not_found' })
-    return { status: 'not_found', reconciled: false, reasonCode: 'payment_not_found' }
+  const search = await searchPaymentsForModes(String(request.reference), env, modes)
+  if (!search.payments.length) {
+    const reasonCode = search.unavailableModes.length ? 'provider_unavailable' : 'payment_not_found'
+    await writePaymentDiagnostic(sql, { requestId, actorId, source: 'admin_verify', reference: request.reference, matchStatus: 'not_found', reasonCode })
+    return { status: reasonCode === 'provider_unavailable' ? 'unknown' : 'not_found', reconciled: false, reasonCode }
   }
   let lastResult = null
-  for (const payment of payments) {
-    const result = await recordVerifiedPayment(payment, String(payment.id || ''), env, sql, 'admin_verify', requestId, actorId, request.reference)
+  for (const { payment, providerMode } of search.payments) {
+    const result = await recordVerifiedPayment(payment, String(payment.id || ''), env, sql, 'admin_verify', requestId, actorId, request.reference, null, providerMode)
     if (result.matched && result.status === 'approved') {
       return {
         status: 'approved', reconciled: result.reconciled,
@@ -538,28 +1108,34 @@ export async function verifyRequestPayment(sql, requestId, env, actorId = null) 
     if (result.matched || !lastResult) lastResult = result
   }
   return {
-    status: lastResult?.status || 'pending',
+    status: search.unavailableModes.length ? 'unknown' : lastResult?.status || 'pending',
     reconciled: false,
-    reasonCode: lastResult?.reasonCode || 'payment_not_approved',
+    reasonCode: search.unavailableModes.length ? 'provider_unavailable' : lastResult?.reasonCode || 'payment_not_approved',
     payment: lastResult?.payment || null,
     expectedAmountCents: lastResult?.expectedAmountCents ?? null,
   }
 }
 
-async function recordVerifiedPayment(payment, paymentId, env, database = null, source = 'webhook', targetRequestId = null, actorId = null, targetReference = null) {
+async function recordVerifiedPayment(payment, paymentId, env, database = null, source = 'webhook', targetRequestId = null, actorId = null, targetReference = null, targetAttemptId = null, providerMode = null) {
   const reference = text(payment.external_reference)
   const sql = database || (await import('@neondatabase/serverless')).neon(env.NEON_DATABASE_URL)
-  const candidates = reference ? await sql`
-    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, status, provider_updated_at
+  const allCandidates = reference ? await sql`
+    SELECT id, request_id, reference, cop_amount_cents, mercado_pago_preference_id, checkout_mode, status, provider_updated_at
     FROM operations.request_payments WHERE reference = ${reference}
     ORDER BY created_at DESC
   ` : []
+  const candidates = providerMode
+    ? allCandidates.filter((item) => (item.checkout_mode || 'pro') === providerMode)
+    : allCandidates
   const providerPreferenceId = text(payment.preference_id)
-  const record = providerPreferenceId
-    ? candidates.find((item) => String(item.mercado_pago_preference_id || '') === providerPreferenceId) || null
-    : candidates[0] || null
-  const expectedAttempt = record || candidates[0] || null
-  const reasonCode = paymentMatchReason(payment, expectedAttempt, targetReference)
+  const record = selectPaymentAttemptCandidate(candidates, payment, targetAttemptId)
+  const expectedAttempt = record || (candidates.length === 1 ? candidates[0] : null)
+  const metadataAttemptId = text(payment?.metadata?.cra_payment_attempt_id)
+  const attemptMismatch = Boolean((targetAttemptId && !isBricksPaymentBoundToAttempt(payment, targetAttemptId)) || (metadataAttemptId && !record))
+  const ambiguousAttempt = !targetAttemptId && !metadataAttemptId && !providerPreferenceId && candidates.length > 1
+  const reasonCode = attemptMismatch ? 'attempt_mismatch'
+    : ambiguousAttempt ? 'ambiguous_attempt'
+      : paymentMatchReason(payment, expectedAttempt, targetReference)
   const resolvedRequestId = targetRequestId || expectedAttempt?.request_id || null
   const observedStatus = String(payment.status || '').toLowerCase()
   const diagnosticReason = reasonCode && reasonCode !== 'payment_not_approved'
@@ -688,6 +1264,7 @@ export function paymentMatchReason(payment, attempt, targetReference = null) {
   if (!payment.external_reference) return 'missing_external_reference'
   if (targetReference && String(payment.external_reference) !== String(targetReference)) return 'reference_mismatch'
   if (!attempt) return 'no_local_attempt'
+  if (payment.metadata?.cra_payment_attempt_id && String(payment.metadata.cra_payment_attempt_id) !== String(attempt.id)) return 'attempt_mismatch'
   if (String(payment.external_reference) !== String(attempt.reference)) return 'reference_mismatch'
   // Some approved Checkout Pro payment resources omit preference_id. In that
   // case the resource was still fetched with our access token, so the exact
@@ -810,8 +1387,12 @@ function paymentPreferenceResponse(attempt) {
   })
 }
 
-async function mercadoPago(path, token, body) {
-  const result = await fetch(`https://api.mercadopago.com${path}`, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) })
+async function mercadoPago(path, token, body, extraHeaders = {}) {
+  const headers = new Headers({ authorization: `Bearer ${token}`, 'content-type': 'application/json' })
+  for (const [name, value] of Object.entries(extraHeaders || {})) {
+    if (typeof value === 'string' && value && name.toLowerCase() !== 'authorization') headers.set(name, value)
+  }
+  const result = await fetch(`https://api.mercadopago.com${path}`, { method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) })
   const data = await result.json().catch(() => ({}))
   if (!result.ok) { const error = new Error(data.message || 'Mercado Pago rechazó la operación.'); error.status = result.status; throw error }
   return data

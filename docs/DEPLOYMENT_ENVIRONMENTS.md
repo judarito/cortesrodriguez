@@ -73,6 +73,19 @@ La landing conserva Turso; la plataforma operativa usa Neon. Mercado Pago perman
 - No guardar tokens en el repositorio ni documentar su valor; usar `wrangler secret`.
 - `MP_WEBHOOK_SECRET` debe contener la firma secreta configurada para el webhook sandbox; no es el Access Token.
 
+### Checkout Bricks (alternativa Dev, apagada por defecto)
+
+- Flag independiente de servidor: `payment_checkout_bricks_enabled`, leído desde el binding Flagship `LANDING_FLAGS`. Si está ausente, falla o no es `true`, o faltan las credenciales dedicadas, la API pública entrega `checkoutMode: "pro"` y se conserva Checkout Pro.
+- Bricks usa credenciales exclusivas de una integración Mercado Pago compatible: `MP_BRICKS_PUBLIC_KEY` y `MP_BRICKS_ACCESS_TOKEN`. El token Pro sigue siendo `MP_ACCESS_TOKEN`; no copiarlo a la variable de Bricks ni usar su clave pública.
+- Cargar las credenciales solo como secretos del Worker Dev con `npx wrangler secret put MP_BRICKS_PUBLIC_KEY --config wrangler.dev.jsonc` y `npx wrangler secret put MP_BRICKS_ACCESS_TOKEN --config wrangler.dev.jsonc`. No guardar valores en archivos del repositorio ni en logs.
+- El backend persiste `checkout_mode` por intento. Intentos históricos quedan como `pro`; un rollback del flag solo afecta intentos nuevos. Creación, procesamiento, recuperación, webhook y conciliación eligen la credencial correspondiente al modo persistido, sin fallback entre tokens.
+- El portal cliente también puede continuar/reconciliar un intento Bricks existente; la identidad del cliente se verifica por la sesión y el correo propietario de la solicitud.
+- Migración aplicada en Neon Dev: `043_checkout_bricks_attempts.sql` (modo de checkout, marca de envío al proveedor y diagnósticos Bricks).
+- `044_bricks_rate_limit_actions.sql` amplía la restricción de acciones del limitador para aceptar `payment_bricks_intent` y `payment_bricks_process`. Se aplicó después de que una solicitud de Dev fallara al insertar su bucket de rate limit; no se había creado intento ni iniciado cobro.
+- App sandbox creada por MCP: `CortesRodriguezBricksDev` (ID `6480858097598716`, producto Checkout Bricks, MCO). Sus credenciales de prueba ya están guardadas como `MP_BRICKS_PUBLIC_KEY` y `MP_BRICKS_ACCESS_TOKEN` en Cloudflare Dev; los valores no se guardan en el repositorio ni se muestran en esta documentación.
+- El flag `payment_checkout_bricks_enabled` está creado y habilitado en Flagship Dev con variante default `on`. La API confirma `checkoutMode: "bricks"`; no requiere redeploy para cambiar el flag. Para volver a Pro, deshabilitar el flag desde Flagship. No cambiar el token Pro.
+- Publicado directamente en Dev como versión `9b108993-dea6-4744-8f77-731d12943698`. Smoke checks posteriores a activar el flag: `/solicitud` responde HTTP 200 y `/api/public/features` devuelve `checkoutMode: "bricks"`.
+
 ### Acceso operativo y retorno de Mercado Pago
 
 - El inicio de sesión de la plataforma operativa valida usuarios y contraseñas contra `operations.users` y `operations.user_credentials` en Neon. Los secretos heredados `ADMIN_EMAIL` y `ADMIN_PASSWORD` no son las credenciales de acceso de este flujo; `ADMIN_EMAIL` sigue siendo usado por el script explícito de seed, por lo que no se debe ejecutar ese script para recuperar una cuenta sin revisar antes el correo configurado.
@@ -207,3 +220,12 @@ La acción administrativa **Verificar pago** consulta el recurso de pago en Merc
 - Incluye listado paginado de pagos, correos administrativos limitados a pago confirmado/asignación/revisión y materialización independiente de notificaciones de campana para todos los eventos autorizados.
 - Smoke test HTTP: `/` y `/api/public/features` responden 200; `/api/app/payments` sin sesión no concede acceso (403) y `/api/app/notifications` exige sesión (401).
 - Build y 11 suites aprobados.
+
+### Checkout Bricks y cotización USD→COP (2026-10-27)
+
+- Publicación directa desde local al Worker `cortes-rodriguez-asesores-dev`, versión `c901c198-7bb0-4406-984a-0f654fdc9618`; no se modificaron `main` ni Producción.
+- La integración Bricks permanece habilitada en Flagship Dev. `/solicitud` y `/api/public/features` respondieron HTTP 200; el modo publicado es `bricks`.
+- La migración `044_bricks_rate_limit_actions.sql` permite las acciones de rate limit de creación y procesamiento de intentos Bricks; las migraciones 043 y 044 están aplicadas en Neon Dev.
+- En la solicitud pública y el portal cliente, el checkout muestra el precio original USD, la TRM y su fecha, el total convertido COP y el aviso de que Mercado Pago y la entidad financiera procesan el cobro en COP. El dato procede del intento persistido y se conserva al reanudarlo.
+- Se completó un pago sandbox Bricks aprobado; el intento y la notificación `payment_approved` quedaron confirmados/enviados. El estado de atención de la solicitud sigue siendo independiente del estado del pago.
+- `npm run deploy:dev` compiló y desplegó correctamente. Las pruebas de regresión Pro y los casos Bricks rechazado, pendiente, duplicado y rollback del flag siguen pendientes.
