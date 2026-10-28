@@ -98,7 +98,7 @@ Asignación aleatoria entre expertos activos
 - [ ] Tratar como fuentes distintas y mutuamente excluyentes `direct_web` y `agent_link`.
 - [ ] Para `direct_web`, registrar que el cliente llegó directamente desde nuestra página y dejar `agent_id` vacío.
 - [ ] Para `agent_link`, registrar el enlace y `agent_id` del agente propietario; nunca aceptar ese valor desde campos editables del navegador.
-- [ ] Para altas internas, usar admin_entry; no asociar al administrador creador como agente.
+- [x] Para altas internas, usar admin_entry; no asociar al administrador creador como agente. Desplegado en Dev el 27-oct-2026; created_by se conserva para auditoría.
 - [ ] Crear `agent_links` con `agent_id`, etiqueta, hash de token, estado, expiración, revocación y fechas de auditoría.
 - [ ] Usar tokens opacos en la URL; nunca guardar ni exponer el token original en la base de datos.
 - [ ] Usar una ruta específica como `/solicitud/agente/:token` para iniciar el flujo de agente, en lugar de depender únicamente de parámetros editables.
