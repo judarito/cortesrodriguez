@@ -1,7 +1,7 @@
 # Plan funcional priorizado — Plataforma operativa
 
 **Fecha:** 28 de octubre de 2026
-**Rama de referencia:** `dev` (revisión base `947f4b0`; correcciones de conciliación del 28-oct)
+**Rama de referencia:** `dev` (`0987891`; correcciones de conciliación y estrategia E2E)
 **Foco:** completar y validar la funcionalidad de la plataforma operativa en Dev.  
 **Producción:** queda para una fase posterior. Este plan no incluye promoción, hardening de infraestructura ni cambios de `main`/Producción.
 
@@ -18,7 +18,7 @@
 | F-P0-06 — Dashboard sin datos ficticios | **Completado** | Métricas/pipeline inician vacíos; se eliminaron `defaultActivity` y `defaultPriorityRequests`; error con reintento; build correcto |
 | F-P1-03 — Ficha de cliente | **Implementado y probado a nivel de contrato** | `GET /api/app/clients/:id` + panel lateral; pruebas PGlite; pendiente smoke E2E con sesión real |
 | F-P1-08 — Configuración y copy | **Parcial** | El panel visible (`NotificationConfigPanel`) no menciona Wompi; se corrigió el bloque muerto, pero queda limpieza de código duplicado |
-| F-P1-10 — Tests y CI | **Completado** | `npm test` 133/133; workflow ejecuta `npm run check` antes del deploy |
+| F-P1-10 — Tests y CI | **Completado** | `npm test` 141/141; workflow ejecuta `npm run check` antes del deploy |
 | F-P0-05a / F-P0-05b — Correcciones de conciliación | **Implementadas; pruebas locales aprobadas** | Plantillas cliente ES/EN, ID UUID compartido en UI/API; 8 casos de regresión nuevos; E2E Resend pendiente |
 | F-P0-01 a F-P0-05 | Pendientes de validación integral | Requieren cuentas, pagos sandbox y datos reales de Dev |
 
@@ -182,20 +182,27 @@ La promoción a producción no forma parte de este calendario.
 
 ### F-P0-01 — Cierre del recorrido E2E principal
 
-**Problema:** las piezas existen, pero no hay una validación única de todo el recorrido. Un fallo entre módulos puede pasar desapercibido.
+**Estado:** la matriz manual de este recorrido ya existe en `QA-FUNCIONAL-MVP.md`; aún no hay una suite de navegador que lo ejecute. Esta tarea se implementará como E2E de dos capas: Playwright para navegador y llamadas de API verificables, con datos aislados/proveedores simulados en CI; smoke separado contra Dev con credenciales de prueba.
+
+**Problema:** las piezas existen, pero no hay una validación automatizada única de todo el recorrido. Un fallo entre módulos puede pasar desapercibido.
 
 **Acciones:**
 
-1. Crear una solicitud pública de prueba en Dev.
-2. Pagar con Pro o Bricks según el flag.
+1. Configurar Playwright con Chromium y dos perfiles: `local-mocked` para PR/CI y `dev-sandbox` manual o workflow protegido. La CI no tendrá secretos de proveedores.
+2. Crear fixtures únicos por ejecución (correo `e2e+<run>@...`, cliente, solicitud, experto y agente) y limpiarlos por API administrativa de test o expiración; jamás reutilizar usuarios/datos reales.
+3. En `local-mocked`, simular Mercado Pago, Resend y entrega de correo con respuestas deterministas; inspeccionar llamadas y webhooks, y ejecutar la interfaz real junto al Worker/local backend.
+4. En `dev-sandbox`, usar cuentas y tarjetas sandbox; cualquier pago que altere proveedor o envíe correo se ejecuta de forma explícita fuera de CI con reporte redactado.
+5. Crear una solicitud pública de prueba en Dev/local.
+6. Pagar con Pro o Bricks según el escenario y verificar estado persistido desde API, no solo el retorno visual.
 3. Verificar asignación automática o manual a un experto.
 4. Responder como experto.
 5. Revisar y aprobar como administración.
 6. Verificar correo, campana y estado.
-7. Entrar al portal con el correo del cliente.
-8. Ver la solicitud, la respuesta aprobada y los adjuntos.
-9. Enviar feedback.
-10. Repetir el recorrido en español e inglés.
+7. Solicitar código de acceso y leer el correo del buzón de prueba; en CI usar bandeja simulada.
+8. Entrar al portal con el código y comprobar varias solicitudes propias y exclusión de las ajenas.
+9. Ver la solicitud, la respuesta aprobada y los adjuntos.
+10. Enviar feedback.
+11. Repetir el recorrido en español e inglés y un viewport móvil.
 
 **Criterio de aceptación:**
 
@@ -206,9 +213,31 @@ La promoción a producción no forma parte de este calendario.
 - El feedback queda asociado a la solicitud.
 - La evidencia incluye referencia, estados y capturas redactadas.
 
-**Esfuerzo:** M. **Dependencias:** datos y cuentas de prueba.
+**Criterio técnico adicional:** los asserts cubren UI y contrato API; estados de pago, asignación y respuesta se verifican contra API autorizada. Los tests deben crear datos aislados y no depender de referencias fijas, tiempos arbitrarios ni estado persistente de otra prueba. Guardar trace/video solo al fallar, con datos redactados. La suite local corre en CI; la suite contra Dev queda manual/protegida y nunca bloquea/despliega Producción automáticamente.
+
+**Esfuerzo:** M–L. **Dependencias:** datos y cuentas de prueba, buzón de prueba y autorización/configuración de credenciales sandbox para smoke Dev.
 
 ---
+
+### Estrategia E2E y orden de ejecución — F-P0-01 a F-P0-05
+
+| Nivel | Qué cubre | Proveedores | Ejecución | Criterio |
+|---|---|---|---|---|
+| E2E local en navegador | Solicitud → pago → aprobación → portal → feedback; UI por rol y errores principales | Mercado Pago/Resend simulados; DB aislada | Cada PR, sin secretos | Rápida y repetible; verifica UI y llamadas al Worker |
+| E2E de seguridad | IDs ajenos, permisos, sesión vencida, adjuntos, rol inactivo | API y UI local | Cada PR para críticos | Sin fuga ni acción fuera del permiso |
+| Smoke Dev sandbox | Checkout real sandbox Pro y Bricks, webhook, código de portal y correo de prueba | Cuentas sandbox segregadas | Manual/dispatch, al desplegar a Dev | Caso trazable y sin datos/pagos reales |
+| Recuperación Dev | Reintentos, correo incierto, DLQ, conciliación y no duplicación | Fallos controlados | Bajo demanda, con operador | Auditoría y estados coherentes |
+
+**Fases para proceder:**
+
+1. Instalar Playwright como dependencia de desarrollo y fijar Chromium en CI; mantener `npm run check` como verificación rápida.
+2. Añadir configuración, servidor local reproducible, fixtures sintéticos y helpers de autenticación/pruebas sin bypass en producción.
+3. Automatizar primero el recorrido cliente con pago/correo simulados y el rechazo de permisos por rol; guardar traces al fallar.
+4. Expandir a Pro/Bricks, portal multi-solicitud y aprobado/rechazado/pendiente/incertidumbre.
+5. Habilitar workflow manual de smoke Dev con secretos de entorno Dev protegidos y concurrencia serial; nunca correr cargos reales.
+6. Registrar evidencias y defectos en `QA-FUNCIONAL-MVP.md`; un smoke externo pendiente no se marca como aprobado por el E2E simulado.
+
+**Puerta de calidad:** todos los E2E locales pasan en el commit candidato; no quedan defectos S1/S2 abiertos; smoke sandbox queda aprobado o bloqueado con causa y responsable. Ninguna prueba lee/escribe Producción.
 
 ### F-P0-02 — Matriz funcional de pagos Pro/Bricks
 

@@ -1,6 +1,8 @@
 # QA funcional — MVP plataforma operativa
 
 **Fecha de inicio:** 27 de octubre de 2026  
+**Última actualización:** 28 de octubre de 2026
+**Commit de referencia:** `0987891`
 **Entorno:** Dev  
 **Objetivo:** registrar la ejecución de los recorridos funcionales del [plan priorizado](./PLAN-PRIORIZADO-OPERACIONES.md) y dejar evidencia reproducible.
 
@@ -221,3 +223,34 @@
 | Permisos | Sesión de experto/agente no puede conciliar por UI ni API (403) | PENDIENTE |
 
 No confundir aceptación con apertura/lectura ni con entrega final. La resolución manual exige verificar previamente en Resend el mensaje y su destinatario.
+
+
+## 11. Estrategia automatizada E2E — propuesta de ejecución
+
+**Estado:** matriz manual definida; automatización Playwright pendiente de implementar. El E2E simulado no sustituye el smoke sandbox en Dev.
+
+### Perfil local/CI sin secretos
+
+- Ejecutar la aplicación y Worker contra servicios simulados, base aislada y fixtures sintéticos por ejecución.
+- Interceptar APIs de Mercado Pago y Resend con escenarios aprobados, rechazados, pendientes, timeout y webhook repetido.
+- Mantener las rutas y validaciones reales de la aplicación; simular el proveedor externo, no saltarse el backend de pagos ni los permisos.
+- El correo de código llega a una bandeja simulada inspeccionable por el test.
+- Cada prueba usa datos propios; evitar carreras y borrado compartido. Conservar screenshot/trace solo ante fallo y redactar PII.
+
+### Recorridos que se automatizarán
+
+| Orden | Flujo | Verificación principal | Estado |
+|---|---|---|---|
+| 1 | Cliente crea solicitud, paga simulado, entra al portal, consulta su caso y envía feedback | UI más API; solicitud y estados enlazados, sin duplicidad | Pendiente de implementación |
+| 2 | Agente comparte enlace; cliente crea solicitud | atribución al agente, agente sin alta interna | Pendiente |
+| 3 | Experto responde; admin revisa/aprueba; cliente consulta | experto solo asignados y sin datos personales; cliente ve solo aprobada | Pendiente |
+| 4 | Pago rechazado, pendiente e incierto; cliente reintenta | estado verificado en API; incierto no crea segundo cargo | Pendiente |
+| 5 | IDs ajenos, sesión vencida, rol inactivo y adjunto de otro cliente | 401/403/404 correctos por API y UI, sin datos filtrados | Pendiente |
+| 6 | Correo incierto/DLQ, conciliación/reintento | evento idempotente, auditoría y sin envío duplicado | Pendiente |
+| 7 | ES/EN, móvil y escritorio | controles navegables y mensajes traducidos | Pendiente |
+
+### Smoke separado contra Dev sandbox
+
+Se ejecuta bajo demanda y secuencialmente con cuentas sandbox aisladas: pago Pro aprobado, pago Bricks aprobado, retorno/webhook, correo/código de acceso y portal. Registrar commit, IDs de prueba redactados y estados; no incluir secretos, cookies, códigos de acceso ni datos bancarios. Para casos que requieran un correo/cargo externo se requiere entorno sandbox y operador responsable; ninguna prueba usa producción.
+
+**Criterio para declarar E2E listo:** casos 1, 3, 4 y 5 pasan en CI local; trace disponible en fallo; smoke sandbox se informa separado. Los escenarios no ejecutados o bloqueados permanecen como tales.
