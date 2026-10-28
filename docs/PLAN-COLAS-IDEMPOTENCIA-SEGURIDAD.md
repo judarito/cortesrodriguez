@@ -2,8 +2,8 @@
 
 **Proyecto:** Cortés Rodríguez Asesores  
 **Fecha:** 25 de octubre de 2026  
-**Estado:** implementación iniciada en `dev`; SEC-01 y SEC-02 son el primer bloque.
-**Base de revisión:** rama `dev`, commit `6c9ffef` (plan incorporado; el código revisado parte de `8f975ed3d8399b24a770c10d070cd2d9a38e2881`).
+**Estado:** implementación avanzada en `dev`; pendiente de correcciones y validación para producción según sección 19.
+**Última base de revisión:** rama `dev`, commit `35d1c8286cad4ce9db85a7355425694918f020a5` (27-oct-2026). Las secciones 16 y 18 conservan bases y resultados históricos; el estado vigente se consolida en la sección 19.
 
 **Actualización:** medidas de seguridad contrastadas en `dev`; controles de infraestructura pendientes de evidencia se distinguen de faltantes de código.
 
@@ -241,6 +241,8 @@ Métricas: tiempo evento-publicación, tiempo hasta primer procesamiento, duraci
 Alertar por umbrales configurables y por ausencia de consumidores; reducir el cron sin garantizar que el consumidor funciona puede aumentar la demora de recuperación.
 
 ## 12. Plan de implementación
+
+**Cierre de la entrega:** ejecutar en coordinación con la secuencia actualizada de 19.12. Las fases/checks históricos no sustituyen las correcciones AUD27 ni la validación de salida a producción.
 
 ### Fase 0: cerrar brechas de seguridad P0 — parcialmente implementada; requiere verificación externa
 
@@ -569,6 +571,8 @@ Consultar estado desde el portal debe tener límites y caché breve donde sea se
 
 ## 18. Hallazgos de revisión del 26 de octubre de 2026
 
+**Histórico:** leer junto con avances de 18.5 y actualización de la sección 19; las tareas de esta revisión no se consideran todas abiertas ni todas cerradas por defecto.
+
 **Base:** rama `dev`, commit `01a6b12139860572b0794cd6df28c437778a0ec0`. Esta sección complementa los avances anteriores: un control implementado parcialmente no se considera cerrado mientras persistan los hallazgos relacionados. Las tareas siguientes están pendientes; documentarlas no implica corregir código ni desplegar.
 
 **Validación realizada:** 84 pruebas automatizadas aprobadas y compilación `npm run build` exitosa. Se reprodujeron localmente con base de datos/proveedor simulados la recuperación de checkout sin sesión y la conservación de `approved` después de un `refunded`. Los demás puntos se verificaron por lectura del flujo. No se validaron transacciones concurrentes con PostgreSQL real, correos en buzón real ni pagos completos con Mercado Pago sandbox en esta revisión.
@@ -627,6 +631,205 @@ La autorización del pago inicial de REV-02 es independiente del token público 
 REV-03 a REV-05 están desplegados en dev: revisión de respuesta separa nota pública e interna y la API no devuelve la nota interna a roles no administrativos; el correo `payment_approved` dirigido al cliente tiene plantilla propia con referencia, importes y enlace al portal; y el portal muestra USD, TRM/fecha y COP para confirmación explícita antes de redirigir a Mercado Pago, conservando la preferencia preparada al confirmar. Se versionó el efecto de correo del cliente como `client-payment-v1`; revisar la transición para eventos fallidos previos y evitar reenvíos no deseados. La verificación funcional de correo y checkout sandbox sigue pendiente.
 
 REV-07 requiere datos de uso y costo de Cloudflare/Neon, que aún no se han medido; REV-08 queda como diferencia conocida de configuración. La revisión de UI en navegador y las pruebas de flujo completo en dev siguen pendientes. No se ha desplegado ni modificado `main`/producción.
+
+## 19. Revisión del 27 de octubre de 2026 y plan de cierre para producción
+
+### 19.1 Alcance, evidencia y estado de salida
+
+**Código revisado:** `dev`, commit `35d1c8286cad4ce9db85a7355425694918f020a5` (`Add Mercado Pago Checkout Bricks for Dev`).
+
+**Resultado:** todavía no se considera listo para producción. Esta sección es la actualización de estado de las revisiones anteriores; no elimina el historial de la sección 18 ni convierte una implementación en una validación completa.
+
+| Evidencia | Resultado y límite |
+|---|---|
+| Suite completa `node --test tests/*.test.js` | 104 pruebas ejecutadas: 101 aprobadas y 3 fallidas. No son tres defectos funcionales demostrados: se detallan las expectativas desactualizadas en AUD27-04. |
+| `npm run build` | Correcto. Compilar no valida pagos reales ni concurrencia PostgreSQL. |
+| Bricks: inicio de cobro | Simulación local comprobó que el procesamiento llega a la llamada al proveedor sin consultar el estado actual de la solicitud ni su pago canónico. No se realizaron cobros reales. |
+| Asociación de pagos Pro | Simulación de `selectPaymentAttemptCandidate` con dos intentos Pro y un pago conocido sin `preference_id`/metadata devolvió `null`. |
+| Pago sandbox Bricks aprobado | Reportado previamente en `docs/PLAN-CHECKOUT-BRICKS-FEATURE-FLAG.md`; no repetido en esta revisión. No acredita rechazados, pendientes, duplicados ni rollback. |
+| Producción | No inspeccionada en vivo ni modificada. Diferencias de configuración y pruebas externas siguen pendientes. |
+
+### 19.2 Estado actualizado de los pendientes anteriores
+
+| Hallazgo anterior | Estado al commit revisado | Qué falta para cerrarlo |
+|---|---|---|
+| REV-01: reembolsos/contracargos conservaban aprobado | Corrección presente: se admiten cambios financieros y se utiliza `provider_updated_at`. No declarar cerrado por lectura únicamente. | Prueba integrada aprobado → reembolsado/contracargo, eventos repetidos y antiguos, visualización en portal/admin y regla de atención. |
+| REV-02: checkout público sin autorización y conciliación de reintentos | Parcialmente corregido: Pro exige sesión/titularidad o clave ligada a la solicitud reciente; público incorpora límite por IP. | Resolver asociación robusta AUD27-02, comprobar consulta al proveedor antes de permitir nuevos cobros y autorización de todas las rutas Bricks/Pro. |
+| REV-03: nota pública terminaba interna | Corrección presente en interfaz y backend: `publicNote` e `internalNote` separados. | Aprobar con ambas y verificar correo/portal/API; solo administración ve la interna. Probar devolución al experto y claridad de las indicaciones que sí puede consultar. |
+| REV-04: correo de pago sin acceso al portal | Corrección presente: plantilla cliente con referencia, importes y «Consultar mis solicitudes»; idioma español/inglés. | Correo recibido en buzón real, enlace con/sin sesión, acceso a todas las solicitudes del correo y ausencia de datos privados en audiencia de experto. |
+| REV-05: portal redirigía sin confirmar conversión | Corrección presente: resumen USD/TRM/fecha/COP antes de Pro y desglose durante Bricks. | Probar reintento, recotización y conservación de la misma preferencia/importe al confirmar. |
+| REV-06: formulario repone origen al entrar directamente | Existe un cambio explícito de implementación que permite entrada directa, documentado en 18.5 y commits posteriores. Contradice la regla original de rechazar enlaces sin origen. | Resolver coherencia funcional/documental en AUD27-05; no presentarlo como requisito original cumplido. |
+| REV-07: actividad Neon por WebSocket cada 60 s | Pendiente de medición; no se observó cambio del mecanismo. | Medir con conexiones abiertas y preservar revocación al optimizar. |
+| REV-08: preparación por entorno | Dev tiene cron de 30 minutos; configuración de producción sigue cada minuto. | Revisar migraciones, credenciales, bindings, colas y cron en la promoción controlada; no copiar secretos de dev. |
+
+El portal bilingüe, el shell compartido y los estados de retorno son avances presentes en código. Falta probar errores, mensajes de pendiente y vuelta a «Mis solicitudes» en ambos idiomas. El navegador nunca confirma un cobro por el parámetro de retorno.
+
+### 19.3 AUD27-01 — Validar vigencia de la solicitud antes del cobro Bricks
+
+**Prioridad alta / P0.** Archivos: `worker/routes/publicRequests.js`, `worker/routes/clientPortal.js` y pruebas de pago.
+
+**Problema:** `processBricksPayment` consulta intento y correo del cliente, pero no el estado de atención ni `confirmed_payment_attempt_id`. La actualización que marca el envío al proveedor solo condiciona el estado del intento. Preparar un intento cuando el caso era válido no autoriza cobrarlo indefinidamente.
+
+**Escenario:** cliente abre el formulario; administración cancela la solicitud; el cliente mantiene esa pestaña y envía los datos de pago. El flujo revisado todavía puede llamar a `POST /v1/payments`.
+
+- [ ] Distinguir recuperación de un pago ya enviado de autorización para iniciar un cobro nuevo.
+- [ ] Antes de iniciar el primer envío, comprobar solicitud vigente, cobro requerido, monto/moneda válidos, intento asociado y autorización del cliente o capacidad limitada de pago inicial.
+- [ ] Rechazar nuevo envío si está cancelada/cerrada o ya tiene pago confirmado; contemplar la política de reembolso/contracargo sin autorizar automáticamente otro cargo.
+- [ ] Aplicar transición/reserva atómica coordinada por solicitud e intento y por todas las rutas de inicio de pago, no solo un `if` de frontend. Definir el orden con cancelación y confirmación concurrentes; evitar sostener una transacción durante la llamada externa.
+- [ ] Si el proveedor ya pudo recibir el cobro, conservar estado incierto y conciliar. Una cancelación tardía requiere manejo administrativo; no afirmar que puede retirar un cargo en vuelo.
+- [ ] Conservar clave idempotente y trazabilidad; una solicitud de consulta no debe iniciar otro cobro.
+
+**Aceptación:** cancelar antes de la reserva de cobro bloquea la llamada al proveedor; si el envío ganó la carrera se registra como en curso y se concilia. Segundo pago confirmado impide nuevo envío. Dos pestañas mantienen un único efecto lógico. Pago enviado antes de cancelar sigue siendo consultable.
+
+### 19.4 AUD27-02 — Asociar pagos Pro a su intento sin depender de preference_id
+
+**Prioridad alta / P0.** Funciones: `selectPaymentAttemptCandidate`, `recordVerifiedPayment`, verificación de retorno, webhook y conciliación administrativa en `publicRequests.js`.
+
+**Problema:** al haber dos o más intentos Pro y una respuesta sin `preference_id` ni metadata, el selector devuelve `null`, incluso cuando existe una asociación previa mediante `mercado_pago_payment_id`. El comportamiento falla de forma prudente, pero puede dejar un pago real sin habilitar atención. Esta es una condición reproducida; no se afirma que todas las respuestas del proveedor omitan esos campos.
+
+- [ ] Incluir el ID externo de pago en las consultas de candidatos y resolver primero una asociación ya persistida y consistente.
+- [ ] Definir identificador estable por intento para nuevos pagos Pro mediante metadata u otro mecanismo documentado y soportado por la integración. Mantener referencia de negocio de la solicitud por separado.
+- [ ] Verificar ID externo, comercio/integración, solicitud, importe COP, moneda y método antes de aceptar una asociación; conservar separación de credenciales Bricks/Pro.
+- [ ] Si hay ambigüedad real y no existe vínculo probado, mantener diagnóstico y revisión administrativa; nunca elegir el intento más reciente solo por fecha.
+- [ ] Revisar los intentos históricos sin metadata. Permitir conciliación autorizada con evidencia sin editar referencias financieras a ciegas.
+- [ ] Registrar proveedores/pagos distintos como movimientos distintos; no sobrescribir un pago conocido con otro ni duplicar la habilitación.
+
+**Aceptación:** dos intentos y pago ya vinculado se resuelven sin `preference_id`; nuevo intento con identificador soportado se asocia correctamente; referencia o importe incorrecto se rechaza; ambigüedad sin evidencia queda visible. Webhook, retorno y conciliación simultáneos generan una habilitación y no repiten notificaciones.
+
+### 19.5 AUD27-03 — Rollback Bricks → Pro sin bloquear intentos terminados
+
+**Prioridad media / P1, antes de declarar listo el rollback.** Archivo principal: `src/operations/ClientPortalApp.vue`, con reglas comunes de backend.
+
+**Problema:** `startPayment` revisa primero si el último modo era Bricks y retorna si el flag está apagado, antes de separar casos rechazados/terminados de los pendientes. Puede bloquear un nuevo intento Pro permitido por la política.
+
+| Situación al apagar Bricks | Comportamiento requerido |
+|---|---|
+| Solicitud sin intento previo | Preparar nuevo intento Pro si el pago está permitido. |
+| Último Bricks rechazado/cancelado y conciliado, sin otro pago pendiente/aprobado | Permitir nuevo intento Pro, ligado a la misma solicitud. |
+| Bricks enviado, pendiente o incierto | Consultar/conciliar con credencial Bricks; no convertirlo a Pro ni iniciar otro cobro. |
+| Bricks preparado y no enviado | Definir cancelación local segura e irreversible antes de permitir Pro; impedir que una pestaña vieja envíe el Brick invalidado. |
+| Pago aprobado por cualquiera de los métodos | Mostrar confirmación y seguimiento; impedir otro pago. |
+| Consulta al proveedor falla | Mantener estado prudente y ofrecer actualización/soporte, sin un nuevo cobro. |
+
+- [ ] Seleccionar el método de un intento nuevo por configuración vigente; conservar el método persistido para cada intento histórico.
+- [ ] Aplicar decisión en backend además de la UI; compartir condiciones entre landing, portal y pestañas ya abiertas.
+- [ ] Probar apagar/encender flag sin despliegue, manteniendo las credenciales necesarias para conciliar intentos anteriores.
+
+**Aceptación:** rejected conciliado → flag apagado → intento Pro nuevo; pendiente/ambiguo → flag apagado → solo recuperación Bricks. Ningún caso duplica solicitud, cobro ni notificaciones.
+
+### 19.6 AUD27-04 — Restablecer la suite completa y reforzar regresiones
+
+**Prioridad P0 de validación antes de promoción.** Resultado observado: 101/104, no suite verde.
+
+| Prueba fallida | Explicación observada | Trabajo requerido |
+|---|---|---|
+| `notificationQueue.test.js`: aislamiento del experto | El test busca el efecto del cliente con versión `general-v1`; ahora el cliente usa plantilla/versionado propios y la búsqueda devuelve undefined. | Actualizar contrato de plantilla sin debilitar las aserciones de privacidad ni de deduplicación. |
+| `notificationQueue.test.js`: reintento Resend | La expectativa fija orden cliente/admin; el orden real cambió a admin/cliente. | Verificar destinatario, efecto aceptado y reintento por identidad, no por posición accidental; asegurar que los aceptados no se repiten. |
+| `publicRequestRateLimits.test.js`: emisión de origen | Consulta la ruta reemplazada `request-attribution-token`, ahora 404, esperando el antiguo 503. | Probar el emisor actual `request-start` sin IP/secreto, con límite agotado y con emisión válida; verificar por separado la retirada de la ruta vieja. |
+
+- [ ] No borrar pruebas ni marcar skip para conseguir verde. Si una expectativa revela un defecto real, corregir código y añadir regresión.
+- [ ] Añadir cobertura funcional para AUD27-01/02/03: cancelación, múltiples intentos, metadata ausente, rollback, incertidumbre y concurrencia.
+- [ ] Ejecutar la suite completa y build; registrar commit, comando y resultado real. Si cambia la cantidad de pruebas, reportar la nueva cifra sin perseguir un número fijo.
+- [ ] Completar pruebas contra PostgreSQL/Cloudflare dev para las garantías que un mock de SQL no demuestra.
+- [ ] Verificar que el pipeline de promoción falla si falla un test requerido.
+
+**Aceptación:** cero pruebas fallidas; correos al experto sin identidad del cliente; un efecto por destinatario y clave; límites comprobados en la ruta vigente. Las pruebas específicas de Bricks no sustituyen la suite completa.
+
+### 19.7 AUD27-05 — Resolver divergencia de la política de origen
+
+**Prioridad P1 funcional/documental.** El requisito original y REV-06 exigían rechazar formularios sin origen. La implementación más reciente permite entrada directa y obtiene `direct_web` en segundo plano; el token sigue siendo obligatorio en el POST y no autentica al cliente.
+
+- [ ] Registrar explícitamente la decisión de producto: mantener acceso directo o exigir acceso desde enlace con origen. La revisión no autoriza por sí sola cambiar el requisito.
+- [ ] Mientras se decide, conservar documentados requisito original y comportamiento actual; no marcar REV-06 cumplido bajo la regla antigua.
+- [ ] Si se mantiene acceso directo, tratarlo como landing y actualizar criterios de aceptación, enlaces, textos y atribución. Un enlace de agente inválido no debe convertirse silenciosamente en landing.
+- [ ] Si se conserva la regla original, retirar la generación automática dentro del formulario y emitir origen desde el punto de entrada autorizado.
+- [ ] En ambas opciones: comprobar hash, vencimiento, revocación y agente activo en servidor; limitar abuso y separar token de origen de autorización del checkout.
+
+**Aceptación:** política única en plan, UI, backend y pruebas; origen válido preservado; agente inválido rechazado; casos sin origen se comportan según la decisión registrada. No prometer que un token público demuestra que alguien visitó antes una página concreta.
+
+### 19.8 AUD27-06 — Matriz de pruebas externas y recorrido completo
+
+**Prioridad P0 de salida para el método que se habilite.** Usar solo solicitudes de prueba, buzones autorizados y tarjetas/credenciales sandbox. La aprobación Bricks documentada es evidencia de un caso previo, no del conjunto siguiente.
+
+| Flujo | Escenarios obligatorios | Evidencia de cierre |
+|---|---|---|
+| Pago inicial Pro | Aprobado, rechazado, pendiente, abandono y regreso; monto USD/TRM/COP confirmado; retorno con/sin ID de pago | Solicitud, intento y estado correcto; sin nueva solicitud por reintento. |
+| Bricks | Aprobado, rechazado, pendiente, doble clic, timeout/409, recarga y recuperación | Un cargo lógico por intento, estado verificado por servidor y mensaje prudente ante incertidumbre. |
+| Convivencia de métodos | Pro en curso con flag Bricks activo; apagar Bricks con intentos enviados, no enviados y terminados | Método histórico preservado; nuevos intentos seguros usan modo vigente. |
+| Webhooks | Firma inválida, repetición, llegada tardía, caída temporal del proveedor y ambos modos/credenciales | Actualización autorizada, idempotente y sin regresión temporal; verificar configuración real de firma de las aplicaciones, sin guardar secretos en evidencia. |
+| Finanzas posteriores | Reembolso, contracargo, dos pagos distintos aprobados | Estado vigente, diagnóstico/alerta y resolución administrativa; una sola atención habilitada. |
+| Portal | Correo y código real, expiración, reenvío, cierre de sesión y tres solicitudes del mismo correo | Todas visibles para titular; ninguna para otro usuario; caso sin pagar recuperable. |
+| Operación | Agente comparte enlace → cliente crea/paga → experto ve solo lo asignado y autorizado → responde → admin aprueba | Respuesta y nota pública disponibles; datos personales y nota interna protegidos. |
+| Notificaciones | Correo de pago, respuesta aprobada, agente de origen, experto/admin según reglas; fallo parcial Resend | Destinatarios aislados, enlace al listado, reintento por efecto sin cambiar pago. |
+| Adjuntos | Carga válida/inválida y descarga cliente/experto/admin/usuario ajeno | R2 privado y autorización por recurso; conservar límites y revisión de privacidad. |
+| Recuperación | Caída tras commit, fallo de publicación, consumidor caído, leases vencidos, DLQ y redrive | Trabajo durable recuperado, sin efectos duplicados ni reproducción automática de fallos definitivos. |
+| Idioma y retorno | Español/inglés en portal, formulario, correos y resultado; sesiones expiradas | Estados aprobado/pendiente/rechazado comprensibles y regreso al listado; no éxito deducido solo de URL. |
+
+Recorrido mínimo de aceptación: **crear solicitud con imágenes → rechazo de pago → ingresar por correo/código → ver todas las solicitudes → reintentar sobre el mismo caso → confirmar pago → asignar/avisar al experto y agente cuando aplique → respuesta → aprobación con nota pública e interna → correo → consulta de respuesta en portal**. Repetir para landing y agente y para los métodos que vayan a estar habilitados.
+
+No cerrar filas con un simple HTTP 200. Guardar evidencia sin datos sensibles: IDs de prueba, estados, commit, versión de Worker, resultado y fecha; diferenciar aceptado por Resend de entregado en buzón.
+
+### 19.9 AUD27-07 — Reportes y balance del alcance original
+
+**Pendiente funcional, P1 para entrega completa.** El menú Reportes y el listado de pagos no acreditan los reportes por agente, experto y cliente ni el balance solicitado.
+
+- [ ] Reporte por agente: solicitudes atribuidas, fechas, servicio, estado de atención y situación de pago.
+- [ ] Reporte por experto: asignaciones, respuestas pendientes de revisión/aprobadas y casos cerrados. Definir atribución histórica ante reasignación; no contar el mismo caso como dos ingresos.
+- [ ] Reporte por cliente: historial de solicitudes/pagos con filtros y permisos administrativos; no disponible al experto.
+- [ ] Balance por periodo: cobros aprobados, devoluciones, contracargos y neto, con movimientos trazables. Si no se conocen comisiones/liquidaciones, no llamar al total «dinero recibido en banco» ni «utilidad».
+- [ ] Mantener USD contratado y COP cobrado separados; definir fechas y zona horaria de corte y no sumar monedas directamente.
+- [ ] Incluir pagos adicionales reales aunque no habiliten otra atención; separar solicitudes/intentos/movimientos para no duplicar totales.
+- [ ] Totales conciliables contra movimientos fuente; filtros por agente, experto, cliente y periodo según corresponda, con ámbito autorizado.
+- [ ] Antes de un piloto, disponer al menos de control financiero básico y conciliación. Aplazar reportes del alcance completo requiere acuerdo de alcance explícito; las exportaciones/gráficos avanzados pueden planificarse después.
+- [ ] Si se implementan exportaciones, aplicar SEC-10 y las reglas de reportes asincrónicos de sección 9.
+
+**Aceptación:** conjunto de datos de prueba con rechazo, aprobación, reembolso, contracargo, doble pago y reasignación produce totales esperados sin multiplicarlos por número de intentos. Agente y experto no obtienen datos financieros/clientes no autorizados.
+
+### 19.10 AUD27-08 — Resolver excepciones desde administración
+
+**P1 funcional/operativo.** Reutilizar conciliación y gestión de cola existentes; verificar cobertura real antes de crear pantallas nuevas.
+
+| Excepción | Acción esperada y límite |
+|---|---|
+| `creation_uncertain` o cobro incierto | Consultar proveedor, asociar evidencia y conservar bloqueo mientras no se resuelva. No «marcar pagado» sin respaldo ni reintentar a ciegas. |
+| Dos pagos aprobados | Mostrar ambos y alertar; resolver devolución con procedimiento autorizado. No eliminar el segundo ni reactivar atención. |
+| Solicitud sin experto | Cola administrativa visible; asignar experto elegible y avisar después de pago confirmado. |
+| Correo fallido | Ver estado por destinatario/efecto, reintentar solo fallidos y conciliar inciertos; respuesta aprobada sigue accesible en portal. |
+| Envío de cola/DLQ fallido | Motivo visible, redrive autorizado con razón y auditoría; conservar claves idempotentes. |
+| Correo de cliente mal registrado | Corrección con verificación de titularidad y auditoría; no transferir acceso por conocer referencia. |
+| Cancelación con cobro en vuelo | Registrar resolución financiera y estado de atención por separado; informar al cliente sin afirmar devolución inexistente. |
+
+**Aceptación:** un administrador puede resolver casos de prueba mediante procedimientos definidos, con trazabilidad y permisos, sin editar directamente tablas ni omitir validación del proveedor.
+
+### 19.11 AUD27-09 — Preparación operativa y promoción controlada
+
+No se autoriza despliegue a producción con esta actualización documental.
+
+- [ ] Completar AUD27-01/02/04 y pruebas externas del método que se vaya a habilitar. Si Bricks queda fuera de primera salida, debe permanecer desactivado y validarse el bloqueo efectivo de sus endpoints nuevos, preservando recuperación de intentos históricos donde existan.
+- [ ] Completar notas, correos, portal, decisión de origen, control financiero mínimo y procedimientos de excepción. Mantener registro de alcance pendiente.
+- [ ] Configurar catálogo real, especialidades, precios/descripciones, expertos activos, usuarios/roles y reglas de destinatarios; comprobar que los agentes solo comparten enlaces y consultan sus casos.
+- [ ] Revisar migraciones aplicables hasta 044 en orden y compatibilidad con el release; el migrador actual carga `.env.dev`, por lo que la promoción requiere un procedimiento explícito para producción. No reutilizar secretos ni ejecutar comandos dev contra prod por conveniencia.
+- [ ] Configurar credenciales de producción independientes para los métodos habilitados, URL pública canónica, webhook/firma de cada aplicación, correos/dominio remitente y protección antibots; comprobar aislamiento Neon/Turso/R2/Queues/DO.
+- [ ] Exigir Turnstile configurado en producción y resolver medidas SEC pendientes según prioridad, incluidos permisos, privacidad, recuperación de cuentas/MFA, respaldos y prueba de restauración.
+- [ ] Confirmar colas, consumidores, DLQ y alertas en destino; promover el cron de respaldo a 30 minutos solo tras demostrar publicación inmediata y recuperación.
+- [ ] Medir WebSocket/Neon según REV-07 y registrar consumo total; no atribuir el 96,7 % de reducción del cron a la factura completa.
+- [ ] Definir responsables de soporte y monitoreo, umbrales de errores/backlog y procedimiento de conciliación financiera durante estabilización.
+- [ ] Preparar rollback de aplicación y flags compatible con migraciones y pagos en curso. Apagar un método afecta nuevos cobros, no elimina obligaciones de conciliación.
+- [ ] PR revisado y checks aprobados antes de promoción a `main`; verificación posterior con el recorrido autorizado para producción y monitoreo de errores, sin cobros reales de prueba no autorizados.
+
+### 19.12 Orden de ejecución y cierre verificable
+
+| Orden | Entrega | Condición de cierre |
+|---|---|---|
+| 1 | AUD27-01 y AUD27-02: autorización de cobro/asociación financiera | Regresiones automáticas y pruebas de integración de cancelación, varios intentos y eventos duplicados/antiguos. |
+| 2 | AUD27-03 y AUD27-04: rollback y suite | Flag probado con estados distintos; cero fallos en suite completa y build correcto. |
+| 3 | AUD27-05 y validación de REV-03/04/05 | Política de origen registrada; notas privadas/públicas, correo al listado y conversión probados de extremo a extremo. |
+| 4 | AUD27-06: validación externa | Matriz ejecutada en dev con evidencia; cada faltante tiene responsable y condición de salida. |
+| 5 | AUD27-07 y AUD27-08: operación de negocio | Control financiero/reportes del alcance acordado y excepciones resolubles con auditoría. |
+| 6 | AUD27-09, REV-07/08 y SEC pendientes | Configuración destino, restauración, alertas y rollback revisados; promoción expresamente autorizada. |
+
+Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendiente / implementado / probado en dev / listo para promoción**) y evidencia. Un check de implementación no reemplaza prueba en servicios reales. No marcar cerrados los hallazgos de esta sección por la aprobación sandbox de un único pago.
+
 
 ## Referencias internas
 
