@@ -60,6 +60,7 @@ export async function handleOperationsData(request, env) {
   const offset = (page - 1) * pageSize
   const isAdmin = claims.roles?.includes('admin')
   const assignedOnly = isRequests && isAdmin && url.searchParams.get('assignedOnly') === 'true'
+  const unassignedExpertOnly = isRequests && isAdmin && url.searchParams.get('unassignedExpertOnly') === 'true'
 
   if (isClients) {
     const clientRequestAccess = isAdmin
@@ -105,6 +106,7 @@ export async function handleOperationsData(request, env) {
         OR r.source ILIKE ${searchPattern})
         AND ${requestAccess}
         AND (${assignedOnly ? sql`r.assigned_expert_id IS NOT NULL` : sql`TRUE`})
+        AND (${unassignedExpertOnly ? sql`r.assigned_expert_id IS NULL` : sql`TRUE`})
         AND (${requestStatus ? sql`r.status = ${requestStatus}` : sql`TRUE`})
         AND (${requestServiceType ? sql`r.service_type = ${requestServiceType}` : sql`TRUE`})
         AND (${requestSource ? sql`COALESCE(r.source_channel, CASE WHEN r.source = 'agent' THEN 'agent_link' ELSE 'direct_web' END) = ${requestSource}` : sql`TRUE`})
@@ -123,7 +125,7 @@ export async function handleOperationsData(request, env) {
         payment.updated_at AS payment_updated_at
       FROM operations.requests r
       JOIN operations.clients c ON c.id = r.client_id
-      LEFT JOIN operations.users u ON u.id = COALESCE(r.agent_id, r.created_by)
+      LEFT JOIN operations.users u ON u.id = r.agent_id
       LEFT JOIN operations.users expert ON expert.id = r.assigned_expert_id
       LEFT JOIN LATERAL (
         SELECT * FROM operations.request_payments p
@@ -145,6 +147,7 @@ export async function handleOperationsData(request, env) {
         OR r.source ILIKE ${searchPattern})
         AND ${requestAccess}
         AND (${assignedOnly ? sql`r.assigned_expert_id IS NOT NULL` : sql`TRUE`})
+        AND (${unassignedExpertOnly ? sql`r.assigned_expert_id IS NULL` : sql`TRUE`})
         AND (${requestStatus ? sql`r.status = ${requestStatus}` : sql`TRUE`})
         AND (${requestServiceType ? sql`r.service_type = ${requestServiceType}` : sql`TRUE`})
         AND (${requestSource ? sql`COALESCE(r.source_channel, CASE WHEN r.source = 'agent' THEN 'agent_link' ELSE 'direct_web' END) = ${requestSource}` : sql`TRUE`})
@@ -308,11 +311,11 @@ async function createAgentRequest(sql, request, claims, env) {
   const resolvedClientId = String(clientRows[0].id)
   await sql`
     INSERT INTO operations.requests (
-      id, client_id, reference, source, legal_entity_type, email, phone, whatsapp,
+      id, client_id, reference, source, source_channel, legal_entity_type, email, phone, whatsapp,
       service_name, service_amount_cents, service_currency, service_type, freight_agent,
       product_type, status, created_by, payment_required
     ) VALUES (
-      ${requestId}, ${resolvedClientId}, ${reference}, 'agent', ${legalEntityType}, ${email || null},
+      ${requestId}, ${resolvedClientId}, ${reference}, 'agent', 'admin_entry', ${legalEntityType}, ${email || null},
       ${phone || null}, ${whatsapp || null}, ${serviceName}, 0, 'COP', ${serviceType},
       ${freightAgent || null}, ${productType}, 'pending', ${claims.sub}, FALSE
     )
@@ -338,7 +341,7 @@ async function getRequestDetail(sql, requestId, claims) {
         u.full_name AS agent_name, u.email AS agent_email
       FROM operations.requests r
       JOIN operations.clients c ON c.id = r.client_id
-      LEFT JOIN operations.users u ON u.id = COALESCE(r.agent_id, r.created_by)
+      LEFT JOIN operations.users u ON u.id = r.agent_id
       LEFT JOIN operations.users assigned ON assigned.id = r.assigned_expert_id
       LEFT JOIN LATERAL (
         SELECT * FROM operations.request_payments p
@@ -623,12 +626,12 @@ function serializeClient(row) {
   }
 }
 
-function serializeRequest(row) {
+export function serializeRequest(row) {
   const sourceChannel = row.source_channel ? String(row.source_channel) : (row.source === 'agent' ? 'agent_link' : 'direct_web')
   return {
     id: String(row.id),
     reference: String(row.reference),
-    source: sourceChannel === 'agent_link' ? 'Agente' : 'Página web',
+    source: sourceChannel === 'agent_link' ? 'Agente' : sourceChannel === 'admin_entry' ? 'Administración' : 'Página web',
     sourceChannel,
     legalEntityType: String(row.legal_entity_type),
     email: row.email ? String(row.email) : '',

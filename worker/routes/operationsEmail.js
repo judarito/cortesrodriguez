@@ -68,6 +68,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const paymentPolicy = notificationPolicyForPayment(eventCode, Boolean(request.payment_required), paid, options.forceAdminOnly)
   if (!paymentPolicy.send) return { sent: false, reason: paymentPolicy.reason }
   const sourceChannel = request.source_channel || (request.source === 'agent' ? 'agent_link' : 'direct_web')
+  const ruleSourceChannel = sourceChannel === 'admin_entry' ? 'direct_web' : sourceChannel
 
   const rules = await sql`
     SELECT id, audiences
@@ -75,7 +76,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
     WHERE event_code = ${eventCode}
       AND service_type IN ('all', ${request.service_type})
       AND (consultation_type_id IS NULL OR consultation_type_id = ${request.consultation_type_id})
-      AND (source_channel IS NULL OR source_channel = ${sourceChannel})
+      AND (source_channel IS NULL OR source_channel = ${ruleSourceChannel})
       AND active = TRUE
     ORDER BY (consultation_type_id IS NOT NULL) DESC,
       (source_channel IS NOT NULL) DESC,

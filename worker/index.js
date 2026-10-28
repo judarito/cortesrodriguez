@@ -3,6 +3,7 @@ import { defaultContent, normalizeContent } from '../src/contentDefaults.js'
 import { handleOperationsAuth } from './routes/operationsAuth.js'
 import { handleAppNotifications } from './routes/appNotifications.js'
 import { handleOperationsData } from './routes/operationsData.js'
+import { handleOperationsReports } from './routes/operationsReports.js'
 import { handleOperationsAttachments } from './routes/operationsAttachments.js'
 import { handlePublicRequests } from './routes/publicRequests.js'
 import { handleOperationsSecurity } from './routes/operationsSecurity.js'
@@ -85,6 +86,9 @@ export default {
 
       const operationsDataResponse = await handleOperationsData(request, env)
       if (operationsDataResponse) return operationsDataResponse
+
+      const operationsReportsResponse = await handleOperationsReports(request, env)
+      if (operationsReportsResponse) return operationsReportsResponse
 
       const operationsAttachmentsResponse = await handleOperationsAttachments(request, env)
       if (operationsAttachmentsResponse) return operationsAttachmentsResponse

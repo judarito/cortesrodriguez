@@ -2,7 +2,7 @@
 
 **Proyecto:** Cortés Rodríguez Asesores  
 **Fecha:** 25 de octubre de 2026  
-**Estado:** AUD27-01 a AUD27-04 están publicados en `dev` y desplegados en el Worker Dev. Falta su validación integrada con Neon, Cloudflare y Mercado Pago sandbox; siguen abiertos AUD27-05 a AUD27-09 y el nuevo AUD27-10 (salida de Bricks al portal cliente). Producción y `main` permanecen fuera del alcance.
+**Estado (27-oct-2026):** AUD27-01 a AUD27-04 están en Dev y desplegados; sus pruebas locales pasan, pero la matriz de pago sandbox y servicios externos no está cerrada. AUD27-05/07/08 tienen implementación funcional local en curso: reportes con control financiero, atribución explícita y panel administrativo de correos inciertos/DLQ. AUD27-06 (pruebas externas), partes de AUD27-08 (reembolso de pagos duplicados y corrección verificada del correo cliente), AUD27-09 y comprobación visual de AUD27-10 siguen pendientes. No se modifica `main` ni Producción.
 **Código desplegado:** rama local `dev`, commit `bb928e4` (incluye CTA post-Bricks, manejo prudente de resultados inciertos y prueba de preferencia Pro); Worker Dev `cortes-rodriguez-asesores-dev`, versión `2df5de7e-d63a-42f5-af3b-5e7332da2b3e`, desplegado directamente desde local el 2026-10-27. La sincronización con GitHub `dev` quedó pendiente por fallo temporal de resolución DNS de `github.com`; no se tocó `main` ni Producción. El estado vigente se resume en 19.14–19.15.
 
 **Actualización:** medidas de seguridad contrastadas en `dev`; controles de infraestructura pendientes de evidencia se distinguen de faltantes de código.
@@ -22,10 +22,10 @@
 | AUD27-02: asociación y conciliación de intentos | Implementado en `edb8e50`, desplegado en `be678cd` | Casos locales de ID externo, metadata, identidad contradictoria, ambigüedad e indisponibilidad | Verificar pagos Pro históricos/nuevos y metadata en sandbox |
 | AUD27-03: vuelta de Bricks a Pro | Implementado en `edb8e50` | Política de interfaz e invalidación SQL de intentos nunca enviados | Probar flag remoto, pestañas abiertas y estados de ambos métodos |
 | AUD27-04: suite y regresiones | Completado localmente | **120/120**, sin fallos ni omitidas; build y `git diff --check` correctos | Mantener suite verde e incorporar evidencia de integración |
-| AUD27-05: política de origen | Pendiente | Divergencia registrada entre requisito original y acceso directo actual | Registrar decisión y alinear plan, código y pruebas |
+| AUD27-05: política de origen | Implementación local | Directa = `direct_web`; enlace validado = `agent_link`; alta interna = `admin_entry`; `created_by` queda como auditoría | Verificar atribución y notificaciones en Dev; revisar filas históricas ambiguas |
 | AUD27-06: recorrido completo externo | Pendiente para las correcciones nuevas | El pago Bricks aprobado anterior no valida el código `be678cd` recién desplegado | Ejecutar matriz 19.8 con correo real autorizado y pagos sandbox |
-| AUD27-07: reportes y balance | Pendiente | Listado de pagos no sustituye los reportes del alcance | Implementar/controlar alcance financiero acordado |
-| AUD27-08: excepciones administrativas | Pendiente de completar/verificar | Hay conciliación y gestión de colas parciales | Demostrar resolución auditada sin editar tablas |
+| AUD27-07: reportes y balance | Implementación local | Reporte admin por agente, experto, cliente, estados y pagos; USD/COP separados, duplicados identificados, detalle paginado | Revisar datos reales de Dev y límites de reporte |
+| AUD27-08: excepciones administrativas | Implementación parcial local | Panel admin para correos inciertos y DLQ; filtro de solicitudes sin experto; conciliación de pagos en detalle | Verificar en Dev; devolución duplicada y cambio seguro del correo cliente siguen fuera de la interfaz |
 | AUD27-09: preparación de producción | Pendiente; no se inicia promoción | Dev está desplegado; Prod no se inspeccionó ni modificó | Completar condiciones de salida solo si se solicita promoción |
 
 **No confundir:** publicado en la rama `dev` no significa desplegado en el Worker dev, probado en servicios externos ni listo para producción.
@@ -916,6 +916,14 @@ Orden del trabajo pendiente:
 
 **Criterio de aceptación:** desde cada resultado Bricks el cliente llega al portal en un clic, puede autenticarse si hace falta y encuentra la solicitud; el estado de pago lo determina el backend y el código de seguimiento no se pierde.
 
+
+### 19.16 Cierre funcional en curso — 27-oct-2026
+
+- AUD27-05: se formaliza `direct_web` para la página pública y `agent_link` solo cuando el servidor valida el enlace. La creación interna del administrador se guarda como `admin_entry`; `created_by` identifica quién registró el caso y nunca sustituye `agent_id`. Los avisos y reportes no atribuyen el alta administrativa a un agente. Los casos históricos ambiguos no se reinterpretan automáticamente.
+- AUD27-07: se incorpora `GET /api/app/reports`, protegido por sesión, rol admin y `reports.read`, con fechas inclusivas y máximo 366 días. El panel permite filtrar fechas y consultar solicitudes/pagos por agente, experto y cliente; expone detalle paginado de intentos y alertas de pagos duplicados. Los importes USD/COP no se suman entre sí. El resumen usa el intento confirmado de la solicitud o el último intento como respaldo; reembolso/contracargo son estados actuales, no un ledger ni liquidación bancaria.
+- AUD27-08: se agrega filtro de solicitudes sin experto y acceso administrativo a los endpoints existentes de correo incierto y DLQ. Cada acción destructiva o reintento pide confirmación/justificación; conciliar como aceptado requiere ID de Resend y reintentar requiere confirmar que Resend no aceptó el mensaje. Quedan fuera de este panel la ejecución de reembolsos y la corrección del correo del cliente, que exige verificación de titularidad.
+- Los bloques anteriores están sujetos a revisión, pruebas, build y despliegue únicamente a Dev. Cierre de código no equivale a validación real en Mercado Pago, Resend, Neon ni Cloudflare.
+- Antes de declarar culminado el plan operativo, completar en Dev la matriz sandbox de AUD27-06, validar acceso/roles y notificaciones, y revisar métricas con datos de prueba. La comprobación visual en la URL de Worker está bloqueada por la política de origen del navegador; requiere prueba manual del usuario o que se autorice ese origen en la política.
 
 ## Referencias internas
 

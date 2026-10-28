@@ -1,11 +1,12 @@
 # Plan: agentes, expertos y solicitudes de asesoría
 
-Evolucionar la plataforma operativa para que cada solicitud de asesoría aduanera tenga un origen, una especialidad, un precio, un experto responsable y una respuesta aprobada por administración. Toda solicitud debe registrar claramente una de las dos fuentes actuales: **directa desde nuestra página** o **proveniente de un enlace compartido por un agente**. La landing seguirá siendo un módulo separado; el enlace de agente solo abrirá el formulario público y no permitirá que el agente cree solicitudes desde el panel.
+Evolucionar la plataforma operativa para que cada solicitud de asesoría aduanera tenga un origen, una especialidad, un precio, un experto responsable y una respuesta aprobada por administración. Toda solicitud pública debe registrar una de las dos fuentes: **directa desde nuestra página** o **proveniente de un enlace compartido por un agente**. Las altas internas de administración usan el canal independiente admin_entry; no se cuentan como una referencia de agente ni como visita pública. La landing seguirá siendo un módulo separado; el enlace de agente solo abrirá el formulario público y no permitirá que el agente cree solicitudes desde el panel.
 
 ## Alcance
 
 - **Incluye:** catálogo de servicios y especialidades, precios configurables, enlaces de agentes, formulario público, asignación de expertos, preguntas con imágenes, revisión administrativa, notificaciones por reglas, privacidad por campos y reportes.
 - **Fuentes de solicitud:** `direct_web` cuando el cliente llega directamente desde nuestra página; `agent_link` cuando llega mediante el enlace de un agente. Ambas fuentes usan el mismo formulario público, pero `agent_link` conserva el agente propietario para seguimiento, reportes y notificaciones.
+- **Altas administrativas:** guardar el canal admin_entry y `created_by` como el usuario operador; dejar `agent_id` vacío salvo que una atribución de enlace válida haya sido verificada. `created_by` sirve para auditoría y acceso a casos internos autorizados, nunca como sustituto de la atribución comercial.
 - **Regla de atribución:** un cliente que inició el flujo mediante un enlace de agente debe conservar ese origen aunque navegue dentro de la página, recargue el formulario o abandone y regrese durante la vigencia del enlace. No se debe confiar en un campo oculto del navegador para determinar el agente.
 - **No incluye:** migración de la landing, creación manual de solicitudes por agentes, comunicación directa experto-cliente sin aprobación, ni cambios directos en `main` o producción.
 
@@ -97,6 +98,7 @@ Asignación aleatoria entre expertos activos
 - [ ] Tratar como fuentes distintas y mutuamente excluyentes `direct_web` y `agent_link`.
 - [ ] Para `direct_web`, registrar que el cliente llegó directamente desde nuestra página y dejar `agent_id` vacío.
 - [ ] Para `agent_link`, registrar el enlace y `agent_id` del agente propietario; nunca aceptar ese valor desde campos editables del navegador.
+- [ ] Para altas internas, usar admin_entry; no asociar al administrador creador como agente.
 - [ ] Crear `agent_links` con `agent_id`, etiqueta, hash de token, estado, expiración, revocación y fechas de auditoría.
 - [ ] Usar tokens opacos en la URL; nunca guardar ni exponer el token original en la base de datos.
 - [ ] Usar una ruta específica como `/solicitud/agente/:token` para iniciar el flujo de agente, en lugar de depender únicamente de parámetros editables.

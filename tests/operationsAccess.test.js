@@ -45,6 +45,7 @@ function mockDatabaseFetch(currentPermissions, activeSession = true, requestPaym
       if (query.includes('FROM operations.clients c')) {
         return queryResult([], query.includes('COUNT(*)::int') ? ['total'] : ['id', 'full_name', 'created_at', 'request_count'])
       }
+      if (query.includes('FROM operations.users u') && query.includes("r.name = 'agent'")) return queryResult([], ['id', 'full_name', 'email'])
       if (query.includes('COUNT(*)::int AS total')) return queryResult([{ total: 0 }], ['total'])
       if (query.includes('FROM operations.requests r') && query.includes('LIMIT')) return queryResult([], ['id'])
       throw new Error(`Unexpected SQL in auth test: ${query}`)
@@ -163,6 +164,26 @@ test('non-admin client list is scoped to clients connected to their own requests
     assert.equal(clientQueries.length, 2)
     assert.ok(clientQueries.every((query) => query.includes('r.agent_id =') && query.includes('r.created_by =')))
     assert.deepEqual((await result.json()).items, [])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('admin can filter the requests list to cases without an assigned expert', async () => {
+  const db = mockDatabaseFetch(['requests.read'], true, null, ['admin'])
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = db.fetch
+  try {
+    const request = new Request('https://app.example.test/api/app/requests?unassignedExpertOnly=true', {
+      headers: { authorization: `Bearer ${tokenWithPermissions([])}` },
+    })
+    const result = await handleOperationsData(request, {
+      NEON_DATABASE_URL: 'postgres://user:pass@ep-test.neon.tech/db', OPERATIONS_JWT_SECRET: jwtSecret,
+    })
+    assert.equal(result.status, 200)
+    const requestQueries = db.statements.filter((query) => query.includes('FROM operations.requests r') && query.includes('assigned_expert_id'))
+    assert.equal(requestQueries.length, 2)
+    assert.ok(requestQueries.every((query) => query.includes('r.assigned_expert_id IS NULL')))
   } finally {
     globalThis.fetch = originalFetch
   }

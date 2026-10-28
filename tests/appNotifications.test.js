@@ -26,6 +26,7 @@ test('agent notifications are limited to requests attributed to the agent', () =
   assert.equal(directRequest.agent, false)
   assert.equal(agentRequest.expert, true)
   assert.equal(roleAudiences('payment_rejected', { source_channel: 'agent_link', source: 'agent', agent_id: 'agent-id' }).agent, false)
+  assert.equal(roleAudiences('payment_approved', { source_channel: 'admin_entry', source: 'agent', agent_id: 'admin-id' }).agent, false)
 })
 
 test('expert notification recipients are only the expert assigned to that request', () => {
@@ -40,6 +41,7 @@ test('request realtime updates target the originating agent and only the assigne
   const agentRequest = requestUpdateRecipientIds({ source_channel: 'agent_link', agent_id: 'agent-1', assigned_expert_id: 'expert-1', eligibleExpertIds: ['expert-1', 'expert-2'] })
   assert.deepEqual(agentRequest, { agentId: 'agent-1', expertId: 'expert-1' })
   assert.deepEqual(requestUpdateRecipientIds({ source_channel: 'direct_web', agent_id: 'agent-1', assigned_expert_id: null }), { agentId: null, expertId: null })
+  assert.deepEqual(requestUpdateRecipientIds({ source_channel: 'admin_entry', source: 'agent', agent_id: 'admin-1', assigned_expert_id: null }), { agentId: null, expertId: null })
 })
 
 test('notification API scopes expert history to current role and current assignment', () => {

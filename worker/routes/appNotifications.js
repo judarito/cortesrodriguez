@@ -120,7 +120,7 @@ export function notificationVisibilityFilter(sql, userId) {
     ) AND EXISTS (
       SELECT 1 FROM operations.requests r
       WHERE r.id = notification.request_id AND r.agent_id = ${userId}
-        AND (r.source_channel = 'agent_link' OR r.source = 'agent')
+        AND COALESCE(r.source_channel, CASE WHEN r.source = 'agent' THEN 'agent_link' ELSE 'direct_web' END) = 'agent_link'
     )) OR
     (notification.audience_role = 'expert' AND EXISTS (
       SELECT 1 FROM operations.user_roles ur JOIN operations.roles role ON role.id = ur.role_id
@@ -272,7 +272,9 @@ export async function publishRequestStateUpdate(sql, env, outboxItem) {
 function validUuid(value) { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) }
 
 export function requestUpdateRecipientIds(request) {
-  const fromAgent = request.source_channel === 'agent_link' || request.source === 'agent'
+  const fromAgent = request.source_channel
+    ? request.source_channel === 'agent_link'
+    : request.source === 'agent'
   return {
     agentId: fromAgent ? request.agent_id || null : null,
     expertId: request.assigned_expert_id || null,
@@ -343,7 +345,9 @@ async function publishRealtime(env, rows) {
 
 export function roleAudiences(eventCode, request, adminOnly = false) {
   if (adminOnly) return { admin: true, agent: false, expert: false }
-  const fromAgent = request.source_channel === 'agent_link' || request.source === 'agent'
+  const fromAgent = request.source_channel
+    ? request.source_channel === 'agent_link'
+    : request.source === 'agent'
   const audiences = { admin: true, agent: false, expert: false }
   if (fromAgent && request.agent_id && ['request_created', 'payment_approved', 'expert_assigned', 'status_changed', 'expert_response_approved', 'feedback_received', 'feedback_low'].includes(eventCode)) audiences.agent = true
   if (request.assigned_expert_id && ['request_created', 'payment_approved', 'expert_assigned', 'status_changed', 'expert_response_approved'].includes(eventCode)) audiences.expert = true
