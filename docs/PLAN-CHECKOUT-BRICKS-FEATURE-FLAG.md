@@ -5,7 +5,7 @@ Agregar Mercado Pago Checkout Bricks como alternativa seleccionable por feature 
 
 ## Estado vigente de las correcciones
 
-Código publicado en `dev`: `be678cd` (incluye `edb8e50`); Worker Dev desplegado en versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`. **119/119 pruebas locales aprobadas** para AUD27-01 a AUD27-04, build correcto y smoke checks `/solicitud` 200 y `/api/public/features` 200 con `checkoutMode: "bricks"`. Falta validar pagos nuevos en sandbox.
+Código publicado en `dev`: `8a92fc5` (incluye `edb8e50`); Worker Dev desplegado en versión `4a225a1b-aefd-470a-ad9a-086d4574f5a3`. **119/119 pruebas locales aprobadas**, build correcto y smoke checks `/solicitud` 200 y `/api/public/features` 200 con `checkoutMode: "bricks"`. Falta validar pagos nuevos en sandbox y la presentación visual de los resultados.
 
 | Bloque | Estado | Validación que falta |
 |---|---|---|
@@ -137,7 +137,7 @@ La revisión del commit `35d1c8286cad4ce9db85a7355425694918f020a5` se consolidó
 - [ ] Verificar recepción/autenticación de webhooks para las aplicaciones configuradas, eventos repetidos/antiguos y reembolsos/contracargos; no guardar valores de secretos en evidencia.
 - [ ] Probar separación de nota pública/interna, correos del cliente con «Consultar mis solicitudes», seguimiento desde sesión vigente/vencida y lista de varias solicitudes.
 - [x] Mostrar USD/TRM/fecha/COP antes de confirmar y mantener el desglose durante el resultado, en ambos idiomas. Falta repetir la aceptación visual durante pagos de la matriz AUD27-06; el importe final de tarjeta en otra moneda puede depender de la entidad financiera.
-- [x] Quitar la repetición del desglose USD/TRM/COP en el resumen superior de Bricks; conservar la referencia allí y mostrar el precio/conversión/aviso una sola vez junto al checkout. Build local correcto; falta desplegar a Dev y verificar la composición en ambos idiomas y tamaños de pantalla.
+- [x] Quitar la repetición del desglose USD/TRM/COP en el resumen superior de Bricks; conservar la referencia allí y mostrar el precio/conversión/aviso una sola vez junto al checkout. Desplegado en Dev; verificar la composición en ambos idiomas y tamaños de pantalla.
 - [ ] Resolver la divergencia de acceso directo/origen según AUD27-05 sin confundir token de atribución con autorización para cobrar.
 - [ ] Completar reportes/control financiero, resolución de excepciones y preparación operativa según AUD27-07/08/09 antes de declarar cerrada la entrega del alcance acordado.
 

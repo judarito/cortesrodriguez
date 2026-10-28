@@ -3,7 +3,7 @@
 **Proyecto:** Cortés Rodríguez Asesores  
 **Fecha:** 25 de octubre de 2026  
 **Estado:** AUD27-01 a AUD27-04 están publicados en `dev` y desplegados en el Worker Dev. Falta su validación integrada con Neon, Cloudflare y Mercado Pago sandbox; siguen abiertos AUD27-05 a AUD27-09 y el nuevo AUD27-10 (salida de Bricks al portal cliente). Producción y `main` permanecen fuera del alcance.
-**Código desplegado:** rama `dev`, commit `be678cd` (incluye las correcciones `edb8e50`); Worker Dev `cortes-rodriguez-asesores-dev`, versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`, desplegado directamente desde local el 2026-10-27. La revisión que originó las tareas se hizo sobre `35d1c82`. Las cifras y hallazgos anteriores conservan valor histórico; el estado vigente se resume en 19.14–19.15.
+**Código desplegado:** rama `dev`, commit `8a92fc5` (incluye las correcciones `edb8e50` y el CTA posterior a Bricks); Worker Dev `cortes-rodriguez-asesores-dev`, versión `4a225a1b-aefd-470a-ad9a-086d4574f5a3`, desplegado directamente desde local el 2026-10-27. La revisión que originó las tareas se hizo sobre `35d1c82`. Las cifras y hallazgos anteriores conservan valor histórico; el estado vigente se resume en 19.14–19.15.
 
 **Actualización:** medidas de seguridad contrastadas en `dev`; controles de infraestructura pendientes de evidencia se distinguen de faltantes de código.
 
@@ -893,7 +893,7 @@ Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendient
 
 ### 19.15 Prioridad vigente y nuevo pendiente de navegación — 27-oct-2026
 
-El código del branch `dev` se desplegó directamente a Cloudflare Dev en la versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`; no se tocó `main` ni Producción. `/solicitud` y `/api/public/features` respondieron HTTP 200, y el flag sigue entregando `checkoutMode: "bricks"`. El build pasó. Esto confirma despliegue y disponibilidad básica, no la matriz financiera de AUD27-06.
+El commit `8a92fc5` del branch `dev` se desplegó directamente a Cloudflare Dev en la versión `4a225a1b-aefd-470a-ad9a-086d4574f5a3`; no se tocó `main` ni Producción. `/solicitud` respondió HTTP 200 y `/api/public/features` confirmó `checkoutMode: "bricks"`. Build y 119/119 pruebas locales pasaron. Esto confirma despliegue y disponibilidad básica, no la matriz financiera de AUD27-06.
 
 Orden del trabajo pendiente:
 
