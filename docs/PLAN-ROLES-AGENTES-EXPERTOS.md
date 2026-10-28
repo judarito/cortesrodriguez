@@ -95,9 +95,9 @@ Asignación aleatoria entre expertos activos
 
 ### 3. Enlaces de agentes y formulario público
 
-- [ ] Tratar como fuentes distintas y mutuamente excluyentes `direct_web` y `agent_link`.
-- [ ] Para `direct_web`, registrar que el cliente llegó directamente desde nuestra página y dejar `agent_id` vacío.
-- [ ] Para `agent_link`, registrar el enlace y `agent_id` del agente propietario; nunca aceptar ese valor desde campos editables del navegador.
+- [x] Tratar como fuentes públicas distintas y mutuamente excluyentes `direct_web` y `agent_link`; el canal de altas internas es `admin_entry`. Desplegado en Dev el 27-oct-2026.
+- [x] Para `direct_web`, registrar que el cliente llegó directamente desde nuestra página y dejar `agent_id` vacío. Desplegado en Dev.
+- [x] Para `agent_link`, guardar `source_channel='agent_link'`, el enlace y el `agent_id` resuelto en el servidor; nunca aceptar ese valor desde campos editables del navegador. Desplegado en Dev.
 - [x] Para altas internas, usar admin_entry; no asociar al administrador creador como agente. Desplegado en Dev el 27-oct-2026; created_by se conserva para auditoría.
 - [ ] Crear `agent_links` con `agent_id`, etiqueta, hash de token, estado, expiración, revocación y fechas de auditoría.
 - [ ] Usar tokens opacos en la URL; nunca guardar ni exponer el token original en la base de datos.
@@ -112,7 +112,7 @@ Asignación aleatoria entre expertos activos
 - [ ] El formulario debe identificar el agente por el token, sin permitir que el cliente cambie el propietario.
 - [ ] Mantener los campos actuales del cliente y añadir especialidad, pregunta detallada y consentimiento de tratamiento de datos.
 - [ ] Crear el cliente con el nombre y la solicitud con el resto de la información.
-- [ ] La solicitud desde enlace debe guardar `source = agent_link` y `agent_id`; la solicitud directa desde nuestra página debe guardar `source = direct_web` y quedar sin agente.
+- [x] La solicitud desde enlace guarda `source_channel='agent_link'` y `agent_id`; la solicitud directa desde nuestra página guarda `source_channel='direct_web'` y queda sin agente. Desplegado en Dev.
 - [x] El agente solo consulta solicitudes que provengan de sus enlaces; no tendrá botón ni endpoint para crear solicitudes internas.
 
 ### 4. Asignación y vista del experto
