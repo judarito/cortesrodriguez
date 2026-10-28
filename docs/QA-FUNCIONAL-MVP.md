@@ -2,7 +2,8 @@
 
 **Fecha de inicio:** 27 de octubre de 2026  
 **Última actualización:** 28 de octubre de 2026
-**Commit de referencia:** Dev (anotar hash del despliegue tras publicar)
+**Commit de referencia:** `ba1280f`
+**Worker Dev:** `4f1eb1b4-3633-4805-958c-bc439bffa354`
 **Entorno:** Dev  
 **Objetivo:** registrar la ejecución de los recorridos funcionales del [plan priorizado](./PLAN-PRIORIZADO-OPERACIONES.md) y dejar evidencia reproducible.
 
@@ -34,6 +35,8 @@
 - Los permisos se prueban por UI y por API directa.
 - Los pagos se prueban con sandbox y sobre el commit que se está validando.
 - No se pegan tokens, cookies, enlaces firmados ni datos de tarjeta.
+
+**Publicación Dev (28-oct-2026):** commit `ba1280f`, Worker `4f1eb1b4-3633-4805-958c-bc439bffa354`; migraciones operativas 045, 046 y 047 aplicadas en Neon Dev. Comprobación HTTP básica: `/`, `/solicitud`, `/portal-cliente` y `/app` respondieron `200`. Esto confirma disponibilidad de las páginas, no sustituye los casos de aceptación funcional de este documento.
 
 ---
 
@@ -174,7 +177,7 @@
 
 ### 7.2 Comentarios, timeline y estados — F-P1-02
 
-**Estado:** migración `045_request_activity.sql` aplicada en Neon Dev; desplegar el código y ejecutar estos casos en Dev.
+**Estado:** desplegado en Dev; migración `045_request_activity.sql` aplicada. Smoke funcional pendiente.
 
 | ID | Caso | Esperado | Resultado | Evidencia |
 |---|---|---|---|---|
@@ -186,7 +189,7 @@
 
 ### 7.3 Excepciones de pagos — F-P1-04
 
-**Estado:** migración `046_payment_exception_resolution.sql` aplicada en Neon Dev; desplegar el código y ejecutar estos casos. El panel registra la gestión y auditoría; el reembolso se tramita fuera de esta pantalla y el estado de Mercado Pago no se altera manualmente.
+**Estado:** desplegado en Dev; migración `046_payment_exception_resolution.sql` aplicada. Smoke funcional pendiente. El panel registra la gestión y auditoría; el reembolso se tramita fuera de esta pantalla y el estado de Mercado Pago no se altera manualmente.
 
 | ID | Caso | Esperado | Resultado | Evidencia |
 |---|---|---|---|---|
@@ -198,7 +201,7 @@
 
 ### 7.4 Cambio verificado de correo — F-P1-05
 
-**Estado:** migración `047_client_email_change.sql` aplicada en Neon Dev; desplegar el código y probar entrega Resend/sesiones en Dev.
+**Estado:** desplegado en Dev; migración `047_client_email_change.sql` aplicada. Probar entrega Resend y sesiones.
 
 | ID | Caso | Esperado | Resultado | Evidencia |
 |---|---|---|---|---|

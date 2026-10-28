@@ -1,7 +1,7 @@
 # Plan funcional priorizado — Plataforma operativa
 
 **Fecha:** 28 de octubre de 2026
-**Rama de referencia:** `dev` (`0987891`; correcciones de conciliación y estrategia E2E)
+**Rama de referencia:** `dev` (`ba1280f`; actividad de solicitudes, excepciones financieras y cambio de correo)
 **Foco:** completar y validar la funcionalidad de la plataforma operativa en Dev.  
 **Producción:** queda para una fase posterior. Este plan no incluye promoción, hardening de infraestructura ni cambios de `main`/Producción.
 
@@ -18,9 +18,9 @@
 | F-P0-01 — Base E2E de navegador | **Parcial; 10/10 pruebas locales** | Playwright desktop y móvil; solicitud pública, portal, retorno Pro aprobado/incierto y respuesta de experto con aprobación administrativa. APIs simuladas; no valida el Worker, base de datos ni proveedores reales |
 | F-P0-06 — Dashboard sin datos ficticios | **Completado** | Métricas/pipeline inician vacíos; se eliminaron `defaultActivity` y `defaultPriorityRequests`; error con reintento; build correcto |
 | F-P1-03 — Ficha de cliente | **Implementado y probado a nivel de contrato** | `GET /api/app/clients/:id` + panel lateral; pruebas PGlite; pendiente smoke E2E con sesión real |
-| F-P1-02 — Actividad de solicitud | **Código listo; migración 045 aplicada en Dev; smoke pendiente** | Timeline unificado, notas internas, asignaciones y transiciones auditadas |
-| F-P1-04 — Excepciones financieras | **Código listo; migración 046 aplicada en Dev; smoke pendiente** | Seguimiento administrativo auditable; no ejecuta reembolsos ni cambia estados del proveedor |
-| F-P1-05 — Cambio de correo cliente | **Código listo; migración 047 aplicada en Dev; smoke pendiente** | Verificación en correo nuevo, auditoría, actualización de solicitudes y revocación de sesiones |
+| F-P1-02 — Actividad de solicitud | **Desplegado en Dev; smoke funcional pendiente** | Migración 045 aplicada; timeline, notas internas, asignaciones y transiciones auditadas |
+| F-P1-04 — Excepciones financieras | **Desplegado en Dev; smoke funcional pendiente** | Migración 046 aplicada; seguimiento auditable, sin ejecución de reembolsos ni cambios de estado del proveedor |
+| F-P1-05 — Cambio de correo cliente | **Desplegado en Dev; smoke funcional pendiente** | Migración 047 aplicada; verificación en correo nuevo, auditoría y revocación de sesiones |
 | F-P1-08 — Configuración y copy | **Parcial** | El panel visible (`NotificationConfigPanel`) no menciona Wompi; se corrigió el bloque muerto, pero queda limpieza de código duplicado |
 | F-P1-10 — Tests y CI | **Completado** | `npm test` 141/141; workflow ejecuta `npm run check` antes del deploy |
 | F-P0-05a / F-P0-05b — Correcciones de conciliación | **Implementadas; pruebas locales aprobadas** | Plantillas cliente ES/EN, ID UUID compartido en UI/API; 8 casos de regresión nuevos; E2E Resend pendiente |
@@ -43,7 +43,7 @@ La revisión sobre `947f4b0` encontró dos bloqueos reproducibles en la concilia
 
 **Siguiente ejecución:** aplicar los casos de la sección de conciliación del documento `QA-FUNCIONAL-MVP.md` sobre Dev y registrar commit, actor, resultado y evidencia redactada. No se consideran cerrados F-P0-01 a F-P0-05 por el éxito de los tests locales.
 
-**Actualización de esta ejecución:** las migraciones 045–047 se aplicaron correctamente en Neon Dev. El código está listo para desplegar en Dev; tras el despliegue, faltará un recorrido manual con roles reales antes de marcarlos verificados. El registro de excepciones no ejecuta reembolsos ni cambia el estado que sincroniza Mercado Pago. Siguen pendientes el módulo Documentos, el ledger/conciliación bancaria y la matriz E2E ampliada.
+**Actualización de esta ejecución:** las migraciones 045–047 se aplicaron en Neon Dev y el commit `ba1280f` se desplegó como Worker `4f1eb1b4-3633-4805-958c-bc439bffa354`. `/`, `/solicitud`, `/portal-cliente` y `/app` respondieron HTTP 200. Falta el recorrido manual con roles reales y validar Resend para marcar los tres puntos verificados. El registro de excepciones no ejecuta reembolsos ni cambia el estado que sincroniza Mercado Pago. Siguen pendientes el módulo Documentos, el ledger/conciliación bancaria y la matriz E2E ampliada.
 
 ---
 
@@ -57,12 +57,12 @@ El foco ahora es **cerrar el producto funcional**, no preparar producción. Los 
 2. La matriz funcional de pagos Pro/Bricks sigue incompleta.
 3. El portal de clientes no se ha probado con varias solicitudes, sesión vencida, código real y adjuntos.
 4. El módulo **Documentos** existe en el menú, pero es un placeholder.
-5. **Desplegar y validar en Dev:** comentarios internos, timeline y transiciones auditadas de solicitud (F-P1-02; migración 045 ya aplicada).
+5. **Validar en Dev:** comentarios internos, timeline y transiciones auditadas de solicitud (F-P1-02 desplegado; migración 045 aplicada).
 6. La ficha de cliente ya está implementada; falta validación E2E con sesión real.
 7. El dashboard ya no muestra datos ficticios; la “Actividad reciente” aún se deriva de solicitudes recientes, no del timeline de solicitud.
 8. La configuración visible está correcta; queda eliminar bloques de código muerto/duplicado.
-9. **Desplegar y validar en Dev:** registro administrativo auditable de duplicados, reembolsos y contracargos (F-P1-04; migración 046 ya aplicada). No inicia un reembolso ni modifica estados del proveedor.
-10. **Desplegar y validar en Dev:** cambio de correo con código enviado al nuevo correo, auditoría, traslado de solicitudes y revocación de sesiones (F-P1-05; migración 047 ya aplicada).
+9. **Validar en Dev:** registro administrativo auditable de duplicados, reembolsos y contracargos (F-P1-04 desplegado; migración 046 aplicada). No inicia un reembolso ni modifica estados del proveedor.
+10. **Validar en Dev:** cambio de correo con código enviado al nuevo correo, auditoría, traslado de solicitudes y revocación de sesiones (F-P1-05 desplegado; migración 047 aplicada).
 11. La experiencia bilingüe y la validación de roles todavía requieren una pasada funcional.
 
 **Resultado esperado:** un MVP operativo usable de punta a punta por administración, agentes, expertos y clientes, con evidencia de los recorridos principales y de sus excepciones.
@@ -423,7 +423,7 @@ La promoción a producción no forma parte de este calendario.
 
 ### F-P1-02 — Comentarios, timeline y estados manuales de solicitud
 
-**Estado al 28-oct-2026:** código listo y migración 045 aplicada en Neon Dev. `operationsRequestActivity.js` valida el alcance de admin, agente y experto asignado; el timeline reúne creación, asignaciones, estados, notas, pagos y respuestas. El detalle permite agregar notas y cancelar/cerrar/reabrir (reapertura solo admin). Falta desplegar el Worker/UI y hacer smoke con usuarios reales en Dev.
+**Estado al 28-oct-2026:** desplegado en Dev (commit `ba1280f`; Worker `4f1eb1b4-3633-4805-958c-bc439bffa354`) con migración 045 aplicada. `operationsRequestActivity.js` valida el alcance de admin, agente y experto asignado; el timeline reúne creación, asignaciones, estados, notas, pagos y respuestas. El detalle permite agregar notas y cancelar/cerrar/reabrir (reapertura solo admin). Falta smoke con usuarios reales.
 
 **Problema original (resuelto en código local):** faltaban comentarios internos, timeline único con actor/acción/fecha y acciones manuales de estado. Falta validar el flujo en Dev.
 
@@ -464,7 +464,7 @@ La promoción a producción no forma parte de este calendario.
 
 ### F-P1-04 — Excepciones financieras
 
-**Estado al 28-oct-2026:** código listo y migración 046 aplicada en Neon Dev. El panel Pagos lista casos, muestra el historial y permite registrar solicitud/confirmación de reembolso, conservar el pago válido y gestionar contracargos. Las acciones son idempotentes y no editan `request_payments.status`; tampoco llaman a Mercado Pago para efectuar el reembolso. Falta desplegar y verificar las acciones en Dev.
+**Estado al 28-oct-2026:** desplegado en Dev con migración 046 aplicada. El panel Pagos lista casos, muestra el historial y permite registrar solicitud/confirmación de reembolso, conservar el pago válido y gestionar contracargos. Las acciones son idempotentes y no editan `request_payments.status`; tampoco llaman a Mercado Pago para efectuar el reembolso. Falta smoke de las acciones en Dev.
 
 **Problema original (resuelto en código local):** `duplicate_approved`, `refunded` y `charged_back` se mostraban sin flujo administrativo. Falta validar el seguimiento en Dev.
 
@@ -484,7 +484,7 @@ La promoción a producción no forma parte de este calendario.
 
 ### F-P1-05 — Cambio verificado de correo del cliente
 
-**Estado al 28-oct-2026:** código listo y migración 047 aplicada en Neon Dev. El cliente autenticado solicita un código al correo nuevo; tras verificarlo, el backend actualiza la identidad y solicitudes asociadas, escribe auditoría y revoca las sesiones activas. Falta desplegar y comprobar entrega Resend y recuperación de acceso en Dev.
+**Estado al 28-oct-2026:** desplegado en Dev con migración 047 aplicada. El cliente autenticado solicita un código al correo nuevo; tras verificarlo, el backend actualiza la identidad y solicitudes asociadas, escribe auditoría y revoca las sesiones activas. Falta comprobar entrega Resend y recuperación de acceso.
 
 **Problema:** un correo mal escrito bloquea el portal y la entrega de respuestas.
 
