@@ -2,8 +2,8 @@
 
 **Proyecto:** Cortés Rodríguez Asesores  
 **Fecha:** 25 de octubre de 2026  
-**Estado:** implementación avanzada en `dev`; pendiente de correcciones y validación para producción según sección 19.
-**Última base de revisión:** rama `dev`, commit `35d1c8286cad4ce9db85a7355425694918f020a5` (27-oct-2026). Las secciones 16 y 18 conservan bases y resultados históricos; el estado vigente se consolida en la sección 19.
+**Estado:** AUD27-01 a AUD27-04 implementados y probados localmente; commits publicados en `dev`. Pendientes despliegue y validación integrada de estas correcciones en dev, AUD27-05 a AUD27-09 y autorización de promoción a producción.
+**Código de corrección vigente:** rama `dev`, commit `edb8e50d8a5544425d337524003c14541e3899fd`; documentación de implementación en `bf424c3f3a6b04b80d17f801cd54a46eb421b97e`. La revisión que originó las tareas se hizo sobre `35d1c82`. Las cifras y hallazgos anteriores conservan valor histórico; el estado actual se resume a continuación y en 19.13–19.14.
 
 **Actualización:** medidas de seguridad contrastadas en `dev`; controles de infraestructura pendientes de evidencia se distinguen de faltantes de código.
 
@@ -12,6 +12,23 @@
 **Revisión 26-oct-2026:** pendientes REV-01 a REV-08 documentados en la sección 18. Las marcas de implementación anteriores no cierran los defectos de pagos, notas, correo, confirmación de conversión ni atribución detectados en esta revisión.
 
 **Ampliación funcional:** portal «Consultar mis solicitudes», acceso por correo y código, retorno de pasarela, seguimiento y reintentos sobre la misma solicitud (sección 17). Frecuencia de recuperación acordada: 30 minutos.
+
+
+## Estado actual de ejecución
+
+| Bloque | Implementación | Verificación actual | Siguiente paso |
+|---|---|---|---|
+| AUD27-01: autorización y reserva de cobro Bricks | Implementado en `edb8e50` | Pruebas locales, SQL en PostgreSQL embebido y ruta cancelada sin llamada de cobro | Desplegar corrección en dev y probar cancelación/recuperación/concurrencia en Neon y sandbox |
+| AUD27-02: asociación y conciliación de intentos | Implementado en `edb8e50` | Casos locales de ID externo, metadata, identidad contradictoria, ambigüedad e indisponibilidad | Verificar pagos Pro históricos/nuevos y metadata en sandbox |
+| AUD27-03: vuelta de Bricks a Pro | Implementado en `edb8e50` | Política de interfaz e invalidación SQL de intentos nunca enviados | Probar flag remoto, pestañas abiertas y estados de ambos métodos |
+| AUD27-04: suite y regresiones | Completado localmente | **119/119**, sin fallos ni omitidas; build y `git diff --check` correctos | Mantener suite verde e incorporar evidencia de integración |
+| AUD27-05: política de origen | Pendiente | Divergencia registrada entre requisito original y acceso directo actual | Registrar decisión y alinear plan, código y pruebas |
+| AUD27-06: recorrido completo externo | Pendiente para las correcciones nuevas | El pago Bricks aprobado documentado es anterior a `edb8e50` | Ejecutar matriz 19.8 con correo real autorizado y pagos sandbox |
+| AUD27-07: reportes y balance | Pendiente | Listado de pagos no sustituye los reportes del alcance | Implementar/controlar alcance financiero acordado |
+| AUD27-08: excepciones administrativas | Pendiente de completar/verificar | Hay conciliación y gestión de colas parciales | Demostrar resolución auditada sin editar tablas |
+| AUD27-09: preparación de producción | Pendiente | No hubo despliegue, migración ni cambio de flags/secretos en esta ejecución | Completar condiciones de salida y promoción autorizada |
+
+**No confundir:** publicado en la rama `dev` no significa desplegado en el Worker dev, probado en servicios externos ni listo para producción.
 
 ## 1. Objetivo
 
@@ -638,7 +655,7 @@ REV-07 requiere datos de uso y costo de Cloudflare/Neon, que aún no se han medi
 
 **Código revisado:** `dev`, commit `35d1c8286cad4ce9db85a7355425694918f020a5` (`Add Mercado Pago Checkout Bricks for Dev`).
 
-**Resultado:** todavía no se considera listo para producción. Esta sección es la actualización de estado de las revisiones anteriores; no elimina el historial de la sección 18 ni convierte una implementación en una validación completa.
+**Estado del diagnóstico original:** todavía no se considera listo para producción. Los 104 tests y sus 3 fallos de la tabla siguiente corresponden al código anterior a la corrección; la ejecución posterior de `edb8e50` aprobó 119/119 según 19.13. Esta sección es la actualización de estado de las revisiones anteriores; no elimina el historial de la sección 18 ni convierte una implementación en una validación completa.
 
 | Evidencia | Resultado y límite |
 |---|---|
@@ -672,9 +689,9 @@ El portal bilingüe, el shell compartido y los estados de retorno son avances pr
 
 **Escenario:** cliente abre el formulario; administración cancela la solicitud; el cliente mantiene esa pestaña y envía los datos de pago. El flujo revisado todavía puede llamar a `POST /v1/payments`.
 
-- [ ] Distinguir recuperación de un pago ya enviado de autorización para iniciar un cobro nuevo.
+- [x] Distinguir recuperación de un pago ya enviado de autorización para iniciar un cobro nuevo (implementado; validación externa pendiente).
 - [ ] Antes de iniciar el primer envío, comprobar solicitud vigente, cobro requerido, monto/moneda válidos, intento asociado y autorización del cliente o capacidad limitada de pago inicial.
-- [ ] Rechazar nuevo envío si está cancelada/cerrada o ya tiene pago confirmado; contemplar la política de reembolso/contracargo sin autorizar automáticamente otro cargo.
+- [x] Rechazar nuevo envío si está cancelada/cerrada o ya tiene pago confirmado; contemplar la política de reembolso/contracargo sin autorizar automáticamente otro cargo (SQL y pruebas locales).
 - [ ] Aplicar transición/reserva atómica coordinada por solicitud e intento y por todas las rutas de inicio de pago, no solo un `if` de frontend. Definir el orden con cancelación y confirmación concurrentes; evitar sostener una transacción durante la llamada externa.
 - [ ] Si el proveedor ya pudo recibir el cobro, conservar estado incierto y conciliar. Una cancelación tardía requiere manejo administrativo; no afirmar que puede retirar un cargo en vuelo.
 - [ ] Conservar clave idempotente y trazabilidad; una solicitud de consulta no debe iniciar otro cobro.
@@ -687,10 +704,10 @@ El portal bilingüe, el shell compartido y los estados de retorno son avances pr
 
 **Problema:** al haber dos o más intentos Pro y una respuesta sin `preference_id` ni metadata, el selector devuelve `null`, incluso cuando existe una asociación previa mediante `mercado_pago_payment_id`. El comportamiento falla de forma prudente, pero puede dejar un pago real sin habilitar atención. Esta es una condición reproducida; no se afirma que todas las respuestas del proveedor omitan esos campos.
 
-- [ ] Incluir el ID externo de pago en las consultas de candidatos y resolver primero una asociación ya persistida y consistente.
+- [x] Incluir el ID externo de pago en las consultas de candidatos y resolver primero una asociación ya persistida y consistente.
 - [ ] Definir identificador estable por intento para nuevos pagos Pro mediante metadata u otro mecanismo documentado y soportado por la integración. Mantener referencia de negocio de la solicitud por separado.
 - [ ] Verificar ID externo, comercio/integración, solicitud, importe COP, moneda y método antes de aceptar una asociación; conservar separación de credenciales Bricks/Pro.
-- [ ] Si hay ambigüedad real y no existe vínculo probado, mantener diagnóstico y revisión administrativa; nunca elegir el intento más reciente solo por fecha.
+- [x] Si hay ambigüedad real y no existe vínculo probado, mantener diagnóstico y revisión administrativa; nunca elegir el intento más reciente solo por fecha.
 - [ ] Revisar los intentos históricos sin metadata. Permitir conciliación autorizada con evidencia sin editar referencias financieras a ciegas.
 - [ ] Registrar proveedores/pagos distintos como movimientos distintos; no sobrescribir un pago conocido con otro ni duplicar la habilitación.
 
@@ -728,8 +745,8 @@ El portal bilingüe, el shell compartido y los estados de retorno son avances pr
 | `publicRequestRateLimits.test.js`: emisión de origen | Consulta la ruta reemplazada `request-attribution-token`, ahora 404, esperando el antiguo 503. | Probar el emisor actual `request-start` sin IP/secreto, con límite agotado y con emisión válida; verificar por separado la retirada de la ruta vieja. |
 
 - [ ] No borrar pruebas ni marcar skip para conseguir verde. Si una expectativa revela un defecto real, corregir código y añadir regresión.
-- [ ] Añadir cobertura funcional para AUD27-01/02/03: cancelación, múltiples intentos, metadata ausente, rollback, incertidumbre y concurrencia.
-- [ ] Ejecutar la suite completa y build; registrar commit, comando y resultado real. Si cambia la cantidad de pruebas, reportar la nueva cifra sin perseguir un número fijo.
+- [x] Añadir cobertura local para AUD27-01/02/03: cancelación, múltiples intentos, metadata ausente, rollback, incertidumbre y reservas concurrentes en PostgreSQL embebido; concurrencia real distribuida pendiente.
+- [x] Ejecutar la suite completa y build: código `edb8e50`, 119/119; `npm run build` y `git diff --check` correctos. Si cambia la cantidad de pruebas, reportar la nueva cifra.
 - [ ] Completar pruebas contra PostgreSQL/Cloudflare dev para las garantías que un mock de SQL no demuestra.
 - [ ] Verificar que el pipeline de promoción falla si falla un test requerido.
 
@@ -853,6 +870,22 @@ Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendient
 - [ ] Validar identificación de pagos Pro nuevos/históricos y propagación de metadata con sandbox.
 - [ ] Probar flag apagado con rechazo, intento nunca enviado e intento enviado; ningún caso debe duplicar cobros.
 - [ ] Registrar evidencia externa antes de marcar estos bloques «probados en dev» o «listos para promoción».
+
+
+### 19.14 Próximas acciones y cierre de las tareas
+
+- [x] Publicar las correcciones en la rama `dev`: [commit de código edb8e50](https://github.com/judarito/cortesrodriguez/commit/edb8e50d8a5544425d337524003c14541e3899fd).
+- [x] Registrar implementación y límites de las pruebas: [commit de documentación bf424c3](https://github.com/judarito/cortesrodriguez/commit/bf424c3f3a6b04b80d17f801cd54a46eb421b97e).
+- [x] Corregir los tres fallos de la suite anterior, conservar privacidad/idempotencia y añadir regresiones: 119 pruebas locales aprobadas.
+- [ ] Desplegar explícitamente el código de corrección en el Worker dev, sin tocar producción.
+- [ ] Ejecutar primero AUD27-06: compra Pro/Bricks, rechazo, pendiente, reintento, timeout, cancelación y rollback del flag; comprobar correo y portal.
+- [ ] Completar la concurrencia real Neon/Workers y recuperación cola/DLQ/redrive; las reservas en PGlite no sustituyen estas pruebas.
+- [ ] Verificar que metadata del intento Pro llega de la forma esperada; si falta y no hay vínculo demostrado, conservar bloqueo prudente y revisión administrativa.
+- [ ] Resolver AUD27-05, completar reportes/balance AUD27-07 y cerrar procedimientos AUD27-08.
+- [ ] Revisar medidas SEC pendientes, recursos/credenciales de destino, alertas, restauración y rollback de AUD27-09 antes de promover.
+
+**Criterio de cierre:** AUD27-01/02/03 figuran como implementados y probados localmente, no como validados externamente. AUD27-04 está completado en su alcance local; la integración sigue en AUD27-06. La condición de salida permanece **no listo para producción** hasta aportar la evidencia pendiente del alcance que se vaya a habilitar.
+
 
 ## Referencias internas
 
