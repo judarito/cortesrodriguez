@@ -2,8 +2,8 @@
 
 **Proyecto:** Cortés Rodríguez Asesores  
 **Fecha:** 25 de octubre de 2026  
-**Estado:** AUD27-01 a AUD27-04 implementados y probados localmente; commits publicados en `dev`. Pendientes despliegue y validación integrada de estas correcciones en dev, AUD27-05 a AUD27-09 y autorización de promoción a producción.
-**Código de corrección vigente:** rama `dev`, commit `edb8e50d8a5544425d337524003c14541e3899fd`; documentación de implementación en `bf424c3f3a6b04b80d17f801cd54a46eb421b97e`. La revisión que originó las tareas se hizo sobre `35d1c82`. Las cifras y hallazgos anteriores conservan valor histórico; el estado actual se resume a continuación y en 19.13–19.14.
+**Estado:** AUD27-01 a AUD27-04 están publicados en `dev` y desplegados en el Worker Dev. Falta su validación integrada con Neon, Cloudflare y Mercado Pago sandbox; siguen abiertos AUD27-05 a AUD27-09 y el nuevo AUD27-10 (salida de Bricks al portal cliente). Producción y `main` permanecen fuera del alcance.
+**Código desplegado:** rama `dev`, commit `be678cd` (incluye las correcciones `edb8e50`); Worker Dev `cortes-rodriguez-asesores-dev`, versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`, desplegado directamente desde local el 2026-10-27. La revisión que originó las tareas se hizo sobre `35d1c82`. Las cifras y hallazgos anteriores conservan valor histórico; el estado vigente se resume en 19.14–19.15.
 
 **Actualización:** medidas de seguridad contrastadas en `dev`; controles de infraestructura pendientes de evidencia se distinguen de faltantes de código.
 
@@ -18,15 +18,15 @@
 
 | Bloque | Implementación | Verificación actual | Siguiente paso |
 |---|---|---|---|
-| AUD27-01: autorización y reserva de cobro Bricks | Implementado en `edb8e50` | Pruebas locales, SQL en PostgreSQL embebido y ruta cancelada sin llamada de cobro | Desplegar corrección en dev y probar cancelación/recuperación/concurrencia en Neon y sandbox |
-| AUD27-02: asociación y conciliación de intentos | Implementado en `edb8e50` | Casos locales de ID externo, metadata, identidad contradictoria, ambigüedad e indisponibilidad | Verificar pagos Pro históricos/nuevos y metadata en sandbox |
+| AUD27-01: autorización y reserva de cobro Bricks | Implementado en `edb8e50`, desplegado en `be678cd` | Pruebas locales, SQL en PostgreSQL embebido y ruta cancelada sin llamada de cobro | Probar cancelación/recuperación/concurrencia en Neon y sandbox |
+| AUD27-02: asociación y conciliación de intentos | Implementado en `edb8e50`, desplegado en `be678cd` | Casos locales de ID externo, metadata, identidad contradictoria, ambigüedad e indisponibilidad | Verificar pagos Pro históricos/nuevos y metadata en sandbox |
 | AUD27-03: vuelta de Bricks a Pro | Implementado en `edb8e50` | Política de interfaz e invalidación SQL de intentos nunca enviados | Probar flag remoto, pestañas abiertas y estados de ambos métodos |
 | AUD27-04: suite y regresiones | Completado localmente | **119/119**, sin fallos ni omitidas; build y `git diff --check` correctos | Mantener suite verde e incorporar evidencia de integración |
 | AUD27-05: política de origen | Pendiente | Divergencia registrada entre requisito original y acceso directo actual | Registrar decisión y alinear plan, código y pruebas |
-| AUD27-06: recorrido completo externo | Pendiente para las correcciones nuevas | El pago Bricks aprobado documentado es anterior a `edb8e50` | Ejecutar matriz 19.8 con correo real autorizado y pagos sandbox |
+| AUD27-06: recorrido completo externo | Pendiente para las correcciones nuevas | El pago Bricks aprobado anterior no valida el código `be678cd` recién desplegado | Ejecutar matriz 19.8 con correo real autorizado y pagos sandbox |
 | AUD27-07: reportes y balance | Pendiente | Listado de pagos no sustituye los reportes del alcance | Implementar/controlar alcance financiero acordado |
 | AUD27-08: excepciones administrativas | Pendiente de completar/verificar | Hay conciliación y gestión de colas parciales | Demostrar resolución auditada sin editar tablas |
-| AUD27-09: preparación de producción | Pendiente | No hubo despliegue, migración ni cambio de flags/secretos en esta ejecución | Completar condiciones de salida y promoción autorizada |
+| AUD27-09: preparación de producción | Pendiente; no se inicia promoción | Dev está desplegado; Prod no se inspeccionó ni modificó | Completar condiciones de salida solo si se solicita promoción |
 
 **No confundir:** publicado en la rama `dev` no significa desplegado en el Worker dev, probado en servicios externos ni listo para producción.
 
@@ -786,6 +786,8 @@ Recorrido mínimo de aceptación: **crear solicitud con imágenes → rechazo de
 
 No cerrar filas con un simple HTTP 200. Guardar evidencia sin datos sensibles: IDs de prueba, estados, commit, versión de Worker, resultado y fecha; diferenciar aceptado por Resend de entregado en buzón.
 
+**Preflight local (2026-10-27):** `node --test tests/*.test.js` aprobó 119/119 pruebas y `npm run build` pasó tras el ajuste UI de Bricks. Esto cubre mocks y PostgreSQL embebido; no reemplaza los pagos sandbox, webhooks reales, correos recibidos ni concurrencia Cloudflare/Neon. La matriz Dev sigue pendiente.
+
 ### 19.9 AUD27-07 — Reportes y balance del alcance original
 
 **Pendiente funcional, P1 para entrega completa.** El menú Reportes y el listado de pagos no acreditan los reportes por agente, experto y cliente ni el balance solicitado.
@@ -840,10 +842,11 @@ No se autoriza despliegue a producción con esta actualización documental.
 |---|---|---|
 | 1 | AUD27-01 y AUD27-02: autorización de cobro/asociación financiera | Regresiones automáticas y pruebas de integración de cancelación, varios intentos y eventos duplicados/antiguos. |
 | 2 | AUD27-03 y AUD27-04: rollback y suite | Flag probado con estados distintos; cero fallos en suite completa y build correcto. |
-| 3 | AUD27-05 y validación de REV-03/04/05 | Política de origen registrada; notas privadas/públicas, correo al listado y conversión probados de extremo a extremo. |
+| 3 | AUD27-10: salida del pago Bricks al portal cliente | En resultado aprobado, pendiente o rechazado hay un botón visible «Consultar mis solicitudes» que abre el portal; funciona en ES/EN y no usa el retorno como autenticación. |
 | 4 | AUD27-06: validación externa | Matriz ejecutada en dev con evidencia; cada faltante tiene responsable y condición de salida. |
-| 5 | AUD27-07 y AUD27-08: operación de negocio | Control financiero/reportes del alcance acordado y excepciones resolubles con auditoría. |
-| 6 | AUD27-09, REV-07/08 y SEC pendientes | Configuración destino, restauración, alertas y rollback revisados; promoción expresamente autorizada. |
+| 5 | AUD27-05 y validación de REV-03/04/05 | Política de origen registrada; notas privadas/públicas, correo al listado y conversión probados de extremo a extremo. |
+| 6 | AUD27-07 y AUD27-08: operación de negocio | Control financiero/reportes del alcance acordado y excepciones resolubles con auditoría. |
+| 7 | AUD27-09, REV-07/08 y SEC pendientes | Configuración destino, restauración, alertas y rollback revisados; promoción expresamente autorizada. |
 
 Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendiente / implementado / probado en dev / listo para promoción**) y evidencia. Un check de implementación no reemplaza prueba en servicios reales. No marcar cerrados los hallazgos de esta sección por la aprobación sandbox de un único pago.
 
@@ -866,7 +869,8 @@ Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendient
 **Pendientes conservados:** AUD27-05 a AUD27-09, recepción real de correos, pagos sandbox Pro/Bricks en todos sus estados, rollback del flag en Cloudflare, consultas/locks bajo concurrencia real y recuperación/DLQ. El origen directo no se modificó en esta implementación; su decisión funcional sigue pendiente. Reportes/balance no forman parte de este bloque de corrección.
 
 - [x] Implementar AUD27-01 a AUD27-04 y ejecutar regresiones locales completas.
-- [ ] Desplegar el commit de corrección en dev mediante el procedimiento autorizado y ejecutar la matriz de 19.8.
+- [x] Desplegar el código actualizado de `dev` en el Worker Dev (versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`); `/solicitud` y `/api/public/features` respondieron 200.
+- [ ] Ejecutar la matriz de 19.8 con pagos sandbox después de este despliegue.
 - [ ] Validar identificación de pagos Pro nuevos/históricos y propagación de metadata con sandbox.
 - [ ] Probar flag apagado con rechazo, intento nunca enviado e intento enviado; ningún caso debe duplicar cobros.
 - [ ] Registrar evidencia externa antes de marcar estos bloques «probados en dev» o «listos para promoción».
@@ -877,14 +881,39 @@ Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendient
 - [x] Publicar las correcciones en la rama `dev`: [commit de código edb8e50](https://github.com/judarito/cortesrodriguez/commit/edb8e50d8a5544425d337524003c14541e3899fd).
 - [x] Registrar implementación y límites de las pruebas: [commit de documentación bf424c3](https://github.com/judarito/cortesrodriguez/commit/bf424c3f3a6b04b80d17f801cd54a46eb421b97e).
 - [x] Corregir los tres fallos de la suite anterior, conservar privacidad/idempotencia y añadir regresiones: 119 pruebas locales aprobadas.
-- [ ] Desplegar explícitamente el código de corrección en el Worker dev, sin tocar producción.
+- [x] Desplegar el código actualizado de `dev` al Worker `cortes-rodriguez-asesores-dev`; versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`. Smoke checks: `/solicitud` 200 y `/api/public/features` 200 con `checkoutMode: "bricks"`.
 - [ ] Ejecutar primero AUD27-06: compra Pro/Bricks, rechazo, pendiente, reintento, timeout, cancelación y rollback del flag; comprobar correo y portal.
+- [ ] Implementar y verificar AUD27-10: después del resultado del Brick, mostrar de forma prominente un botón «Consultar mis solicitudes» que lleve a `/portal-cliente` para aprobado, pendiente y rechazado.
 - [ ] Completar la concurrencia real Neon/Workers y recuperación cola/DLQ/redrive; las reservas en PGlite no sustituyen estas pruebas.
 - [ ] Verificar que metadata del intento Pro llega de la forma esperada; si falta y no hay vínculo demostrado, conservar bloqueo prudente y revisión administrativa.
 - [ ] Resolver AUD27-05, completar reportes/balance AUD27-07 y cerrar procedimientos AUD27-08.
 - [ ] Revisar medidas SEC pendientes, recursos/credenciales de destino, alertas, restauración y rollback de AUD27-09 antes de promover.
 
 **Criterio de cierre:** AUD27-01/02/03 figuran como implementados y probados localmente, no como validados externamente. AUD27-04 está completado en su alcance local; la integración sigue en AUD27-06. La condición de salida permanece **no listo para producción** hasta aportar la evidencia pendiente del alcance que se vaya a habilitar.
+
+### 19.15 Prioridad vigente y nuevo pendiente de navegación — 27-oct-2026
+
+El código del branch `dev` se desplegó directamente a Cloudflare Dev en la versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`; no se tocó `main` ni Producción. `/solicitud` y `/api/public/features` respondieron HTTP 200, y el flag sigue entregando `checkoutMode: "bricks"`. El build pasó. Esto confirma despliegue y disponibilidad básica, no la matriz financiera de AUD27-06.
+
+Orden del trabajo pendiente:
+
+1. **P0 — completar validación financiera Dev (AUD27-06):** probar con sandbox Bricks y Pro aprobado/rechazado/pendiente, doble clic, timeout, cancelación, recuperación, webhooks, correo y portal. Cerrar primero los casos de cancelación/asociación/concurrencia de AUD27-01/02; un único pago aprobado anterior no demuestra el comportamiento del código actual.
+2. **P1 — navegación posterior a Bricks (AUD27-10):** el CTA «Consultar mis solicitudes» ya se implementó localmente junto al resultado/error del Brick. Desplegar a Dev y probar `approved`, `pending/in_process`, `rejected/cancelled` y error incierto, ES/EN y responsive. Debe abrir `/portal-cliente`, permitir acceso por sesión o código y preservar el seguimiento sin iniciar otro pago.
+3. **P1 — resolver el resto funcional (AUD27-05/07/08):** decidir y documentar el origen `direct_web`; completar informes/balance requeridos y flujos administrativos de excepción con auditoría, sin edición manual de estados financieros.
+4. **P0 antes de cualquier producción (AUD27-09 + SEC pendientes):** verificar Turnstile, secretos y aislamiento de recursos, control de acceso, alertas, respaldos/restauración, colas/DLQ, configuración/webhooks y rollback. Cualquier promoción requiere autorización explícita y procedimiento independiente; este plan no autoriza desplegar a Prod ni cambiar `main`.
+
+**Ajustes UI Bricks desplegados en Dev (2026-10-27):** se eliminó la duplicación del bloque de precio USD, TRM/fecha y total COP en la parte superior de la solicitud; se conserva la referencia y el desglose completo junto al checkout. También se añadió el CTA «Consultar mis solicitudes» en el resultado/error del Brick. Worker `4a225a1b-aefd-470a-ad9a-086d4574f5a3`; build y 119/119 pruebas locales correctos; smoke `/solicitud` 200 y flag `checkoutMode: "bricks"`. Falta revisar visualmente los estados, móvil/escritorio y ES/EN, y completar la matriz sandbox AUD27-06.
+
+#### AUD27-10 — Salida clara de Checkout Bricks al portal cliente
+
+**Prioridad P1 funcional, antes de cerrar el recorrido cliente.** El resultado inmediato de Bricks ocurre dentro de `/solicitud`; aunque el formulario ofrece un enlace de portal, el usuario reporta que al volver del pago no encuentra la forma de consultar sus solicitudes. La vista `/solicitud/resultado-pago` de Checkout Pro no cubre por sí sola el resultado inline de Bricks.
+
+- [x] Mostrar «Consultar mis solicitudes» / “View my requests” junto al resultado o error del Brick para aprobado, pendiente/en proceso, rechazado/cancelado y error incierto. Implementado localmente en el componente Bricks de la solicitud pública.
+- [ ] Mantener una acción de portal visible también durante confirmación incierta, con texto que indique conservar el código y no volver a pagar.
+- [ ] Asegurar que el portal liste la solicitud luego de iniciar sesión con el correo registrado; si requiere código, conservar una navegación segura sin usar `reference` como autorización.
+- [ ] Desplegar a Dev y verificar los cuatro estados y el error incierto en español/inglés, responsive y con sesión cliente vigente/vencida; confirmar que el enlace no duplica pagos ni reenvía el formulario.
+
+**Criterio de aceptación:** desde cada resultado Bricks el cliente llega al portal en un clic, puede autenticarse si hace falta y encuentra la solicitud; el estado de pago lo determina el backend y el código de seguimiento no se pierde.
 
 
 ## Referencias internas

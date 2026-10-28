@@ -5,6 +5,7 @@ const props = defineProps({
   intent: { type: Object, required: true },
   locale: { type: String, default: 'es' },
   payerEmail: { type: String, default: '' },
+  showPortalLink: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['submit', 'retry'])
@@ -230,6 +231,7 @@ onBeforeUnmount(() => {
     <p v-if="submitting" class="brick-state" role="status">{{ tr('Procesando el pago de forma segura…', 'Securely processing your payment…') }}</p>
     <p v-if="error" class="brick-error" role="alert">{{ error }}</p>
     <p v-if="resultStatus" class="brick-result" :class="`brick-result-${resultStatus}`" role="status">{{ statusMessage(resultStatus) }}</p>
+    <a v-if="showPortalLink && (resultStatus || error)" class="brick-portal-link" href="/portal-cliente">{{ tr('Consultar mis solicitudes', 'View my requests') }} <span aria-hidden="true">→</span></a>
     <div v-show="!resultStatus" :id="containerId" ref="container" class="brick-container"></div>
     <button v-if="retryable" type="button" class="submit-request brick-retry" @click="emit('retry')">
       {{ tr('Intentar otro pago', 'Try another payment') }} <span>→</span>
@@ -238,6 +240,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.brick-checkout{display:grid;gap:12px;width:100%;min-width:0}.brick-container{width:100%;min-width:0;min-height:100px}.brick-price-quote{padding:13px 14px;border:1px solid #dbe7ef;border-radius:8px;background:#f7fafc}.brick-price-title{margin:0 0 8px;color:#173b58;font-size:12px;font-weight:800}.brick-price-quote dl{display:grid;gap:0;margin:0}.brick-price-quote dl>div{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-bottom:1px solid #e5edf3;font-size:11px}.brick-price-quote dt{color:#586780}.brick-price-quote dd{margin:0;color:#173b58;font-weight:700;text-align:right}.brick-price-quote .brick-price-total{border-bottom:0;font-size:13px;font-weight:800}.brick-price-total dd{color:#08754e}.brick-price-explanation{margin:8px 0 0;color:#52677c;font-size:10px;line-height:1.5}.brick-state,.brick-error,.brick-result{margin:0;padding:11px 13px;border-radius:7px;font-size:11px;line-height:1.5}.brick-state{color:#586780;background:#f5f8fc}.brick-error,.brick-result-rejected{color:#7a1116;background:#fff0f1}.brick-result-approved{color:#28694f;background:#edf9f3}.brick-result-pending{color:#805514;background:#fff7e8}.brick-retry{justify-self:end}
+.brick-checkout{display:grid;gap:12px;width:100%;min-width:0}.brick-container{width:100%;min-width:0;min-height:100px}.brick-price-quote{padding:13px 14px;border:1px solid #dbe7ef;border-radius:8px;background:#f7fafc}.brick-price-title{margin:0 0 8px;color:#173b58;font-size:12px;font-weight:800}.brick-price-quote dl{display:grid;gap:0;margin:0}.brick-price-quote dl>div{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-bottom:1px solid #e5edf3;font-size:11px}.brick-price-quote dt{color:#586780}.brick-price-quote dd{margin:0;color:#173b58;font-weight:700;text-align:right}.brick-price-quote .brick-price-total{border-bottom:0;font-size:13px;font-weight:800}.brick-price-total dd{color:#08754e}.brick-price-explanation{margin:8px 0 0;color:#52677c;font-size:10px;line-height:1.5}.brick-state,.brick-error,.brick-result{margin:0;padding:11px 13px;border-radius:7px;font-size:11px;line-height:1.5}.brick-state{color:#586780;background:#f5f8fc}.brick-error,.brick-result-rejected{color:#7a1116;background:#fff0f1}.brick-result-approved{color:#28694f;background:#edf9f3}.brick-result-pending{color:#805514;background:#fff7e8}.brick-retry{justify-self:end}.brick-portal-link{display:inline-flex;align-items:center;justify-self:start;gap:9px;padding:10px 13px;border:1px solid #c9d9e7;border-radius:7px;color:#0c3c78;background:#f5f8fc;font-size:11px;font-weight:800;text-decoration:none;transition:background .15s,border-color .15s}.brick-portal-link:hover{border-color:#9bb7cd;background:#eaf2f8}.brick-portal-link span{font-size:15px;font-weight:500}
 @media(max-width:620px){.brick-retry{width:100%}}
 </style>

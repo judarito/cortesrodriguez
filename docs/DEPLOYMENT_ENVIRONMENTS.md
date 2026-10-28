@@ -229,3 +229,11 @@ La acción administrativa **Verificar pago** consulta el recurso de pago en Merc
 - En la solicitud pública y el portal cliente, el checkout muestra el precio original USD, la TRM y su fecha, el total convertido COP y el aviso de que Mercado Pago y la entidad financiera procesan el cobro en COP. El dato procede del intento persistido y se conserva al reanudarlo.
 - Se completó un pago sandbox Bricks aprobado; el intento y la notificación `payment_approved` quedaron confirmados/enviados. El estado de atención de la solicitud sigue siendo independiente del estado del pago.
 - `npm run deploy:dev` compiló y desplegó correctamente. Las pruebas de regresión Pro y los casos Bricks rechazado, pendiente, duplicado y rollback del flag siguen pendientes.
+
+### Ajuste visual del resumen Bricks y CTA al portal (2026-10-27)
+
+- Se eliminó de la parte superior del formulario Bricks la repetición de precio USD, TRM/fecha, total COP y su explicación. Ahí queda la referencia de la solicitud; el desglose de precio y conversión se conserva una sola vez junto al checkout.
+- Se añadió también el enlace «Consultar mis solicitudes» directamente junto al resultado/error del Brick para aprobado, pendiente, rechazado/cancelado y errores de procesamiento.
+- Worker `cortes-rodriguez-asesores-dev` desplegado en versión `4a225a1b-aefd-470a-ad9a-086d4574f5a3`; `/solicitud` respondió 200 y `/api/public/features` devolvió `checkoutMode: "bricks"`.
+- Verificación local posterior a ambos ajustes: `node --test tests/*.test.js` aprobó 119/119, `npm run build` y `git diff --check` pasaron.
+- **Pendiente:** verificar visualmente los estados del checkout en ES/EN y escritorio/móvil, además del acceso al portal con y sin sesión; completar la matriz sandbox AUD27-06. No se modificaron `main` ni Producción.

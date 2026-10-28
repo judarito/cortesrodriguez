@@ -5,7 +5,7 @@ Agregar Mercado Pago Checkout Bricks como alternativa seleccionable por feature 
 
 ## Estado vigente de las correcciones
 
-Código publicado en `dev`: `edb8e50`. Implementación registrada en `bf424c3`. **119/119 pruebas locales aprobadas**, compilación y revisión de formato correctas.
+Código publicado en `dev`: `be678cd` (incluye `edb8e50`); Worker Dev desplegado en versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`. **119/119 pruebas locales aprobadas** para AUD27-01 a AUD27-04, build correcto y smoke checks `/solicitud` 200 y `/api/public/features` 200 con `checkoutMode: "bricks"`. Falta validar pagos nuevos en sandbox.
 
 | Bloque | Estado | Validación que falta |
 |---|---|---|
@@ -13,8 +13,11 @@ Código publicado en `dev`: `edb8e50`. Implementación registrada en `bf424c3`. 
 | AUD27-02 | Implementado; asociación por ID persistido y metadata con rechazo de ambigüedad | Pagos Pro sandbox nuevos/históricos y propagación de metadata |
 | AUD27-03 | Implementado; cambio seguro a Pro e invalidación de Bricks nunca enviados | Rollback del flag remoto y pestañas abiertas |
 | AUD27-04 | Completado en alcance local; tres fallos anteriores corregidos | Mantener suite verde; la validación externa pertenece a AUD27-06 |
+| AUD27-10 | CTA «Consultar mis solicitudes» desplegado junto al resultado/error del Brick | Validar estados, ES/EN, responsive y acceso al portal/sesión/código |
 
-**Pendiente inmediato:** desplegar expresamente estas correcciones al Worker dev y ejecutar la matriz externa. La publicación de commits no constituye despliegue ni promoción a producción. El pago sandbox aprobado descrito en el estado histórico es anterior al commit de corrección.
+**Pendiente inmediato:** ejecutar la matriz externa sobre el Worker Dev ya desplegado y verificar AUD27-10. El único pago sandbox aprobado documentado ocurrió antes de `edb8e50`; no valida las correcciones más recientes. El smoke HTTP no sustituye la validación de pagos.
+
+**Ajustes de presentación desplegados en Dev (2026-10-27):** se quitó del resumen superior de la solicitud Bricks el bloque repetido de precio USD, TRM/fecha, total COP y explicación. La referencia permanece allí; el desglose completo y el aviso se muestran una sola vez junto al checkout. También se añadió «Consultar mis solicitudes» junto al resultado o error del Brick para aprobado, pendiente, rechazado/cancelado y error incierto. Worker Dev `4a225a1b-aefd-470a-ad9a-086d4574f5a3`; `/solicitud` respondió 200 y el endpoint de flags informó `checkoutMode: "bricks"`. Falta verificar visualmente móvil/escritorio y ES/EN, además del portal y la sesión.
 
 El estado consolidado y los próximos pasos están en [19.14 del plan principal](./PLAN-COLAS-IDEMPOTENCIA-SEGURIDAD.md#1914-próximas-acciones-y-cierre-de-las-tareas).
 
@@ -74,6 +77,8 @@ El integrador principal fija los contratos anteriores y asigna rutas/archivos an
 - [ ] En Dev con flag apagado, completar un pago de prueba por Pro y comprobar retorno, webhook, estado, correo/notificaciones y reintento.
 - [x] En Dev con flag encendido, completar un pago Bricks aprobado y verificar conciliación y notificación; conservar el desglose USD→COP durante el formulario y el resultado.
 - [ ] Completar en Dev los casos Bricks rechazado, pendiente y duplicado, el pago Pro de regresión y la comprobación de intentos en curso tras apagar el flag.
+- [x] Implementar y desplegar AUD27-10: mostrar «Consultar mis solicitudes» junto al resultado o error de Bricks, incluidos errores con resultado incierto.
+- [ ] Validar AUD27-10 en Dev: aprobado, pendiente, rechazado/cancelado y error; ES/EN, móvil/escritorio, sesión vigente/vencida y autenticación con código. El enlace debe abrir `/portal-cliente` sin crear otra solicitud ni iniciar otro pago.
 - [x] Actualizar la documentación operativa. El flag permanece habilitado en Dev según la configuración actual.
 
 ## Aceptación y rollback
@@ -131,11 +136,30 @@ La revisión del commit `35d1c8286cad4ce9db85a7355425694918f020a5` se consolidó
 - [ ] Ejecutar casos Bricks aprobado/rechazado/pendiente, doble clic, timeout/409, recarga y recuperación, y Pro aprobado/rechazado/pendiente/retorno/reintento.
 - [ ] Verificar recepción/autenticación de webhooks para las aplicaciones configuradas, eventos repetidos/antiguos y reembolsos/contracargos; no guardar valores de secretos en evidencia.
 - [ ] Probar separación de nota pública/interna, correos del cliente con «Consultar mis solicitudes», seguimiento desde sesión vigente/vencida y lista de varias solicitudes.
-- [ ] Conservar USD/TRM/fecha/COP antes de confirmar y durante resultado, en ambos idiomas; el importe final de tarjeta en otra moneda depende de la entidad financiera.
+- [x] Mostrar USD/TRM/fecha/COP antes de confirmar y mantener el desglose durante el resultado, en ambos idiomas. Falta repetir la aceptación visual durante pagos de la matriz AUD27-06; el importe final de tarjeta en otra moneda puede depender de la entidad financiera.
+- [x] Quitar la repetición del desglose USD/TRM/COP en el resumen superior de Bricks; conservar la referencia allí y mostrar el precio/conversión/aviso una sola vez junto al checkout. Build local correcto; falta desplegar a Dev y verificar la composición en ambos idiomas y tamaños de pantalla.
 - [ ] Resolver la divergencia de acceso directo/origen según AUD27-05 sin confundir token de atribución con autorización para cobrar.
 - [ ] Completar reportes/control financiero, resolución de excepciones y preparación operativa según AUD27-07/08/09 antes de declarar cerrada la entrega del alcance acordado.
 
 **Salida/rollback:** apagar Bricks no significa que se pueda crear Pro para cualquier solicitud. Primero deben conciliarse pagos enviados o inciertos. La condición de salida es el conjunto de pruebas y correcciones del método que se habilite; producción y `main` permanecen fuera de esta actualización documental.
+
+### Despliegue posterior a la actualización del repo (2026-10-27)
+
+- Se sincronizó el repo local con los seis commits nuevos de `origin/dev`, hasta `be678cd`; se conservaron los cambios de Wrangler `4.154.0` localmente.
+- Se desplegó esa versión del código directamente al Worker Dev `cortes-rodriguez-asesores-dev`, versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`.
+- `/solicitud` y `/api/public/features` respondieron HTTP 200; la respuesta del flag confirmó `checkoutMode: "bricks"`.
+- No se tocó Producción ni `main`. Las pruebas externas de pago permanecen pendientes.
+
+### AUD27-10 — Regreso visible al portal después de Bricks
+
+El formulario público conserva un enlace secundario al portal y la vista de retorno de Pro también ofrece esa ruta. Aun así, el cliente reporta que al finalizar Bricks no encuentra cómo consultar sus solicitudes; el resultado inline de Bricks debe ofrecer una salida clara.
+
+- [ ] Mostrar un botón visible «Consultar mis solicitudes» / “View my requests” en los resultados aprobado, pendiente/en proceso, rechazado/cancelado e incierto.
+- [ ] Mantenerlo visible en español/inglés y en móvil; si el cliente no tiene sesión, abrir el portal para autenticarse mediante correo y código.
+- [ ] No usar la referencia de seguimiento como autorización ni confiar en el resultado que informa el navegador sin validación backend.
+- [ ] Comprobar que ir al portal no reenvía el formulario ni inicia otro pago y que el cliente puede localizar la solicitud tras autenticarse.
+
+La prioridad y el orden del resto de tareas están consolidados en [la sección 19.15 del plan principal](./PLAN-COLAS-IDEMPOTENCIA-SEGURIDAD.md#1915-prioridad-vigente-y-nuevo-pendiente-de-navegación--27-oct-2026).
 
 ## Implementación de correcciones AUD27-01 a AUD27-04
 
