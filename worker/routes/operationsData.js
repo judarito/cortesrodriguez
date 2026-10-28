@@ -3,9 +3,16 @@ import { enqueueNotification, publishNotificationEvent } from './operationsEmail
 import { refreshRequestPayment, verifyRequestPayment } from './publicRequests.js'
 import { normalizeClientEmail } from '../lib/clientIdentity.js'
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+// Detail view is capped so a very old client never returns an unbounded payload.
+const CLIENT_DETAIL_REQUEST_LIMIT = 50
+
 export async function handleOperationsData(request, env) {
   const url = new URL(request.url)
   const isClients = url.pathname === '/api/app/clients' && request.method === 'GET'
+  const clientDetailMatch = url.pathname.match(/^\/api\/app\/clients\/([^/]+)$/)
+  const isClientDetail = Boolean(clientDetailMatch) && request.method === 'GET'
   const isPayments = url.pathname === '/api/app/payments' && request.method === 'GET'
   const isRequests = url.pathname === '/api/app/requests' && request.method === 'GET'
   const createRequest = url.pathname === '/api/app/requests' && request.method === 'POST'
@@ -16,11 +23,11 @@ export async function handleOperationsData(request, env) {
   const requestPaymentVerifyMatch = url.pathname.match(/^\/api\/app\/requests\/([^/]+)\/payment\/verify$/)
   const isRequestPaymentVerify = Boolean(requestPaymentVerifyMatch) && request.method === 'POST'
   const isDashboard = url.pathname === '/api/app/dashboard' && request.method === 'GET'
-  if (!isClients && !isPayments && !isRequests && !createRequest && !isRequestDetail && !isRequestAssignment && !isRequestPaymentVerify && !isDashboard) return null
+  if (!isClients && !isClientDetail && !isPayments && !isRequests && !createRequest && !isRequestDetail && !isRequestAssignment && !isRequestPaymentVerify && !isDashboard) return null
 
   const claims = await requireOperationsAuth(request, env)
   if (!claims) return response({ error: 'Sesión requerida.' }, 401)
-  const permission = isClients ? 'clients.read' : isPayments ? 'payments.read' : createRequest ? 'requests.create' : isRequestAssignment || isRequestPaymentVerify ? 'requests.update' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
+  const permission = isClients || isClientDetail ? 'clients.read' : isPayments ? 'payments.read' : createRequest ? 'requests.create' : isRequestAssignment || isRequestPaymentVerify ? 'requests.update' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
   if (!claims?.permissions?.includes(permission)) {
     return response({ error: 'No tienes permisos para consultar este módulo.' }, 403)
   }
@@ -32,6 +39,7 @@ export async function handleOperationsData(request, env) {
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   if (isDashboard) return getDashboard(sql, claims)
+  if (isClientDetail) return getClientDetail(sql, clientDetailMatch[1], claims)
   if (isPayments) return getPayments(sql, url)
   if (isRequestPaymentVerify) {
     if (!claims.roles?.includes('admin')) return response({ error: 'Solo administración puede verificar pagos.' }, 403)
@@ -228,6 +236,100 @@ async function getPayments(sql, url) {
     })),
     pagination: pagination(page, pageSize, countRows[0]?.total),
   })
+}
+
+async function getClientDetail(sql, clientId, claims) {
+  // A malformed identifier and a client outside the caller's scope share the
+  // same 404 so the endpoint never confirms whether a client exists.
+  if (!uuidPattern.test(String(clientId))) return response({ error: 'Cliente no encontrado.' }, 404)
+  const isAdmin = Boolean(claims.roles?.includes('admin'))
+  const requestAccess = isAdmin
+    ? sql`TRUE`
+    : sql`(r.agent_id = ${claims.sub} OR (r.agent_id IS NULL AND r.created_by = ${claims.sub}))`
+
+  const clientRows = await sql`
+    SELECT c.id, c.full_name, c.created_at,
+      (SELECT r.email FROM operations.requests r
+        WHERE r.client_id = c.id AND NULLIF(BTRIM(COALESCE(r.email, '')), '') IS NOT NULL AND ${requestAccess}
+        ORDER BY r.created_at DESC LIMIT 1) AS email,
+      (SELECT r.phone FROM operations.requests r
+        WHERE r.client_id = c.id AND NULLIF(BTRIM(COALESCE(r.phone, '')), '') IS NOT NULL AND ${requestAccess}
+        ORDER BY r.created_at DESC LIMIT 1) AS phone,
+      (SELECT r.whatsapp FROM operations.requests r
+        WHERE r.client_id = c.id AND NULLIF(BTRIM(COALESCE(r.whatsapp, '')), '') IS NOT NULL AND ${requestAccess}
+        ORDER BY r.created_at DESC LIMIT 1) AS whatsapp
+    FROM operations.clients c
+    WHERE c.id = ${clientId}
+      AND (${isAdmin ? sql`TRUE` : sql`EXISTS (
+        SELECT 1 FROM operations.requests r WHERE r.client_id = c.id AND ${requestAccess}
+      )`})
+    LIMIT 1
+  `
+  if (!clientRows[0]) return response({ error: 'Cliente no encontrado.' }, 404)
+
+  const [metricRows, requestRows] = await Promise.all([
+    sql`
+      SELECT
+        COUNT(DISTINCT r.id)::int AS total_requests,
+        COUNT(DISTINCT r.id) FILTER (WHERE r.status NOT IN ('closed', 'cancelled'))::int AS open_requests,
+        COUNT(DISTINCT r.id) FILTER (WHERE r.status IN ('closed', 'cancelled'))::int AS closed_requests,
+        COUNT(p.id) FILTER (WHERE p.status = 'approved')::int AS approved_payments,
+        COUNT(p.id) FILTER (WHERE p.status IN ('pending', 'in_process'))::int AS pending_payments
+      FROM operations.requests r
+      LEFT JOIN operations.request_payments p ON p.request_id = r.id
+      WHERE r.client_id = ${clientId} AND ${requestAccess}
+    `,
+    sql`
+      SELECT r.id, r.reference, r.status, r.service_type, r.product_type, r.created_at, r.updated_at,
+        payment.status AS payment_status
+      FROM operations.requests r
+      LEFT JOIN LATERAL (
+        SELECT p.status FROM operations.request_payments p
+        WHERE p.request_id = r.id
+        ORDER BY (p.status = 'approved') DESC, p.created_at DESC
+        LIMIT 1
+      ) payment ON TRUE
+      WHERE r.client_id = ${clientId} AND ${requestAccess}
+      ORDER BY r.created_at DESC
+      LIMIT ${CLIENT_DETAIL_REQUEST_LIMIT}
+    `,
+  ])
+
+  return response({
+    client: {
+      id: String(clientRows[0].id),
+      fullName: String(clientRows[0].full_name),
+      createdAt: toIsoTimestamp(clientRows[0].created_at),
+      email: clientRows[0].email ? String(clientRows[0].email) : '',
+      phone: clientRows[0].phone ? String(clientRows[0].phone) : '',
+      whatsapp: clientRows[0].whatsapp ? String(clientRows[0].whatsapp) : '',
+    },
+    metrics: {
+      totalRequests: Number(metricRows[0]?.total_requests || 0),
+      openRequests: Number(metricRows[0]?.open_requests || 0),
+      closedRequests: Number(metricRows[0]?.closed_requests || 0),
+      approvedPayments: Number(metricRows[0]?.approved_payments || 0),
+      pendingPayments: Number(metricRows[0]?.pending_payments || 0),
+    },
+    requests: requestRows.map((row) => ({
+      id: String(row.id),
+      reference: String(row.reference),
+      status: String(row.status),
+      serviceType: String(row.service_type),
+      productType: String(row.product_type),
+      paymentStatus: row.payment_status ? String(row.payment_status) : '',
+      createdAt: toIsoTimestamp(row.created_at),
+      updatedAt: toIsoTimestamp(row.updated_at),
+    })),
+  })
+}
+
+// The client detail contract exposes ISO-8601 timestamps: Neon returns Date
+// objects, and String(Date) would leak a locale-dependent format.
+function toIsoTimestamp(value) {
+  if (!value) return ''
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.valueOf()) ? '' : date.toISOString()
 }
 
 function isValidIsoDate(value) {

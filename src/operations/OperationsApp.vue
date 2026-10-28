@@ -36,6 +36,11 @@ const uiEnglishExtra = {
   'La moneda del pago no coincide con COP.': 'The payment currency does not match COP.', 'El valor pagado no coincide con el valor esperado.': 'The amount paid does not match the expected amount.',
   'El pago existe, pero Mercado Pago aún no lo muestra como aprobado.': 'The payment exists, but Mercado Pago has not approved it yet.', 'Pago validado.': 'Payment verified.',
   'El pago no pudo reconciliarse automáticamente.': 'The payment could not be reconciled automatically.', 'Sin expertos disponibles': 'No experts available',
+  'Cargando dashboard…': 'Loading dashboard…', 'Reintentar': 'Retry', 'Sin datos disponibles.': 'No data available.', 'No hay solicitudes prioritarias.': 'No priority requests.',
+  'Cargando cliente…': 'Loading client…', 'No se pudo cargar el cliente.': 'Could not load the client.', 'Cliente no encontrado.': 'Client not found.', 'Cerrar': 'Close',
+  'Cerrar ficha del cliente': 'Close client details', 'Ficha del cliente': 'Client details', 'Resumen de la relación': 'Relationship summary', 'Solicitudes totales': 'Total requests',
+  'Abiertas': 'Open', 'Pagos aprobados': 'Approved payments', 'Pagos pendientes': 'Pending payments', 'Solicitudes del cliente': 'Client requests', 'Este cliente aún no tiene solicitudes.': 'This client has no requests yet.', 'Ver solicitud': 'View request',
+  'No tienes permisos para consultar este módulo.': 'You do not have permission to view this module.',
 }
 function tx(text) { return locale.value === 'en' ? (uiEnglish[text] || uiEnglishExtra[text] || text) : text }
 function setLocale(value) { locale.value = value; document.documentElement.lang = localeTag(value) }
@@ -51,6 +56,10 @@ const mobileMenuOpen = ref(false)
 const moduleLoading = ref(false)
 const moduleError = ref('')
 const clients = ref([])
+const selectedClient = ref(null)
+const clientDetailId = ref('')
+const clientDetailLoading = ref(false)
+const clientDetailError = ref('')
 const requests = ref([])
 const requestDetail = ref(null)
 const notificationRequestId = ref('')
@@ -79,7 +88,7 @@ const agentForm = ref({ fullName: '', legalEntityType: '', email: '', phone: '',
 const clientPagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
 const requestPagination = ref({ page: 1, pageSize: 10, totalItems: 0, totalPages: 1 })
 const requestTab = ref('all')
-const dashboardLoading = ref(false)
+const dashboardLoading = ref(true)
 const dashboardError = ref('')
 const securityLoading = ref(false)
 const securityError = ref('')
@@ -423,6 +432,44 @@ function closeRequestDetail() {
   requestDetailError.value = ''
 }
 
+let clientDetailRequestSeq = 0
+
+async function openClientDetail(client) {
+  const clientId = client?.id
+  if (!clientId) return
+  const requestSeq = ++clientDetailRequestSeq
+  clientDetailId.value = clientId
+  selectedClient.value = null
+  clientDetailError.value = ''
+  clientDetailLoading.value = true
+  try {
+    const response = await appFetch(`/api/app/clients/${encodeURIComponent(clientId)}`, { headers: { Authorization: `Bearer ${token.value}` } })
+    const data = await response.json().catch(() => ({}))
+    if (response.status === 404) throw new Error('Cliente no encontrado.')
+    if (!response.ok) throw new Error(data.error || 'No se pudo cargar el cliente.')
+    if (requestSeq !== clientDetailRequestSeq) return
+    selectedClient.value = data
+  } catch (loadError) {
+    if (requestSeq !== clientDetailRequestSeq) return
+    clientDetailError.value = loadError.message
+  } finally {
+    if (requestSeq === clientDetailRequestSeq) clientDetailLoading.value = false
+  }
+}
+
+function closeClientDetail() {
+  clientDetailRequestSeq += 1
+  selectedClient.value = null
+  clientDetailError.value = ''
+  clientDetailLoading.value = false
+  clientDetailId.value = ''
+}
+
+async function openClientRequest(request) {
+  closeClientDetail()
+  await openRequestDetail({ id: request.id })
+}
+
 async function loadSecurity() {
   securityLoading.value = true
   securityError.value = ''
@@ -518,31 +565,11 @@ async function setRequestTab(tab) {
   await loadModule('Solicitudes', 1)
 }
 
-const metrics = ref([
-  { label: 'Solicitudes activas', value: '24', trend: '+12.5%', detail: 'vs. mes anterior', icon: 'SO', tone: 'blue' },
-  { label: 'Pendientes de pago', value: '07', trend: 'Requieren atención', detail: 'en las próximas 48 h', icon: '$', tone: 'amber' },
-  { label: 'En seguimiento', value: '12', trend: '+4 casos', detail: 'actualizados esta semana', icon: '↗', tone: 'violet' },
-  { label: 'Cerradas este mes', value: '18', trend: '+8.2%', detail: 'cumplimiento 96%', icon: '✓', tone: 'green' },
-])
-const pipeline = ref([
-  { label: 'Recibidas', value: 8, total: 24, color: 'blue' },
-  { label: 'En análisis', value: 6, total: 24, color: 'violet' },
-  { label: 'Esperando pago', value: 7, total: 24, color: 'amber' },
-  { label: 'En gestión', value: 3, total: 24, color: 'green' },
-])
+// El dashboard arranca sin datos: la vista muestra carga/error hasta que la API responda.
+const metrics = ref([])
+const pipeline = ref([])
 const activity = ref([])
 const priorityRequests = ref([])
-const defaultActivity = [
-  { initials: 'AR', title: 'Solicitud actualizada', description: 'Importación de vehículo · CRA-1048', time: 'Hace 12 min', color: 'blue' },
-  { initials: 'JP', title: 'Pago confirmado', description: 'Asesoría exportación · CRA-1045', time: 'Hace 34 min', color: 'green' },
-  { initials: 'MR', title: 'Nuevo cliente registrado', description: 'María Fernanda Ruiz', time: 'Hace 1 h', color: 'violet' },
-  { initials: 'FC', title: 'Documento cargado', description: 'Factura comercial · CRA-1039', time: 'Hace 2 h', color: 'amber' },
-]
-const defaultPriorityRequests = [
-  { id: 'CRA-1048', client: 'Juan Pablo Gómez', type: 'Importación', status: 'En análisis', statusClass: 'status-blue', date: 'Hoy, 09:42' },
-  { id: 'CRA-1045', client: 'María Fernanda Ruiz', type: 'Exportación', status: 'Pago confirmado', statusClass: 'status-green', date: 'Hoy, 08:16' },
-  { id: 'CRA-1041', client: 'Transportes del Caribe', type: 'Tránsito aduanero', status: 'Pendiente de pago', statusClass: 'status-amber', date: 'Ayer, 16:28' },
-]
 
 async function loadDashboard() {
   dashboardLoading.value = true
@@ -567,7 +594,7 @@ async function loadDashboard() {
       { label: 'Correos sin enviar', value: String(totals.emailsPending || 0).padStart(2, '0'), trend: 'Resend', detail: 'solicitudes por notificar', icon: '✉', tone: 'amber' },
       { label: 'Correos abiertos', value: String(totals.emailsOpened || 0).padStart(2, '0'), trend: 'Resend', detail: 'al menos un correo abierto', icon: '◉', tone: 'green' },
     )
-    const total = Math.max(Number(totals.total || 0), 1)
+    const total = Number(totals.total || 0)
     pipeline.value = (data.pipeline || []).map((item) => ({ ...item, total }))
     priorityRequests.value = (data.recent || []).slice(0, 5).map((item) => ({
       id: item.reference,
@@ -586,11 +613,21 @@ async function loadDashboard() {
     }))
   } catch (loadError) {
     dashboardError.value = loadError.message
-    activity.value = isExpert.value ? [] : defaultActivity
-    priorityRequests.value = isExpert.value ? [] : defaultPriorityRequests
+    metrics.value = []
+    pipeline.value = []
+    activity.value = []
+    priorityRequests.value = []
   } finally {
     dashboardLoading.value = false
   }
+}
+
+// Con total 0 no hay barra que pintar: evita NaN/Infinity al calcular el ancho.
+function pipelineProgress(item) {
+  const total = Number(item?.total || 0)
+  const value = Number(item?.value || 0)
+  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(value)) return 0
+  return Math.min(100, Math.max(0, (value / total) * 100))
 }
 
 async function login() {
@@ -650,14 +687,18 @@ onMounted(restoreSession)
   <OperationsShell v-else :menu-items="shellMenuItems" :active-page="activeMenu" :current-page="tx(currentMenu?.label || '')" :locale="locale" :user-name="user.name || ''" :user-role="tx(user.roles?.[0] || 'Usuario')" :menu-label="tx('Menú principal')" :secondary-menu-label="tx('Administración')" :logout-label="tx('Cerrar sesión')" :search-placeholder="tx('Buscar en la plataforma...')" @select="selectMenu" @logout="logout" @update:locale="setLocale">
     <template #topbar-actions><NotificationBell :token="token" :locale="locale" @open="openNotification" @request-updated="refreshRequestViews" /><div class="avatar">{{ user.name?.slice(0, 2).toUpperCase() }}</div></template>
       <div v-if="activeMenu === 'Inicio'" class="dashboard-view"><div class="dashboard-heading"><div><p class="eyebrow">{{ todayLabel }}</p><h1>{{ locale === 'en' ? 'Good morning,' : 'Buenos días,' }} {{ user.name?.split(' ')[0] }} <span>✦</span></h1><p>{{ tx(isAgent ? 'Este es el resumen de tus solicitudes.' : isExpert ? 'Este es el resumen de tus solicitudes asignadas.' : 'Este es el resumen de lo que está sucediendo hoy.') }}</p></div><button type="button" class="secondary-button">⌕&nbsp; {{ tx('Ver actividad') }}</button></div>
+        <div v-if="dashboardLoading" class="module-state panel dashboard-state" aria-live="polite">{{ tx('Cargando dashboard…') }}</div>
+        <div v-else-if="dashboardError" class="module-state module-state-error panel dashboard-state" role="alert"><p>{{ dashboardError }}</p><button type="button" class="secondary-button compact" @click="loadDashboard">{{ tx('Reintentar') }}</button></div>
+        <template v-else>
         <section class="metric-grid" :aria-label="tx('Indicadores principales')"><article v-for="metric in metrics" :key="metric.label" class="metric-card"><div class="metric-top"><span :class="['metric-icon', `tone-${metric.tone}`]">{{ metric.icon }}</span><span :class="['metric-trend', `trend-${metric.tone}`]">{{ tx(metric.trend) }}</span></div><strong>{{ metric.value }}</strong><h3>{{ tx(metric.label) }}</h3><p>{{ tx(metric.detail) }}</p></article></section>
-        <section class="dashboard-grid"><article class="panel pipeline-panel"><div class="panel-heading"><div><h2>{{ tx('Estado de solicitudes') }}</h2><p>{{ tx(isExpert ? 'Distribución de tus asignaciones.' : 'Distribución de tus operaciones activas') }}</p></div><button type="button" class="more-button">{{ tx('Últimos 30 días') }}⌄</button></div><div class="pipeline-list"><div v-for="item in pipeline" :key="item.label" class="pipeline-row"><div class="pipeline-label"><span>{{ tx(item.label) }}</span><strong>{{ item.value }}</strong></div><div class="progress-track"><span :class="`progress-${item.color}`" :style="{ width: `${(item.value / item.total) * 100}%` }"></span></div></div></div><div class="panel-footer"><span><i class="legend-dot dot-blue"></i> {{ tx('Activas') }} <strong>{{ metrics.find((item) => item.label === 'Solicitudes activas')?.value || '00' }}</strong></span><span><i class="legend-dot dot-gray"></i> {{ tx('Cerradas') }} <strong>{{ metrics.find((item) => item.label === 'Cerradas este mes')?.value || '00' }}</strong></span><a href="#">{{ tx('Ver todas') }} →</a></div></article><article class="panel activity-panel"><div class="panel-heading"><div><h2>{{ tx('Actividad reciente') }}</h2><p>{{ tx('Últimos movimientos') }} {{ tx(isExpert ? 'de tus asignaciones' : 'del equipo') }}</p></div><button type="button" class="more-button">•••</button></div><div class="activity-list"><div v-for="item in activity" :key="item.title + item.time" class="activity-item"><div :class="['avatar avatar-activity', `avatar-${item.color}`]">{{ item.initials }}</div><div class="activity-copy"><strong>{{ tx(item.title) }}</strong><span>{{ tx(item.description) }}</span></div><time>{{ item.time }}</time></div><p v-if="!activity.length" class="empty-row">{{ tx('No hay actividad reciente.') }}</p></div><div class="panel-footer centered"><a href="#">{{ tx('Ver toda la actividad') }} →</a></div></article></section>
-        <section class="panel requests-panel"><div class="panel-heading"><div><h2>{{ tx(isExpert ? 'Solicitudes asignadas' : 'Solicitudes prioritarias') }}</h2><p>{{ tx(isExpert ? 'Casos asignados para revisión y respuesta.' : 'Casos que requieren seguimiento de tu equipo') }}</p></div></div><div class="table-wrap"><table><thead><tr><th>{{ tx('Solicitud') }}</th><th v-if="!isExpert">{{ tx('Cliente') }}</th><th>{{ tx(isExpert ? 'Consulta' : 'Tipo de operación') }}</th><th>{{ tx('Estado') }}</th><th>{{ tx('Actualización') }}</th><th></th></tr></thead><tbody><tr v-for="request in priorityRequests" :key="request.id"><td><strong class="request-id">{{ request.id }}</strong></td><td v-if="!isExpert">{{ request.client }}</td><td>{{ tx(request.type) }}</td><td><span :class="['status-pill', request.statusClass]"><i></i>{{ tx(request.status) }}</span></td><td>{{ request.date }}</td><td><button class="row-action" type="button">•••</button></td></tr></tbody></table></div></section>
+        <section class="dashboard-grid"><article class="panel pipeline-panel"><div class="panel-heading"><div><h2>{{ tx('Estado de solicitudes') }}</h2><p>{{ tx(isExpert ? 'Distribución de tus asignaciones.' : 'Distribución de tus operaciones activas') }}</p></div><button type="button" class="more-button">{{ tx('Últimos 30 días') }}⌄</button></div><div class="pipeline-list"><div v-for="item in pipeline" :key="item.label" class="pipeline-row"><div class="pipeline-label"><span>{{ tx(item.label) }}</span><strong>{{ item.value }}</strong></div><div class="progress-track"><span :class="[`progress-${item.color}`, { 'progress-empty': pipelineProgress(item) === 0 }]" :style="{ width: `${pipelineProgress(item)}%` }"></span></div></div><p v-if="!pipeline.length" class="empty-row">{{ tx('Sin datos disponibles.') }}</p></div><div class="panel-footer"><span><i class="legend-dot dot-blue"></i> {{ tx('Activas') }} <strong>{{ metrics.find((item) => item.label === 'Solicitudes activas')?.value || '00' }}</strong></span><span><i class="legend-dot dot-gray"></i> {{ tx('Cerradas') }} <strong>{{ metrics.find((item) => item.label === 'Cerradas este mes')?.value || '00' }}</strong></span><a href="#">{{ tx('Ver todas') }} →</a></div></article><article class="panel activity-panel"><div class="panel-heading"><div><h2>{{ tx('Actividad reciente') }}</h2><p>{{ tx('Últimos movimientos') }} {{ tx(isExpert ? 'de tus asignaciones' : 'del equipo') }}</p></div><button type="button" class="more-button">•••</button></div><div class="activity-list"><div v-for="item in activity" :key="item.title + item.time" class="activity-item"><div :class="['avatar avatar-activity', `avatar-${item.color}`]">{{ item.initials }}</div><div class="activity-copy"><strong>{{ tx(item.title) }}</strong><span>{{ tx(item.description) }}</span></div><time>{{ item.time }}</time></div><p v-if="!activity.length" class="empty-row">{{ tx('No hay actividad reciente.') }}</p></div><div class="panel-footer centered"><a href="#">{{ tx('Ver toda la actividad') }} →</a></div></article></section>
+        <section class="panel requests-panel"><div class="panel-heading"><div><h2>{{ tx(isExpert ? 'Solicitudes asignadas' : 'Solicitudes prioritarias') }}</h2><p>{{ tx(isExpert ? 'Casos asignados para revisión y respuesta.' : 'Casos que requieren seguimiento de tu equipo') }}</p></div></div><div class="table-wrap"><table><thead><tr><th>{{ tx('Solicitud') }}</th><th v-if="!isExpert">{{ tx('Cliente') }}</th><th>{{ tx(isExpert ? 'Consulta' : 'Tipo de operación') }}</th><th>{{ tx('Estado') }}</th><th>{{ tx('Actualización') }}</th><th></th></tr></thead><tbody><tr v-for="request in priorityRequests" :key="request.id"><td><strong class="request-id">{{ request.id }}</strong></td><td v-if="!isExpert">{{ request.client }}</td><td>{{ tx(request.type) }}</td><td><span :class="['status-pill', request.statusClass]"><i></i>{{ tx(request.status) }}</span></td><td>{{ request.date }}</td><td><button class="row-action" type="button">•••</button></td></tr><tr v-if="!priorityRequests.length"><td :colspan="isExpert ? 5 : 6" class="empty-row">{{ tx('No hay solicitudes prioritarias.') }}</td></tr></tbody></table></div></section>
+        </template>
       </div>
       <section v-else-if="activeMenu === 'Clientes'" class="module-view">
         <div class="module-heading"><div><p class="eyebrow">{{ tx('Directorio operativo') }}</p><h1>{{ tx('Clientes') }}</h1><p>{{ tx('Personas y empresas que han registrado solicitudes.') }}</p></div><button type="button" class="secondary-button compact" @click="selectMenu({ label: 'Clientes' })">↻ {{ tx('Actualizar') }}</button></div>
         <form class="module-search" @submit.prevent="searchModule('Clientes')"><span>⌕</span><input v-model="clientSearch" type="search" :placeholder="tx('Buscar por nombre...')" /><button type="submit">{{ tx('Buscar') }}</button></form>
-        <div v-if="moduleLoading" class="module-state panel">{{ tx('Cargando clientes…') }}</div><div v-else-if="moduleError" class="module-state module-state-error panel">{{ tx(moduleError) }}</div><ListView v-else :locale="locale" :title="tx('Clientes registrados')" :description="tx('Personas y empresas que han registrado solicitudes.')" :count="clientPagination.totalItems" :page="clientPagination.page" :total-pages="clientPagination.totalPages" :empty="!clients.length" :empty-text="tx('No encontramos clientes con ese criterio.')" @previous="changePage('Clientes', clientPagination.page - 1)" @next="changePage('Clientes', clientPagination.page + 1)"><template #columns><th>{{ tx('Cliente') }}</th><th>{{ tx('Solicitudes') }}</th><th>{{ tx('Registro') }}</th><th>{{ tx('Identificador') }}</th></template><template #rows><tr v-for="client in clients" :key="client.id"><td><div class="table-person"><span class="avatar avatar-table">{{ client.fullName.slice(0, 2).toUpperCase() }}</span><strong>{{ client.fullName }}</strong></div></td><td><span class="count-badge">{{ client.requestCount }}</span></td><td>{{ formatDate(client.createdAt) }}</td><td class="muted-cell">{{ client.id.slice(0, 8) }}…</td></tr></template></ListView>
+        <div v-if="moduleLoading" class="module-state panel">{{ tx('Cargando clientes…') }}</div><div v-else-if="moduleError" class="module-state module-state-error panel">{{ tx(moduleError) }}</div><ListView v-else :locale="locale" :title="tx('Clientes registrados')" :description="tx('Personas y empresas que han registrado solicitudes.')" :count="clientPagination.totalItems" :page="clientPagination.page" :total-pages="clientPagination.totalPages" :empty="!clients.length" :empty-text="tx('No encontramos clientes con ese criterio.')" @previous="changePage('Clientes', clientPagination.page - 1)" @next="changePage('Clientes', clientPagination.page + 1)"><template #columns><th>{{ tx('Cliente') }}</th><th>{{ tx('Solicitudes') }}</th><th>{{ tx('Registro') }}</th><th>{{ tx('Identificador') }}</th></template><template #rows><tr v-for="client in clients" :key="client.id"><td><div class="table-person"><span class="avatar avatar-table">{{ client.fullName.slice(0, 2).toUpperCase() }}</span><button type="button" class="client-link" @click="openClientDetail(client)">{{ client.fullName }}</button></div></td><td><span class="count-badge">{{ client.requestCount }}</span></td><td>{{ formatDate(client.createdAt) }}</td><td class="muted-cell">{{ client.id.slice(0, 8) }}…</td></tr></template></ListView>
       </section>
       <ExpertRequestsPanel v-else-if="activeMenu === 'Solicitudes' && isExpert" :token="token" :locale="locale" :open-request-id="notificationRequestId" :refresh-key="expertRequestRefreshKey" @request-opened="notificationRequestId = ''" />
       <section v-else-if="activeMenu === 'Solicitudes'" class="module-view">
@@ -683,7 +724,7 @@ onMounted(restoreSession)
       <NotificationConfigPanel v-else-if="activeMenu === 'Configuración'" :token="token" :locale="locale" />
       <section v-else-if="activeMenu === 'Configuración'" class="module-view security-view">
         <div class="module-heading"><div><p class="eyebrow">Preferencias operativas</p><h1>Configuración</h1><p>Define quién recibe las comunicaciones de cada evento.</p></div><button type="button" class="secondary-button compact" @click="loadNotifications">↻ Actualizar</button></div>
-        <p v-if="notificationNotice" class="security-notice">{{ notificationNotice }}</p><p v-if="notificationError" class="request-error">{{ notificationError }}</p><div v-if="notificationLoading" class="module-state panel">Cargando configuración…</div><template v-else><form class="panel security-form service-config-form" @submit.prevent="saveServiceConfig"><div class="panel-heading"><div><h2>Valor del servicio</h2><p>Este valor se mostrará al cliente antes de enviar la solicitud.</p></div><span class="metric-icon tone-blue">$</span></div><label>Servicio<input :value="serviceConfig.name" type="text" readonly /></label><div class="service-price-fields"><label>Valor a pagar<input v-model.number="serviceConfig.amount" type="number" min="0" step="1" required /></label><label>Moneda<select v-model="serviceConfig.currency"><option value="COP">COP</option><option value="USD">USD</option></select></label></div><button type="submit" class="primary-button">Guardar valor <span>→</span></button></form><div class="notification-info"><span class="metric-icon tone-blue">✉</span><p>El evento <strong>Pago aprobado</strong> utilizará estas reglas cuando conectemos el webhook de Wompi. El remitente y la API de correo seguirán configurándose por entorno.</p></div><div class="security-grid"><form class="panel security-form" @submit.prevent="createNotificationRecipient"><div class="panel-heading"><div><h2>Agregar destinatario</h2><p>Correo que podrá recibir notificaciones.</p></div><span class="metric-icon tone-blue">@</span></div><label>Nombre<input v-model="recipientForm.name" type="text" placeholder="Equipo de operaciones" required /></label><label>Correo electrónico<input v-model="recipientForm.email" type="email" placeholder="operaciones@empresa.com" required /></label><label>Tipo de copia<select v-model="recipientForm.recipientType"><option value="to">Para</option><option value="cc">Copia (CC)</option><option value="bcc">Copia oculta (CCO)</option></select></label><button type="submit" class="primary-button">Guardar destinatario <span>→</span></button></form><article class="panel security-list"><div class="panel-heading"><div><h2>Destinatarios configurados</h2><p>{{ notificationRecipients.length }} correos disponibles.</p></div></div><div v-if="!notificationRecipients.length" class="empty-row">Aún no hay destinatarios.</div><div v-for="recipient in notificationRecipients" :key="recipient.id" class="security-list-item"><div class="avatar avatar-table">@</div><div><strong>{{ recipient.name }}</strong><span>{{ recipient.email }}</span></div><div class="security-item-meta"><span class="security-status">{{ recipient.recipientType.toUpperCase() }}</span><small>{{ recipient.active ? 'Activo' : 'Inactivo' }}</small></div></div></article></div><form class="panel security-form rule-form" @submit.prevent="createNotificationRule"><div class="panel-heading"><div><h2>Nueva regla de notificación</h2><p>Relaciona un evento con un tipo de servicio y sus destinatarios.</p></div><span class="metric-icon tone-violet">↗</span></div><div class="rule-form-fields"><label>Nombre de la regla<input v-model="ruleForm.name" type="text" placeholder="Pago aprobado - Importaciones" required /></label><label>Evento<select v-model="ruleForm.eventCode"><option value="payment_approved">Pago aprobado</option><option value="payment_rejected">Pago rechazado</option><option value="request_created">Solicitud creada</option><option value="status_changed">Cambio de estado</option></select></label><label>Tipo de servicio<select v-model="ruleForm.serviceType"><option value="all">Todos</option><option value="importacion">Importación</option><option value="exportacion">Exportación</option><option value="agente_carga">Agente de carga</option></select></label></div><fieldset class="permission-picker recipient-picker"><legend>Destinatarios de la regla</legend><label v-for="recipient in notificationRecipients" :key="recipient.id" class="permission-option"><input v-model="ruleForm.recipientIds" type="checkbox" :value="recipient.id" /><span><strong>{{ recipient.name }}</strong><small>{{ recipient.email }}</small></span></label><small v-if="!notificationRecipients.length" class="empty-inline">Agrega destinatarios antes de crear una regla.</small></fieldset><button type="submit" class="primary-button">Guardar regla <span>→</span></button></form><article class="panel security-list notification-rules"><div class="panel-heading"><div><h2>Reglas activas</h2><p>Configuración que consultará el flujo de pagos.</p></div></div><div v-if="!notificationRules.length" class="empty-row">Aún no hay reglas configuradas.</div><div v-for="rule in notificationRules" :key="rule.id" class="security-list-item"><div class="metric-icon tone-violet">↗</div><div><strong>{{ rule.name }}</strong><span>{{ rule.eventCode }} · {{ rule.serviceType }}</span></div><div class="security-item-meta"><span class="security-status">{{ rule.active ? 'Activa' : 'Inactiva' }}</span><small>{{ rule.recipients.length }} destinatario(s)</small></div></div></article></template>
+        <p v-if="notificationNotice" class="security-notice">{{ notificationNotice }}</p><p v-if="notificationError" class="request-error">{{ notificationError }}</p><div v-if="notificationLoading" class="module-state panel">Cargando configuración…</div><template v-else><form class="panel security-form service-config-form" @submit.prevent="saveServiceConfig"><div class="panel-heading"><div><h2>Valor del servicio</h2><p>Este valor se mostrará al cliente antes de enviar la solicitud.</p></div><span class="metric-icon tone-blue">$</span></div><label>Servicio<input :value="serviceConfig.name" type="text" readonly /></label><div class="service-price-fields"><label>Valor a pagar<input v-model.number="serviceConfig.amount" type="number" min="0" step="1" required /></label><label>Moneda<select v-model="serviceConfig.currency"><option value="COP">COP</option><option value="USD">USD</option></select></label></div><button type="submit" class="primary-button">Guardar valor <span>→</span></button></form><div class="notification-info"><span class="metric-icon tone-blue">✉</span><p>El evento <strong>Pago aprobado</strong> utilizará estas reglas cuando conectemos el webhook de Mercado Pago. El remitente y la API de correo seguirán configurándose por entorno.</p></div><div class="security-grid"><form class="panel security-form" @submit.prevent="createNotificationRecipient"><div class="panel-heading"><div><h2>Agregar destinatario</h2><p>Correo que podrá recibir notificaciones.</p></div><span class="metric-icon tone-blue">@</span></div><label>Nombre<input v-model="recipientForm.name" type="text" placeholder="Equipo de operaciones" required /></label><label>Correo electrónico<input v-model="recipientForm.email" type="email" placeholder="operaciones@empresa.com" required /></label><label>Tipo de copia<select v-model="recipientForm.recipientType"><option value="to">Para</option><option value="cc">Copia (CC)</option><option value="bcc">Copia oculta (CCO)</option></select></label><button type="submit" class="primary-button">Guardar destinatario <span>→</span></button></form><article class="panel security-list"><div class="panel-heading"><div><h2>Destinatarios configurados</h2><p>{{ notificationRecipients.length }} correos disponibles.</p></div></div><div v-if="!notificationRecipients.length" class="empty-row">Aún no hay destinatarios.</div><div v-for="recipient in notificationRecipients" :key="recipient.id" class="security-list-item"><div class="avatar avatar-table">@</div><div><strong>{{ recipient.name }}</strong><span>{{ recipient.email }}</span></div><div class="security-item-meta"><span class="security-status">{{ recipient.recipientType.toUpperCase() }}</span><small>{{ recipient.active ? 'Activo' : 'Inactivo' }}</small></div></div></article></div><form class="panel security-form rule-form" @submit.prevent="createNotificationRule"><div class="panel-heading"><div><h2>Nueva regla de notificación</h2><p>Relaciona un evento con un tipo de servicio y sus destinatarios.</p></div><span class="metric-icon tone-violet">↗</span></div><div class="rule-form-fields"><label>Nombre de la regla<input v-model="ruleForm.name" type="text" placeholder="Pago aprobado - Importaciones" required /></label><label>Evento<select v-model="ruleForm.eventCode"><option value="payment_approved">Pago aprobado</option><option value="payment_rejected">Pago rechazado</option><option value="request_created">Solicitud creada</option><option value="status_changed">Cambio de estado</option></select></label><label>Tipo de servicio<select v-model="ruleForm.serviceType"><option value="all">Todos</option><option value="importacion">Importación</option><option value="exportacion">Exportación</option><option value="agente_carga">Agente de carga</option></select></label></div><fieldset class="permission-picker recipient-picker"><legend>Destinatarios de la regla</legend><label v-for="recipient in notificationRecipients" :key="recipient.id" class="permission-option"><input v-model="ruleForm.recipientIds" type="checkbox" :value="recipient.id" /><span><strong>{{ recipient.name }}</strong><small>{{ recipient.email }}</small></span></label><small v-if="!notificationRecipients.length" class="empty-inline">Agrega destinatarios antes de crear una regla.</small></fieldset><button type="submit" class="primary-button">Guardar regla <span>→</span></button></form><article class="panel security-list notification-rules"><div class="panel-heading"><div><h2>Reglas activas</h2><p>Configuración que consultará el flujo de pagos.</p></div></div><div v-if="!notificationRules.length" class="empty-row">Aún no hay reglas configuradas.</div><div v-for="rule in notificationRules" :key="rule.id" class="security-list-item"><div class="metric-icon tone-violet">↗</div><div><strong>{{ rule.name }}</strong><span>{{ rule.eventCode }} · {{ rule.serviceType }}</span></div><div class="security-item-meta"><span class="security-status">{{ rule.active ? 'Activa' : 'Inactiva' }}</span><small>{{ rule.recipients.length }} destinatario(s)</small></div></div></article></template>
       </section>
       <div v-else class="empty-module panel"><span class="metric-icon tone-blue">{{ currentMenu?.icon }}</span><p class="eyebrow">Módulo operativo</p><h1>{{ currentMenu?.label }}</h1><p>Este módulo está habilitado para tu rol y será desarrollado en la siguiente fase.</p><button type="button" class="primary-button" @click="selectMenu({ label: 'Inicio' })">Volver al inicio <span>→</span></button></div>
     <aside v-if="requestDetail || requestDetailLoading || requestDetailError" class="request-detail-backdrop" @click.self="closeRequestDetail">
@@ -704,11 +745,63 @@ onMounted(restoreSession)
         </template>
       </section>
     </aside>
+    <aside v-if="selectedClient || clientDetailLoading || clientDetailError" class="request-detail-backdrop" @click.self="closeClientDetail">
+      <section class="request-detail-panel client-detail-panel" :aria-label="tx('Ficha del cliente')">
+        <button class="request-detail-close" type="button" :aria-label="tx('Cerrar ficha del cliente')" @click="closeClientDetail">×</button>
+        <div v-if="clientDetailLoading" class="module-state" aria-live="polite">{{ tx('Cargando cliente…') }}</div>
+        <div v-else-if="clientDetailError" class="module-state module-state-error" role="alert">
+          <p>{{ tx(clientDetailError) }}</p>
+          <div class="detail-error-actions">
+            <button type="button" class="secondary-button compact" @click="openClientDetail({ id: clientDetailId })">{{ tx('Reintentar') }}</button>
+            <button type="button" class="secondary-button compact" @click="closeClientDetail">{{ tx('Cerrar') }}</button>
+          </div>
+        </div>
+        <template v-else-if="selectedClient">
+          <p class="eyebrow">{{ tx('Ficha del cliente') }}</p>
+          <h2>{{ selectedClient.client.fullName }}</h2>
+          <dl class="detail-grid">
+            <div><dt>{{ tx('Registro') }}</dt><dd>{{ formatDate(selectedClient.client.createdAt) }}</dd></div>
+            <div><dt>{{ tx('Correo electrónico') }}</dt><dd>{{ selectedClient.client.email || '—' }}</dd></div>
+            <div><dt>{{ tx('Teléfono') }}</dt><dd>{{ selectedClient.client.phone || '—' }}</dd></div>
+            <div><dt>WhatsApp</dt><dd>{{ selectedClient.client.whatsapp || '—' }}</dd></div>
+          </dl>
+          <section class="detail-section">
+            <h3>{{ tx('Resumen de la relación') }}</h3>
+            <div class="client-metrics">
+              <div class="client-metric"><strong>{{ selectedClient.metrics.totalRequests }}</strong><span>{{ tx('Solicitudes totales') }}</span></div>
+              <div class="client-metric"><strong>{{ selectedClient.metrics.openRequests }}</strong><span>{{ tx('Abiertas') }}</span></div>
+              <div class="client-metric"><strong>{{ selectedClient.metrics.closedRequests }}</strong><span>{{ tx('Cerradas') }}</span></div>
+              <div class="client-metric"><strong>{{ selectedClient.metrics.approvedPayments }}</strong><span>{{ tx('Pagos aprobados') }}</span></div>
+              <div class="client-metric"><strong>{{ selectedClient.metrics.pendingPayments }}</strong><span>{{ tx('Pagos pendientes') }}</span></div>
+            </div>
+          </section>
+          <section class="detail-section">
+            <h3>{{ tx('Solicitudes del cliente') }}</h3>
+            <p v-if="!selectedClient.requests.length" class="detail-empty">{{ tx('Este cliente aún no tiene solicitudes.') }}</p>
+            <div v-else class="request-history">
+              <div v-for="request in selectedClient.requests" :key="request.id" class="request-history-item client-history-item">
+                <div>
+                  <strong>{{ request.reference }}</strong>
+                  <span>{{ request.serviceType ? labelValue(request.serviceType) : '—' }} · {{ request.productType ? labelValue(request.productType) : '—' }}</span>
+                  <span>{{ formatDate(request.createdAt) }}</span>
+                </div>
+                <div class="client-history-actions">
+                  <span :class="['status-pill', statusClass(request.status)]"><i></i>{{ labelValue(request.status) }}</span>
+                  <span :class="['status-pill', request.paymentStatus ? statusClass(request.paymentStatus) : 'status-blue']"><i></i>{{ request.paymentStatus ? paymentLabel(request.paymentStatus) : tx('Sin iniciar') }}</span>
+                  <button type="button" class="request-link" @click="openClientRequest(request)">{{ tx('Ver solicitud') }} →</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </template>
+      </section>
+    </aside>
   </OperationsShell>
 </template>
 
 <style scoped>
 .advanced-filter-toolbar{display:flex;align-items:center;gap:12px;margin:0 0 12px}.filter-active-note{color:#397aa2;font-size:10px;font-weight:700}.advanced-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:16px;padding:17px}.advanced-filters label{display:grid;gap:6px;color:#526174;font-size:10px;font-weight:700}.advanced-filters select,.advanced-filters input{min-height:36px;padding:0 9px;border:1px solid #d8e0ea;border-radius:6px;color:#344b60;background:#fff;font-size:11px}.advanced-filter-actions{display:flex;align-items:end;justify-content:flex-end;gap:8px;grid-column:1/-1}
+.dashboard-state p{margin:0 0 14px}.progress-track span.progress-empty{min-width:0}
 .request-tabs{margin:0 0 16px}.request-tabs button{font-size:12px}
 .agent-list-action{display:flex;justify-content:flex-end;margin-bottom:12px}.agent-list-action .primary-button{min-height:36px}.requests-panel .primary-button{display:none}
 .agent-actions{display:flex;align-items:center;gap:15px;margin:-4px 0 16px}.agent-actions .primary-button{min-height:36px}.agent-request-card{position:relative;margin-bottom:16px;padding:22px}.agent-request-card .panel-heading{margin-bottom:18px}.agent-request-card h2{margin:0 0 6px;color:#223b53;font-size:16px}.agent-request-card .request-detail-close{position:static;flex-shrink:0}.agent-request-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.agent-request-form label{display:grid;gap:6px;color:#526174;font-size:11px;font-weight:700}.agent-request-form input,.agent-request-form select{min-height:39px;padding:0 10px;border:1px solid #d8e0ea;border-radius:7px;color:#1d2939;background:#fff;font-size:11px}.agent-request-form .request-error,.agent-request-form .form-actions{grid-column:1/-1}.agent-request-form .form-actions{margin-top:3px}.agent-request-form .primary-button{min-height:38px}.agent-actions .security-notice{margin:0;padding:8px 10px;font-size:10px}
@@ -739,6 +832,17 @@ onMounted(restoreSession)
 .status-orange{color:#9a5c12;background:#fff0dc}.status-orange i{background:#dd8c2f}
 .brand-logo{display:block;width:44px;height:44px;flex:0 0 44px;border:1px solid rgba(255,255,255,.26);border-radius:10px;background:#fff;object-fit:contain}.brand-logo-login{width:58px;height:58px;padding:3px;border-color:#e4e9ef;border-radius:12px}
 .request-detail-panel{width:min(72vw,1100px)}
+.request-detail-panel.client-detail-panel{width:min(680px,100%)}
+.client-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(94px,1fr));gap:9px}
+.client-metric{padding:11px 12px;border:1px solid #e5eaf0;border-radius:8px;background:#fbfcfe}
+.client-metric strong{display:block;color:#142c43;font-size:19px;letter-spacing:-.04em}
+.client-metric span{display:block;margin-top:3px;color:#98a2b3;font-size:9px;line-height:1.35}
+.client-history-item{align-items:flex-start}
+.client-history-actions{display:grid;justify-items:end;gap:6px;flex-shrink:0}
+.client-history-actions .request-link{font-size:10px}
+.client-detail-panel .module-state p{margin:0 0 14px}
+.detail-error-actions{display:flex;justify-content:center;gap:8px}
+@media(max-width:520px){.client-history-item{flex-direction:column;align-items:stretch}.client-history-actions{justify-items:start}}
 .detail-response-review{display:grid;gap:12px;padding-top:10px;border-top:1px solid #e5eaf0}.detail-response-review label{display:grid;gap:6px;color:#526174;font-size:10px;font-weight:700}.detail-response-review textarea{width:100%;padding:10px;border:1px solid #d8e0ea;border-radius:7px;resize:vertical;color:#344b60;background:#fff;font:inherit;font-size:11px}.detail-response-actions{display:flex;justify-content:flex-end;align-items:center;gap:9px}.detail-response-actions .primary-button{min-height:36px;padding:0 13px}.detail-response-actions .danger-link{min-height:36px;padding:0 12px;border:1px solid #f0c5c5;border-radius:7px;color:#b54747;background:#fff;font-size:11px;font-weight:700;cursor:pointer}.detail-response-actions button:disabled{opacity:.55;cursor:not-allowed}
 @media(max-width:720px){.request-detail-panel{width:100%;max-width:none;padding:36px 20px}}
 </style>

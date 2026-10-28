@@ -15,7 +15,9 @@
     "db:migrate:operations": "node scripts/migrate-operations.js",
     "db:seed:operations-admin": "node scripts/seed-operations-admin.js",
     "deploy": "npm run deploy:dev",
-    "deploy:dev": "npm run build && wrangler deploy --config wrangler.dev.jsonc"
+    "deploy:dev": "npm run build && wrangler deploy --config wrangler.dev.jsonc",
+    "test": "node --test tests/*.test.js",
+    "check": "npm run test && npm run build"
   },
   "dependencies": {
     "@libsql/client": "^0.17.3",
