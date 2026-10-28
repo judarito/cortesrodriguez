@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { shouldKeepBricksAttempt } from '../lib/paymentFlow.js'
 import { getInitialLocale, localeTag, persistLocale } from '../lib/locale.js'
 import LanguageToggle from '../shared/components/LanguageToggle.vue'
 import OperationsShell from './OperationsShell.vue'
@@ -323,7 +324,7 @@ async function prepareBrickAttempt() {
 
 async function startPayment() {
   if (!detail.value || sending.value) return
-  if (currentRequestCheckoutMode() === 'bricks') {
+  if (shouldKeepBricksAttempt(detail.value, checkoutMode.value)) {
     if (checkoutMode.value !== 'bricks') {
       brickRecoveryMessage.value = t.value.bricksUnavailable
       return
@@ -476,7 +477,7 @@ onMounted(() => { document.documentElement.lang = locale.value; load() })
               <strong>{{ t.checkingTitle }}</strong><p>{{ brickRecoveryMessage || t.bricksChecking }}</p>
               <button class="client-secondary" type="button" :disabled="detailLoading" @click="openRequest(detail.reference)">{{ t.refreshPayment }}</button>
             </template>
-            <template v-else-if="currentRequestCheckoutMode() === 'bricks' && checkoutMode !== 'bricks'">
+            <template v-else-if="shouldKeepBricksAttempt(detail, checkoutMode) && checkoutMode !== 'bricks'">
               <strong>{{ t.bricksUnavailable }}</strong><p>{{ t.bricksChecking }}</p>
             </template>
             <template v-else-if="brickRecoveryError">
@@ -486,7 +487,7 @@ onMounted(() => { document.documentElement.lang = locale.value; load() })
               <strong>{{ t.payPrompt }}</strong><p>{{ t.checkoutInfo }}</p>
               <MercadoPagoPaymentBrick :intent="brickIntent" :locale="locale === 'en' ? 'en-US' : 'es-CO'" :payer-email="user?.email || ''" @submit="processBrickPayment" @retry="retryBrickPayment" />
             </template>
-            <template v-else-if="currentRequestCheckoutMode() === 'bricks' && brickRecoveryMessage">
+            <template v-else-if="shouldKeepBricksAttempt(detail, checkoutMode) && brickRecoveryMessage">
               <strong>{{ t.bricksChecking }}</strong><p>{{ brickRecoveryMessage }}</p>
             </template>
             <template v-else-if="detail.paymentAction === 'checking'">

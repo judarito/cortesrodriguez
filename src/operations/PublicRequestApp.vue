@@ -416,6 +416,7 @@ async function processBrickPayment(submission) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         attemptId: submission.attemptId,
+        submissionToken: requestIdempotencyKey.value,
         idempotencyKey: submission.idempotencyKey,
         ...submission.payload,
       }),

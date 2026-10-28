@@ -113,7 +113,7 @@ test('expert notification is isolated from client identity, request details, and
     assert.deepEqual(new Map(sends.map((message) => [message.to[0], message.idempotencyKey])), firstKeys)
     for (const [recipient, key] of firstKeys) {
       assert.ok(key.length > 0 && key.length <= 256)
-      const effect = effects.rows.get(`test-event/${recipient === 'expert@example.test' ? 'expert-v1' : 'general-v1'}\n${recipient}`)
+      const effect = effects.rows.get(`test-event/${recipient === 'expert@example.test' ? 'expert-v1' : recipient === 'client@example.test' ? 'client-es-v1' : 'general-v1'}\n${recipient}`)
       assert.equal(effect.status, 'accepted')
       assert.equal('payload' in effect, false, 'the local ledger keeps only the payload hash')
     }
@@ -220,7 +220,10 @@ test('retries a failed Resend delivery and succeeds idempotently without changin
     assert.equal(effects.rows.size, 2)
     assert.deepEqual([...effects.rows.values()].map((row) => row.status), ['accepted', 'accepted'])
     assert.ok([...effects.rows.values()].every((row) => !('payload' in row) && row.payload_sha256))
-    assert.deepEqual(sentTo, [['client@example.test'], ['client@example.test'], ['admin@example.test']])
+    assert.deepEqual(sentTo, [['admin@example.test'], ['admin@example.test'], ['client@example.test']])
+    const accepted = [...effects.rows.values()]
+    assert.equal(accepted.find((row) => row.recipient_email === 'admin@example.test').status, 'accepted')
+    assert.equal(accepted.find((row) => row.recipient_email === 'client@example.test').status, 'accepted')
     assert.deepEqual(requestStatuses, ['pending_retry', 'accepted'])
   } finally {
     globalThis.fetch = originalFetch
