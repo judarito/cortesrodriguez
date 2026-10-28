@@ -3,7 +3,7 @@
 **Proyecto:** Cortés Rodríguez Asesores  
 **Fecha:** 25 de octubre de 2026  
 **Estado:** AUD27-01 a AUD27-04 están publicados en `dev` y desplegados en el Worker Dev. Falta su validación integrada con Neon, Cloudflare y Mercado Pago sandbox; siguen abiertos AUD27-05 a AUD27-09 y el nuevo AUD27-10 (salida de Bricks al portal cliente). Producción y `main` permanecen fuera del alcance.
-**Código desplegado:** rama `dev`, commit `8a92fc5` (incluye las correcciones `edb8e50` y el CTA posterior a Bricks); Worker Dev `cortes-rodriguez-asesores-dev`, versión `4a225a1b-aefd-470a-ad9a-086d4574f5a3`, desplegado directamente desde local el 2026-10-27. La revisión que originó las tareas se hizo sobre `35d1c82`. Las cifras y hallazgos anteriores conservan valor histórico; el estado vigente se resume en 19.14–19.15.
+**Código desplegado:** rama local `dev`, commit `bb928e4` (incluye CTA post-Bricks, manejo prudente de resultados inciertos y prueba de preferencia Pro); Worker Dev `cortes-rodriguez-asesores-dev`, versión `2df5de7e-d63a-42f5-af3b-5e7332da2b3e`, desplegado directamente desde local el 2026-10-27. La sincronización con GitHub `dev` quedó pendiente por fallo temporal de resolución DNS de `github.com`; no se tocó `main` ni Producción. El estado vigente se resume en 19.14–19.15.
 
 **Actualización:** medidas de seguridad contrastadas en `dev`; controles de infraestructura pendientes de evidencia se distinguen de faltantes de código.
 
@@ -21,7 +21,7 @@
 | AUD27-01: autorización y reserva de cobro Bricks | Implementado en `edb8e50`, desplegado en `be678cd` | Pruebas locales, SQL en PostgreSQL embebido y ruta cancelada sin llamada de cobro | Probar cancelación/recuperación/concurrencia en Neon y sandbox |
 | AUD27-02: asociación y conciliación de intentos | Implementado en `edb8e50`, desplegado en `be678cd` | Casos locales de ID externo, metadata, identidad contradictoria, ambigüedad e indisponibilidad | Verificar pagos Pro históricos/nuevos y metadata en sandbox |
 | AUD27-03: vuelta de Bricks a Pro | Implementado en `edb8e50` | Política de interfaz e invalidación SQL de intentos nunca enviados | Probar flag remoto, pestañas abiertas y estados de ambos métodos |
-| AUD27-04: suite y regresiones | Completado localmente | **119/119**, sin fallos ni omitidas; build y `git diff --check` correctos | Mantener suite verde e incorporar evidencia de integración |
+| AUD27-04: suite y regresiones | Completado localmente | **120/120**, sin fallos ni omitidas; build y `git diff --check` correctos | Mantener suite verde e incorporar evidencia de integración |
 | AUD27-05: política de origen | Pendiente | Divergencia registrada entre requisito original y acceso directo actual | Registrar decisión y alinear plan, código y pruebas |
 | AUD27-06: recorrido completo externo | Pendiente para las correcciones nuevas | El pago Bricks aprobado anterior no valida el código `be678cd` recién desplegado | Ejecutar matriz 19.8 con correo real autorizado y pagos sandbox |
 | AUD27-07: reportes y balance | Pendiente | Listado de pagos no sustituye los reportes del alcance | Implementar/controlar alcance financiero acordado |
@@ -869,7 +869,7 @@ Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendient
 **Pendientes conservados:** AUD27-05 a AUD27-09, recepción real de correos, pagos sandbox Pro/Bricks en todos sus estados, rollback del flag en Cloudflare, consultas/locks bajo concurrencia real y recuperación/DLQ. El origen directo no se modificó en esta implementación; su decisión funcional sigue pendiente. Reportes/balance no forman parte de este bloque de corrección.
 
 - [x] Implementar AUD27-01 a AUD27-04 y ejecutar regresiones locales completas.
-- [x] Desplegar los ajustes más recientes de `dev` al Worker Dev `4a225a1b-aefd-470a-ad9a-086d4574f5a3`; `/solicitud` respondió 200 y `/api/public/features` confirmó `checkoutMode: "bricks"`.
+- [x] Desplegar los ajustes más recientes de `dev` al Worker Dev `2df5de7e-d63a-42f5-af3b-5e7332da2b3e`; smoke checks de la versión anterior confirmaron `/solicitud` 200 y `checkoutMode: "bricks"`.
 - [ ] Ejecutar la matriz de 19.8 con pagos sandbox después de este despliegue.
 - [ ] Validar identificación de pagos Pro nuevos/históricos y propagación de metadata con sandbox.
 - [ ] Probar flag apagado con rechazo, intento nunca enviado e intento enviado; ningún caso debe duplicar cobros.
@@ -881,7 +881,7 @@ Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendient
 - [x] Publicar las correcciones en la rama `dev`: [commit de código edb8e50](https://github.com/judarito/cortesrodriguez/commit/edb8e50d8a5544425d337524003c14541e3899fd).
 - [x] Registrar implementación y límites de las pruebas: [commit de documentación bf424c3](https://github.com/judarito/cortesrodriguez/commit/bf424c3f3a6b04b80d17f801cd54a46eb421b97e).
 - [x] Corregir los tres fallos de la suite anterior, conservar privacidad/idempotencia y añadir regresiones: 119 pruebas locales aprobadas.
-- [x] Desplegar el código actualizado de `dev` al Worker `cortes-rodriguez-asesores-dev`; versión vigente registrada en 19.15: `4a225a1b-aefd-470a-ad9a-086d4574f5a3`.
+- [x] Desplegar el código actualizado de `dev` al Worker `cortes-rodriguez-asesores-dev`; versión vigente registrada en 19.15: `2df5de7e-d63a-42f5-af3b-5e7332da2b3e`.
 - [ ] Ejecutar primero AUD27-06: compra Pro/Bricks, rechazo, pendiente, reintento, timeout, cancelación y rollback del flag; comprobar correo y portal.
 - [x] Implementar y desplegar el CTA «Consultar mis solicitudes» junto al resultado/error Bricks; ver versión vigente en 19.15.
 - [ ] Verificar AUD27-10 en navegador: estados, ES/EN, responsive, portal con/sin sesión y autenticación por código.
@@ -894,7 +894,7 @@ Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendient
 
 ### 19.15 Prioridad vigente y nuevo pendiente de navegación — 27-oct-2026
 
-El commit `8a92fc5` del branch `dev` se desplegó directamente a Cloudflare Dev en la versión `4a225a1b-aefd-470a-ad9a-086d4574f5a3`; no se tocó `main` ni Producción. `/solicitud` respondió HTTP 200 y `/api/public/features` confirmó `checkoutMode: "bricks"`. Build y 119/119 pruebas locales pasaron. Esto confirma despliegue y disponibilidad básica, no la matriz financiera de AUD27-06.
+El commit local `bb928e4` del branch `dev` se desplegó directamente a Cloudflare Dev en la versión `2df5de7e-d63a-42f5-af3b-5e7332da2b3e`; no se tocó `main` ni Producción. La rama GitHub `dev` aún requiere sincronización cuando se restablezca DNS. El despliegue mantiene el CTA de portal y suma bloqueo ante resultado Bricks incierto con mensaje de no volver a pagar todavía. Build y 120/120 pruebas locales pasaron. Esto no completa la matriz financiera ni la verificación visual.
 
 Orden del trabajo pendiente:
 
@@ -903,7 +903,7 @@ Orden del trabajo pendiente:
 3. **P1 — resolver el resto funcional (AUD27-05/07/08):** decidir y documentar el origen `direct_web`; completar informes/balance requeridos y flujos administrativos de excepción con auditoría, sin edición manual de estados financieros.
 4. **P0 antes de cualquier producción (AUD27-09 + SEC pendientes):** verificar Turnstile, secretos y aislamiento de recursos, control de acceso, alertas, respaldos/restauración, colas/DLQ, configuración/webhooks y rollback. Cualquier promoción requiere autorización explícita y procedimiento independiente; este plan no autoriza desplegar a Prod ni cambiar `main`.
 
-**Ajustes UI Bricks desplegados en Dev (2026-10-27):** se eliminó la duplicación del bloque de precio USD, TRM/fecha y total COP en la parte superior de la solicitud; se conserva la referencia y el desglose completo junto al checkout. También se añadió el CTA «Consultar mis solicitudes» en el resultado/error del Brick. Worker `4a225a1b-aefd-470a-ad9a-086d4574f5a3`; build y 119/119 pruebas locales correctos; smoke `/solicitud` 200 y flag `checkoutMode: "bricks"`. Falta revisar visualmente los estados, móvil/escritorio y ES/EN, y completar la matriz sandbox AUD27-06.
+**Ajustes UI y resultado incierto Bricks desplegados en Dev (2026-10-27):** se eliminó la duplicación del bloque de precio USD/TRM/COP, se añadió el CTA al portal y se bloquea el formulario cuando no se puede confirmar el resultado del pago, indicando que no pague de nuevo todavía. Worker `2df5de7e-d63a-42f5-af3b-5e7332da2b3e`; build y 120/120 pruebas locales correctos. Falta verificar visualmente los estados y completar la matriz sandbox AUD27-06.
 
 #### AUD27-10 — Salida clara de Checkout Bricks al portal cliente
 

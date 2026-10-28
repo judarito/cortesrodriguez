@@ -5,7 +5,7 @@ Agregar Mercado Pago Checkout Bricks como alternativa seleccionable por feature 
 
 ## Estado vigente de las correcciones
 
-Código publicado en `dev`: `8a92fc5` (incluye `edb8e50`); Worker Dev desplegado en versión `4a225a1b-aefd-470a-ad9a-086d4574f5a3`. **120/120 pruebas locales aprobadas**, build correcto y smoke checks `/solicitud` 200 y `/api/public/features` 200 con `checkoutMode: "bricks"`. Falta validar pagos nuevos en sandbox y la presentación visual de los resultados.
+Commit local desplegado en Worker Dev: `bb928e4`, versión `2df5de7e-d63a-42f5-af3b-5e7332da2b3e`. **120/120 pruebas locales aprobadas** y build correcto. La sincronización con GitHub `dev` queda pendiente por fallo temporal de DNS; `main` y Producción no se tocaron. Falta validar pagos nuevos en sandbox y la presentación visual de los resultados.
 
 | Bloque | Estado | Validación que falta |
 |---|---|---|
@@ -17,7 +17,7 @@ Código publicado en `dev`: `8a92fc5` (incluye `edb8e50`); Worker Dev desplegado
 
 **Pendiente inmediato:** ejecutar la matriz externa sobre el Worker Dev ya desplegado y verificar AUD27-10. El único pago sandbox aprobado documentado ocurrió antes de `edb8e50`; no valida las correcciones más recientes. El smoke HTTP no sustituye la validación de pagos.
 
-**Ajustes de presentación desplegados en Dev (2026-10-27):** se quitó del resumen superior de la solicitud Bricks el bloque repetido de precio USD, TRM/fecha, total COP y explicación. La referencia permanece allí; el desglose completo y el aviso se muestran una sola vez junto al checkout. También se añadió «Consultar mis solicitudes» junto al resultado o error del Brick para aprobado, pendiente, rechazado/cancelado y error incierto. Worker Dev `4a225a1b-aefd-470a-ad9a-086d4574f5a3`; `/solicitud` respondió 200 y el endpoint de flags informó `checkoutMode: "bricks"`. Falta verificar visualmente móvil/escritorio y ES/EN, además del portal y la sesión.
+**Ajustes desplegados en Dev (2026-10-27):** se quitó del resumen superior la repetición de precio USD/TRM/COP, quedó el desglose junto al checkout, y se añadió «Consultar mis solicitudes» junto al resultado/error del Brick. Además, el resultado incierto ahora bloquea otro envío y muestra «No vuelvas a pagar todavía». Worker Dev `2df5de7e-d63a-42f5-af3b-5e7332da2b3e`. Falta verificar visualmente móvil/escritorio y ES/EN, además del portal/sesión y la matriz sandbox.
 
 El estado consolidado y los próximos pasos están en [19.14 del plan principal](./PLAN-COLAS-IDEMPOTENCIA-SEGURIDAD.md#1914-próximas-acciones-y-cierre-de-las-tareas).
 
