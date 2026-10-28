@@ -786,7 +786,7 @@ Recorrido mínimo de aceptación: **crear solicitud con imágenes → rechazo de
 
 No cerrar filas con un simple HTTP 200. Guardar evidencia sin datos sensibles: IDs de prueba, estados, commit, versión de Worker, resultado y fecha; diferenciar aceptado por Resend de entregado en buzón.
 
-**Preflight local (2026-10-27):** `node --test tests/*.test.js` aprobó 119/119 pruebas y `npm run build` pasó tras el ajuste UI de Bricks. Esto cubre mocks y PostgreSQL embebido; no reemplaza los pagos sandbox, webhooks reales, correos recibidos ni concurrencia Cloudflare/Neon. La matriz Dev sigue pendiente.
+**Preflight local (2026-10-27):** `node --test tests/*.test.js` aprobó 120/120 pruebas y `npm run build` pasó. Se agregó `tests/paymentProFlow.test.js`, que recorre la ruta real de preferencia Pro con Neon/TRM/Mercado Pago simulados y comprueba retornos, metadata, webhook e `init_point`/`preference_id` persistidos. La suite cubre mocks y PostgreSQL embebido; no reemplaza pagos sandbox, webhook real, correo recibido ni concurrencia Cloudflare/Neon. La matriz Dev sigue pendiente.
 
 ### 19.9 AUD27-07 — Reportes y balance del alcance original
 
@@ -869,7 +869,7 @@ Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendient
 **Pendientes conservados:** AUD27-05 a AUD27-09, recepción real de correos, pagos sandbox Pro/Bricks en todos sus estados, rollback del flag en Cloudflare, consultas/locks bajo concurrencia real y recuperación/DLQ. El origen directo no se modificó en esta implementación; su decisión funcional sigue pendiente. Reportes/balance no forman parte de este bloque de corrección.
 
 - [x] Implementar AUD27-01 a AUD27-04 y ejecutar regresiones locales completas.
-- [x] Desplegar el código actualizado de `dev` en el Worker Dev (versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`); `/solicitud` y `/api/public/features` respondieron 200.
+- [x] Desplegar los ajustes más recientes de `dev` al Worker Dev `4a225a1b-aefd-470a-ad9a-086d4574f5a3`; `/solicitud` respondió 200 y `/api/public/features` confirmó `checkoutMode: "bricks"`.
 - [ ] Ejecutar la matriz de 19.8 con pagos sandbox después de este despliegue.
 - [ ] Validar identificación de pagos Pro nuevos/históricos y propagación de metadata con sandbox.
 - [ ] Probar flag apagado con rechazo, intento nunca enviado e intento enviado; ningún caso debe duplicar cobros.
@@ -881,9 +881,10 @@ Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendient
 - [x] Publicar las correcciones en la rama `dev`: [commit de código edb8e50](https://github.com/judarito/cortesrodriguez/commit/edb8e50d8a5544425d337524003c14541e3899fd).
 - [x] Registrar implementación y límites de las pruebas: [commit de documentación bf424c3](https://github.com/judarito/cortesrodriguez/commit/bf424c3f3a6b04b80d17f801cd54a46eb421b97e).
 - [x] Corregir los tres fallos de la suite anterior, conservar privacidad/idempotencia y añadir regresiones: 119 pruebas locales aprobadas.
-- [x] Desplegar el código actualizado de `dev` al Worker `cortes-rodriguez-asesores-dev`; versión `939a11e2-1c3e-41b2-a9e2-2eac2aeff4b7`. Smoke checks: `/solicitud` 200 y `/api/public/features` 200 con `checkoutMode: "bricks"`.
+- [x] Desplegar el código actualizado de `dev` al Worker `cortes-rodriguez-asesores-dev`; versión vigente registrada en 19.15: `4a225a1b-aefd-470a-ad9a-086d4574f5a3`.
 - [ ] Ejecutar primero AUD27-06: compra Pro/Bricks, rechazo, pendiente, reintento, timeout, cancelación y rollback del flag; comprobar correo y portal.
-- [ ] Implementar y verificar AUD27-10: después del resultado del Brick, mostrar de forma prominente un botón «Consultar mis solicitudes» que lleve a `/portal-cliente` para aprobado, pendiente y rechazado.
+- [x] Implementar y desplegar el CTA «Consultar mis solicitudes» junto al resultado/error Bricks; ver versión vigente en 19.15.
+- [ ] Verificar AUD27-10 en navegador: estados, ES/EN, responsive, portal con/sin sesión y autenticación por código.
 - [ ] Completar la concurrencia real Neon/Workers y recuperación cola/DLQ/redrive; las reservas en PGlite no sustituyen estas pruebas.
 - [ ] Verificar que metadata del intento Pro llega de la forma esperada; si falta y no hay vínculo demostrado, conservar bloqueo prudente y revisión administrativa.
 - [ ] Resolver AUD27-05, completar reportes/balance AUD27-07 y cerrar procedimientos AUD27-08.
@@ -898,7 +899,7 @@ El commit `8a92fc5` del branch `dev` se desplegó directamente a Cloudflare Dev 
 Orden del trabajo pendiente:
 
 1. **P0 — completar validación financiera Dev (AUD27-06):** probar con sandbox Bricks y Pro aprobado/rechazado/pendiente, doble clic, timeout, cancelación, recuperación, webhooks, correo y portal. Cerrar primero los casos de cancelación/asociación/concurrencia de AUD27-01/02; un único pago aprobado anterior no demuestra el comportamiento del código actual.
-2. **P1 — navegación posterior a Bricks (AUD27-10):** el CTA «Consultar mis solicitudes» ya se implementó localmente junto al resultado/error del Brick. Desplegar a Dev y probar `approved`, `pending/in_process`, `rejected/cancelled` y error incierto, ES/EN y responsive. Debe abrir `/portal-cliente`, permitir acceso por sesión o código y preservar el seguimiento sin iniciar otro pago.
+2. **P1 — navegación posterior a Bricks (AUD27-10):** el CTA «Consultar mis solicitudes» está desplegado junto al resultado/error del Brick. Validar `approved`, `pending/in_process`, `rejected/cancelled` y error incierto, ES/EN y responsive; confirmar que abre `/portal-cliente`, permite acceso por sesión o código y preserva el seguimiento sin iniciar otro pago. La comprobación visual automatizada quedó bloqueada por la política de origen del navegador, por lo que esta validación sigue pendiente.
 3. **P1 — resolver el resto funcional (AUD27-05/07/08):** decidir y documentar el origen `direct_web`; completar informes/balance requeridos y flujos administrativos de excepción con auditoría, sin edición manual de estados financieros.
 4. **P0 antes de cualquier producción (AUD27-09 + SEC pendientes):** verificar Turnstile, secretos y aislamiento de recursos, control de acceso, alertas, respaldos/restauración, colas/DLQ, configuración/webhooks y rollback. Cualquier promoción requiere autorización explícita y procedimiento independiente; este plan no autoriza desplegar a Prod ni cambiar `main`.
 
@@ -908,10 +909,10 @@ Orden del trabajo pendiente:
 
 **Prioridad P1 funcional, antes de cerrar el recorrido cliente.** El resultado inmediato de Bricks ocurre dentro de `/solicitud`; aunque el formulario ofrece un enlace de portal, el usuario reporta que al volver del pago no encuentra la forma de consultar sus solicitudes. La vista `/solicitud/resultado-pago` de Checkout Pro no cubre por sí sola el resultado inline de Bricks.
 
-- [x] Mostrar «Consultar mis solicitudes» / “View my requests” junto al resultado o error del Brick para aprobado, pendiente/en proceso, rechazado/cancelado y error incierto. Implementado localmente en el componente Bricks de la solicitud pública.
-- [ ] Mantener una acción de portal visible también durante confirmación incierta, con texto que indique conservar el código y no volver a pagar.
+- [x] Mostrar «Consultar mis solicitudes» / “View my requests” junto al resultado o error del Brick para aprobado, pendiente/en proceso, rechazado/cancelado y error incierto. Desplegado en Dev.
+- [x] En resultado incierto, ocultar el formulario para evitar otro envío, indicar que no pague otra vez todavía y ofrecer el portal para consultar el estado.
 - [ ] Asegurar que el portal liste la solicitud luego de iniciar sesión con el correo registrado; si requiere código, conservar una navegación segura sin usar `reference` como autorización.
-- [ ] Desplegar a Dev y verificar los cuatro estados y el error incierto en español/inglés, responsive y con sesión cliente vigente/vencida; confirmar que el enlace no duplica pagos ni reenvía el formulario.
+- [ ] Verificar los cuatro estados y el error incierto en Dev, español/inglés y responsive, con sesión vigente/vencida; confirmar que el portal abre y que la solicitud aparece después del acceso por código. Automatización visual quedó bloqueada por la política de origen.
 
 **Criterio de aceptación:** desde cada resultado Bricks el cliente llega al portal en un clic, puede autenticarse si hace falta y encuentra la solicitud; el estado de pago lo determina el backend y el código de seguimiento no se pierde.
 

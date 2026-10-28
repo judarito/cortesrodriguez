@@ -423,12 +423,20 @@ async function processBrickPayment(submission) {
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok || typeof data.status !== 'string') {
-      throw new Error(localizedError(data.error || tr('No fue posible procesar el pago. Puedes volver a intentarlo.', 'Could not process the payment. You can try again.')))
+      const uncertain = response.status === 408 || response.status === 409 || response.status >= 500 || response.ok
+      submission.fail(
+        localizedError(data.error || tr('No fue posible confirmar el resultado del pago.', 'We could not confirm the payment result.')),
+        { uncertain },
+      )
+      return
     }
     submission.complete(data)
     handleBrickProcessed(data)
   } catch (paymentError) {
-    submission.fail(localizedError(paymentError.message || tr('No fue posible procesar el pago. Puedes volver a intentarlo.', 'Could not process the payment. You can try again.')))
+    submission.fail(
+      localizedError(paymentError.message || tr('No fue posible confirmar el resultado del pago.', 'We could not confirm the payment result.')),
+      { uncertain: true },
+    )
   }
 }
 

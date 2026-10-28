@@ -5,7 +5,7 @@ Agregar Mercado Pago Checkout Bricks como alternativa seleccionable por feature 
 
 ## Estado vigente de las correcciones
 
-Código publicado en `dev`: `8a92fc5` (incluye `edb8e50`); Worker Dev desplegado en versión `4a225a1b-aefd-470a-ad9a-086d4574f5a3`. **119/119 pruebas locales aprobadas**, build correcto y smoke checks `/solicitud` 200 y `/api/public/features` 200 con `checkoutMode: "bricks"`. Falta validar pagos nuevos en sandbox y la presentación visual de los resultados.
+Código publicado en `dev`: `8a92fc5` (incluye `edb8e50`); Worker Dev desplegado en versión `4a225a1b-aefd-470a-ad9a-086d4574f5a3`. **120/120 pruebas locales aprobadas**, build correcto y smoke checks `/solicitud` 200 y `/api/public/features` 200 con `checkoutMode: "bricks"`. Falta validar pagos nuevos en sandbox y la presentación visual de los resultados.
 
 | Bloque | Estado | Validación que falta |
 |---|---|---|
@@ -73,6 +73,7 @@ El integrador principal fija los contratos anteriores y asigna rutas/archivos an
 - [x] Unificar ambos métodos en el mismo registro, conciliador y eventos existentes; conservar idempotencia ante doble clic, repetición de petición y reenvío de webhook.
 - [x] Crear la aplicación sandbox Mercado Pago `CortesRodriguezBricksDev` (MCO, Checkout Bricks) y guardar sus credenciales de prueba como `MP_BRICKS_PUBLIC_KEY` y `MP_BRICKS_ACCESS_TOKEN` en Cloudflare Dev; conservar `MP_ACCESS_TOKEN` de Pro sin cambios.
 - [x] Integrar, revisar permisos y datos sensibles, y ejecutar pruebas automatizadas de contrato, migración, flag e idempotencia. Hubo tres fallos en la ejecución histórica; fueron corregidos por `edb8e50`. Resultado posterior de suite completa: 119/119. La validación externa sigue pendiente.
+- [x] Añadir prueba de integración local de la preferencia Checkout Pro; valida de punta a punta el payload enviado y la preferencia guardada con proveedores simulados. Suite completa actual: 120/120; pagos sandbox siguen pendientes.
 - [x] Aplicar `043_checkout_bricks_attempts.sql` en Neon Dev.
 - [ ] En Dev con flag apagado, completar un pago de prueba por Pro y comprobar retorno, webhook, estado, correo/notificaciones y reintento.
 - [x] En Dev con flag encendido, completar un pago Bricks aprobado y verificar conciliación y notificación; conservar el desglose USD→COP durante el formulario y el resultado.

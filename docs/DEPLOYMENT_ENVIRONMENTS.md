@@ -235,5 +235,5 @@ La acción administrativa **Verificar pago** consulta el recurso de pago en Merc
 - Se eliminó de la parte superior del formulario Bricks la repetición de precio USD, TRM/fecha, total COP y su explicación. Ahí queda la referencia de la solicitud; el desglose de precio y conversión se conserva una sola vez junto al checkout.
 - Se añadió también el enlace «Consultar mis solicitudes» directamente junto al resultado/error del Brick para aprobado, pendiente, rechazado/cancelado y errores de procesamiento.
 - Worker `cortes-rodriguez-asesores-dev` desplegado en versión `4a225a1b-aefd-470a-ad9a-086d4574f5a3`; `/solicitud` respondió 200 y `/api/public/features` devolvió `checkoutMode: "bricks"`.
-- Verificación local posterior a ambos ajustes: `node --test tests/*.test.js` aprobó 119/119, `npm run build` y `git diff --check` pasaron.
+- Verificación local: `node --test tests/*.test.js` aprobó 120/120, `npm run build` y `git diff --check` pasaron. La prueba nueva de Checkout Pro usa Neon/TRM/Mercado Pago simulados y no genera pagos reales.
 - **Pendiente:** verificar visualmente los estados del checkout en ES/EN y escritorio/móvil, además del acceso al portal con y sin sesión; completar la matriz sandbox AUD27-06. No se modificaron `main` ni Producción.

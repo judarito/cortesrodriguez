@@ -78,6 +78,7 @@ function loadMercadoPagoSdk() {
 function statusMessage(status) {
   if (status === 'approved') return tr('Pago aprobado. Tu solicitud ya quedó registrada como pagada.', 'Payment approved. Your request is recorded as paid.')
   if (status === 'rejected' || status === 'cancelled') return tr('El pago no fue aprobado. Puedes iniciar otro intento.', 'The payment was not approved. You can start another attempt.')
+  if (status === 'uncertain') return tr('No pudimos confirmar el resultado. No vuelvas a pagar todavía; consulta tus solicitudes o espera la confirmación.', 'We could not confirm the result. Do not pay again yet; check your requests or wait for confirmation.')
   return tr('Pago recibido y pendiente de confirmación. Actualizaremos el estado cuando Mercado Pago lo confirme.', 'Payment received and awaiting confirmation. We will update the status when Mercado Pago confirms it.')
 }
 
@@ -134,9 +135,14 @@ function onBrickSubmit(brickSubmission) {
         }
         currentSubmission = null
       },
-      fail(message) {
+      fail(message, options = {}) {
         if (!currentSubmission) return
-        error.value = message || tr('No fue posible procesar el pago. Puedes volver a intentarlo.', 'Could not process the payment. You can try again.')
+        if (options.uncertain) {
+          resultStatus.value = 'uncertain'
+          error.value = ''
+        } else {
+          error.value = message || tr('No fue posible procesar el pago. Puedes volver a intentarlo.', 'Could not process the payment. You can try again.')
+        }
         submitting.value = false
         currentSubmission.reject(new Error('payment_processing_failed'))
         currentSubmission = null
@@ -240,6 +246,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.brick-checkout{display:grid;gap:12px;width:100%;min-width:0}.brick-container{width:100%;min-width:0;min-height:100px}.brick-price-quote{padding:13px 14px;border:1px solid #dbe7ef;border-radius:8px;background:#f7fafc}.brick-price-title{margin:0 0 8px;color:#173b58;font-size:12px;font-weight:800}.brick-price-quote dl{display:grid;gap:0;margin:0}.brick-price-quote dl>div{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-bottom:1px solid #e5edf3;font-size:11px}.brick-price-quote dt{color:#586780}.brick-price-quote dd{margin:0;color:#173b58;font-weight:700;text-align:right}.brick-price-quote .brick-price-total{border-bottom:0;font-size:13px;font-weight:800}.brick-price-total dd{color:#08754e}.brick-price-explanation{margin:8px 0 0;color:#52677c;font-size:10px;line-height:1.5}.brick-state,.brick-error,.brick-result{margin:0;padding:11px 13px;border-radius:7px;font-size:11px;line-height:1.5}.brick-state{color:#586780;background:#f5f8fc}.brick-error,.brick-result-rejected{color:#7a1116;background:#fff0f1}.brick-result-approved{color:#28694f;background:#edf9f3}.brick-result-pending{color:#805514;background:#fff7e8}.brick-retry{justify-self:end}.brick-portal-link{display:inline-flex;align-items:center;justify-self:start;gap:9px;padding:10px 13px;border:1px solid #c9d9e7;border-radius:7px;color:#0c3c78;background:#f5f8fc;font-size:11px;font-weight:800;text-decoration:none;transition:background .15s,border-color .15s}.brick-portal-link:hover{border-color:#9bb7cd;background:#eaf2f8}.brick-portal-link span{font-size:15px;font-weight:500}
+.brick-checkout{display:grid;gap:12px;width:100%;min-width:0}.brick-container{width:100%;min-width:0;min-height:100px}.brick-price-quote{padding:13px 14px;border:1px solid #dbe7ef;border-radius:8px;background:#f7fafc}.brick-price-title{margin:0 0 8px;color:#173b58;font-size:12px;font-weight:800}.brick-price-quote dl{display:grid;gap:0;margin:0}.brick-price-quote dl>div{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-bottom:1px solid #e5edf3;font-size:11px}.brick-price-quote dt{color:#586780}.brick-price-quote dd{margin:0;color:#173b58;font-weight:700;text-align:right}.brick-price-quote .brick-price-total{border-bottom:0;font-size:13px;font-weight:800}.brick-price-total dd{color:#08754e}.brick-price-explanation{margin:8px 0 0;color:#52677c;font-size:10px;line-height:1.5}.brick-state,.brick-error,.brick-result{margin:0;padding:11px 13px;border-radius:7px;font-size:11px;line-height:1.5}.brick-state{color:#586780;background:#f5f8fc}.brick-error,.brick-result-rejected{color:#7a1116;background:#fff0f1}.brick-result-approved{color:#28694f;background:#edf9f3}.brick-result-pending{color:#805514;background:#fff7e8}.brick-result-uncertain{color:#805514;background:#fff7e8}.brick-retry{justify-self:end}.brick-portal-link{display:inline-flex;align-items:center;justify-self:start;gap:9px;padding:10px 13px;border:1px solid #c9d9e7;border-radius:7px;color:#0c3c78;background:#f5f8fc;font-size:11px;font-weight:800;text-decoration:none;transition:background .15s,border-color .15s}.brick-portal-link:hover{border-color:#9bb7cd;background:#eaf2f8}.brick-portal-link span{font-size:15px;font-weight:500}
 @media(max-width:620px){.brick-retry{width:100%}}
 </style>
