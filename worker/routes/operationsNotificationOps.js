@@ -1,3 +1,4 @@
+import { isResendEmailId } from '../../src/lib/resendEmailId.js'
 import { requireOperationsAuth } from './operationsAuth.js'
 import { publishNotificationEvent } from './operationsEmail.js'
 
@@ -104,7 +105,7 @@ async function resolveUncertainEffect(sql, env, effectId, actorId, input) {
 
   if (resolution === 'accepted') {
     const resendEmailId = text(input.resendEmailId)
-    if (!/^re_[A-Za-z0-9_-]{8,200}$/.test(resendEmailId)) return response({ error: 'Ingresa el ID del correo confirmado en Resend.' }, 400)
+    if (!isResendEmailId(resendEmailId)) return response({ error: 'Ingresa el ID del correo confirmado en Resend.' }, 400)
     const changed = await sql`
       WITH updated AS (
         UPDATE operations.notification_email_effects
@@ -288,7 +289,7 @@ async function ignoreQueueFailure(sql, failureId, actorId, reason) {
 }
 
 function extractOutboxId(effectKey) {
-  const match = effectKey.match(/^cra-([0-9a-f-]{36})\/(?:general|expert)-v\d+$/i)
+  const match = effectKey.match(/^cra-([0-9a-f-]{36})\/(?:general|expert|client-(?:es|en))-v\d+$/i)
   return match && uuidPattern.test(match[1]) ? match[1] : null
 }
 

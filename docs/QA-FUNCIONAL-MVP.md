@@ -201,3 +201,23 @@
 | Evidencia adjunta | |
 | Aprobado por | |
 | Fecha | |
+
+
+## Conciliación de correos inciertos — regresión del 28-oct-2026
+
+**Automatización local:** `node --test tests/operationsNotificationOps.test.js` (10 casos; 8 nuevos). `npm run check`: 141/141 y build correcto. API con transporte Neon simulado; sin acceso a Resend real.
+
+**Preparación en Dev:** cuentas de prueba, sesión de administrador y efectos inciertos controlados; usar el ID UUID del mensaje efectivamente aceptado en Resend para el mismo destinatario/evento. No usar credenciales como ID, ni forzar un reenvío de un correo aceptado. Registrar commit, estado previo/posterior y evidencia sin secretos. Los casos siguientes están **PENDIENTES**, no ejecutados por las pruebas locales:
+
+| Caso | Pasos y resultado esperado | Estado |
+|---|---|---|
+| Plantilla cliente ES | Abrir Excepciones; conciliar efecto `client-es-v1` con UUID confirmado y justificación; responde 200 y deja auditoría | PENDIENTE |
+| Plantilla cliente EN | Repetir con `client-en-v1`; no devuelve 409 por la plantilla | PENDIENTE |
+| General y experto | Repetir con `general-v1` y `expert-v1`; ambas variantes siguen funcionando | PENDIENTE |
+| Interfaz ES/EN | Revisar instrucciones UUID, pegado del ID, justificación y confirmación; botón habilitado con valores válidos, bloqueado con `re_…` | PENDIENTE |
+| API inválida | Enviar ID inválido/credencial ficticia directamente; 400 y ningún cambio persistido | PENDIENTE |
+| Destinatarios pendientes | Conciliar un destinatario con otro sin aceptar; evento incompleto; completar el último y comprobar estado final | PENDIENTE |
+| Ausencia de duplicados | Comprobar que conciliar no envía otro correo ni publica en la cola; reintento de conciliación ya resuelta devuelve 409 | PENDIENTE |
+| Permisos | Sesión de experto/agente no puede conciliar por UI ni API (403) | PENDIENTE |
+
+No confundir aceptación con apertura/lectura ni con entrega final. La resolución manual exige verificar previamente en Resend el mensaje y su destinatario.

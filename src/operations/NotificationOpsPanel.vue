@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { isResendEmailId } from '../lib/resendEmailId.js'
 import ListView from '../shared/components/ListView.vue'
 
 const props = defineProps({
@@ -129,7 +130,7 @@ const actionTitle = computed(() => {
 
 const actionReady = computed(() => {
   if (!dialog.value || busyKey.value || reason.value.trim().length < 20 || reason.value.trim().length > 1000 || !confirmed.value) return false
-  return dialog.value.action !== 'accepted' || /^re_[A-Za-z0-9_-]{8,200}$/.test(resendEmailId.value.trim())
+  return dialog.value.action !== 'accepted' || isResendEmailId(resendEmailId.value)
 })
 
 async function submitAction() {
@@ -257,10 +258,10 @@ onMounted(loadAll)
     <div v-if="dialog" class="ops-dialog-backdrop" @click.self="closeDialog">
       <section class="ops-dialog panel" role="dialog" aria-modal="true" :aria-label="actionTitle">
         <header class="panel-heading"><div><p class="eyebrow">{{ t('Acción auditada', 'Audited action') }}</p><h2>{{ actionTitle }}</h2><p>{{ dialog.item.requestReference || dialog.item.recipient || dialog.item.id }}</p></div><button type="button" class="secondary-button compact" :disabled="Boolean(busyKey)" @click="closeDialog">{{ t('Cancelar', 'Cancel') }}</button></header>
-        <p v-if="dialog.action === 'accepted'" class="ops-guidance">{{ t('Confirma que Resend muestra este mensaje como aceptado y copia su ID re_…', 'Confirm Resend shows this message as accepted and enter its re_… ID.') }}</p>
+        <p v-if="dialog.action === 'accepted'" class="ops-guidance">{{ t('Confirma que Resend muestra este mensaje como aceptado y copia su ID de correo (UUID).', 'Confirm Resend shows this message as accepted and enter its email ID (UUID).') }}</p>
         <p v-else-if="dialog.action === 'not_sent'" class="ops-guidance ops-warning">{{ t('Un reintento puede enviar un duplicado si Resend sí aceptó el correo. Verifica primero el panel de Resend.', 'Retrying may send a duplicate if Resend accepted the email. Check Resend first.') }}</p>
         <p v-else class="ops-guidance">{{ dialog.action === 'redrive' ? t('El mensaje se volverá a procesar con sus claves idempotentes.', 'The message will be processed again with its idempotency keys.') : t('El mensaje quedará ignorado y no se procesará de nuevo.', 'The message will be ignored and will not be processed again.') }}</p>
-        <label v-if="dialog.action === 'accepted'" class="ops-field">{{ t('ID de correo de Resend', 'Resend email ID') }}<input v-model="resendEmailId" type="text" maxlength="203" placeholder="re_…" autocomplete="off" /></label>
+        <label v-if="dialog.action === 'accepted'" class="ops-field">{{ t('ID de correo de Resend', 'Resend email ID') }}<input v-model="resendEmailId" type="text" maxlength="36" placeholder="49a3999c-0ce1-4ea6-ab68-afcd6dc2e794" autocomplete="off" /></label>
         <label class="ops-field">{{ t('Justificación (20–1.000 caracteres)', 'Reason (20–1,000 characters)') }}<textarea v-model="reason" rows="4" minlength="20" maxlength="1000" required :placeholder="t('Describe lo que verificaste y por qué corresponde esta acción.', 'Describe what you verified and why this action is appropriate.')"></textarea><small>{{ reason.trim().length }}/1000</small></label>
         <label class="ops-confirm"><input v-model="confirmed" type="checkbox" /><span>{{ dialog.action === 'accepted' ? t('Verifiqué en Resend que el correo fue aceptado.', 'I verified in Resend that the email was accepted.') : dialog.action === 'not_sent' ? t('Verifiqué que Resend no aceptó el correo; autorizo el reintento.', 'I verified Resend did not accept the email; I authorize a retry.') : dialog.action === 'redrive' ? t('Confirmo que quiero volver a encolar este mensaje DLQ.', 'I confirm I want to redrive this DLQ message.') : t('Confirmo que quiero descartar este fallo de cola.', 'I confirm I want to ignore this queue failure.') }}</span></label>
         <p v-if="error" class="request-error" role="alert">{{ error }}</p>

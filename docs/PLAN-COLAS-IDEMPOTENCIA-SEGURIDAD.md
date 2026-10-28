@@ -925,6 +925,14 @@ Orden del trabajo pendiente:
 - Implementación de AUD27-05/07/08 desplegada en Dev el 27-oct-2026: commit `1b4f7cb`, Worker `3ec20e97-1eb5-4c83-ac9e-12b497f43d14`; suite **128/128**, build y `git diff --check` correctos. Cierre de código no equivale a validación real en Mercado Pago, Resend, Neon ni Cloudflare.
 - Para culminar el plan operativo faltan la matriz sandbox de AUD27-06, la validación en Dev de acceso/roles, notificaciones y métricas, además de resolver los puntos de excepción explícitamente pendientes. La comprobación visual en la URL de Worker está bloqueada por la política de origen del navegador; requiere prueba manual del usuario o que se autorice ese origen en la política.
 
+### 19.17 Correcciones de conciliación — 28-oct-2026
+
+- F-P0-05a: el vínculo efecto → outbox ahora reconoce `client-es-vN` y `client-en-vN`, además de `general-vN` y `expert-vN`, con validación estricta del UUID.
+- F-P0-05b: UI y API comparten la validación UUID del ID de correo Resend; se elimina la exigencia de `re_…`, que corresponde a credenciales. Se actualizan el texto y ejemplo del formulario.
+- Se añaden 8 regresiones de contrato: las cuatro plantillas, otros destinatarios pendientes, IDs inválidos, claves inválidas y conflicto entre administradores. La conciliación aceptada no envía ni reencola correos; conserva auditoría y no completa eventos con destinatarios pendientes.
+- `npm run check`: **141/141** y build correcto. No hay migraciones ni cambios de configuración. Pruebas locales con transporte Neon simulado; falta la conciliación real/visual en Dev. La aceptación se declara manualmente por el administrador, sin consulta nueva a Resend.
+- Seguimiento funcional y casos E2E en `PLAN-PRIORIZADO-OPERACIONES.md` y `QA-FUNCIONAL-MVP.md`. Esta entrega no cierra la matriz de pagos, portal ni notificaciones, ni el balance/ledger y las excepciones financieras pendientes.
+
 ## Referencias internas
 
 - Repositorio: https://github.com/judarito/cortesrodriguez

@@ -1,7 +1,7 @@
 # Plan funcional priorizado — Plataforma operativa
 
-**Fecha:** 27 de octubre de 2026  
-**Rama de referencia:** `dev` (`036f26f`)  
+**Fecha:** 28 de octubre de 2026
+**Rama de referencia:** `dev` (revisión base `947f4b0`; correcciones de conciliación del 28-oct)
 **Foco:** completar y validar la funcionalidad de la plataforma operativa en Dev.  
 **Producción:** queda para una fase posterior. Este plan no incluye promoción, hardening de infraestructura ni cambios de `main`/Producción.
 
@@ -11,7 +11,7 @@
 
 ---
 
-## 0. Estado de ejecución — 27-oct-2026
+## 0. Estado de ejecución — 28-oct-2026
 
 | Tarea | Estado | Evidencia |
 |---|---|---|
@@ -19,9 +19,27 @@
 | F-P1-03 — Ficha de cliente | **Implementado y probado a nivel de contrato** | `GET /api/app/clients/:id` + panel lateral; pruebas PGlite; pendiente smoke E2E con sesión real |
 | F-P1-08 — Configuración y copy | **Parcial** | El panel visible (`NotificationConfigPanel`) no menciona Wompi; se corrigió el bloque muerto, pero queda limpieza de código duplicado |
 | F-P1-10 — Tests y CI | **Completado** | `npm test` 133/133; workflow ejecuta `npm run check` antes del deploy |
-| F-P0-01 a F-P0-05 | Pendientes | Requieren cuentas, pagos sandbox y datos reales de Dev |
+| F-P0-05a / F-P0-05b — Correcciones de conciliación | **Implementadas; pruebas locales aprobadas** | Plantillas cliente ES/EN, ID UUID compartido en UI/API; 8 casos de regresión nuevos; E2E Resend pendiente |
+| F-P0-01 a F-P0-05 | Pendientes de validación integral | Requieren cuentas, pagos sandbox y datos reales de Dev |
 
-**Verificación local:** `npm run check` pasa con 133/133 pruebas y build correcto.
+**Verificación local:** `npm run check` pasa con 141/141 pruebas y build correcto. Las pruebas de conciliación usan transporte Neon simulado: no prueban entrega real en Resend ni el recorrido visual.
+
+---
+
+### 0.1 Revisión del 28-oct y ejecución prioritaria
+
+La revisión sobre `947f4b0` encontró dos bloqueos reproducibles en la conciliación administrativa de correos inciertos. Se priorizan dentro de F-P0-05 antes de la matriz E2E:
+
+| ID | Hallazgo y consecuencia | Corrección ejecutada | Validación y cierre |
+|---|---|---|---|
+| F-P0-05a | El parser solo reconocía `general-vN` y `expert-vN`; los efectos `client-es-v1` / `client-en-v1` devolvían 409 al conciliar | Reconocer las dos variantes de cliente manteniendo UUID y estructura estrictos | Contratos de API para las cuatro plantillas, claves inválidas y conflicto entre administradores aprobados; falta recorrido real en Dev |
+| F-P0-05b | UI y API exigían `re_…` (prefijo de credenciales), bloqueando los UUID de mensajes de Resend con 400 | Validador UUID compartido por UI/API; instrucciones, ejemplo y longitud del campo corregidos | UUID real de ejemplo aceptado y credenciales/IDs inválidos rechazados; falta recorrido visual y conciliación real |
+
+**Garantías verificadas localmente:** conciliar como aceptado no publica en la cola ni envía un correo; conserva la auditoría; si otro destinatario sigue pendiente, no completa el evento ni la solicitud. Se mantiene el requisito de justificación y la protección de acceso administrativo. La confirmación sigue siendo manual: esta corrección no consulta Resend para validar la declaración del administrador.
+
+**Siguiente ejecución:** aplicar los casos de la sección de conciliación del documento `QA-FUNCIONAL-MVP.md` sobre Dev y registrar commit, actor, resultado y evidencia redactada. No se consideran cerrados F-P0-01 a F-P0-05 por el éxito de los tests locales.
+
+**Hallazgos restantes del análisis:** el reporte actual usa estados de solicitudes creadas dentro del rango, por lo que no equivale a un ledger financiero ni al balance de caja (AUD27-07); siguen pendientes las excepciones financieras completas (AUD27-08), cancelación/cierre/reapertura, comentarios y actividad unificada, el módulo Documentos y la matriz E2E de pagos, portal, roles y notificaciones. Sus tareas y criterios del plan se mantienen abiertos; no se incluyen como implementados en esta entrega.
 
 ---
 
@@ -294,6 +312,8 @@ La promoción a producción no forma parte de este calendario.
 ---
 
 ### F-P0-05 — Ciclo funcional de notificaciones
+
+**Estado al 28-oct:** corregidos en código los bloqueos F-P0-05a/F-P0-05b, con regresión local aprobada. La validación integral sigue pendiente.
 
 **Problema:** la cola, DLQ y WebSocket están implementados, pero falta demostrar el ciclo real en Dev.
 
