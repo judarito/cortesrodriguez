@@ -90,3 +90,33 @@ El integrador principal fija los contratos anteriores y asigna rutas/archivos an
 - El formulario Bricks y el portal ahora muestran precio USD, TRM/fecha, total COP y aviso de que el cobro se procesa en COP; los mismos datos guardados viajan con cada intento y permanecen visibles durante el resultado.
 - Despliegue directo actualizado en Worker Dev `cortes-rodriguez-asesores-dev`, versión `c901c198-7bb0-4406-984a-0f654fdc9618`. Build correcto; smoke check `/solicitud` HTTP 200 y `/api/public/features` HTTP 200 con `checkoutMode: "bricks"`.
 - Pendientes: pago Checkout Pro de regresión, y casos Bricks rechazado, pendiente, duplicado y rollback del flag. No usar tarjetas reales; no se modifica `main` ni Producción.
+
+
+## Revisión posterior y condiciones pendientes de cierre — 27-oct-2026
+
+La revisión del commit `35d1c8286cad4ce9db85a7355425694918f020a5` se consolidó en [sección 19 del plan principal](./PLAN-COLAS-IDEMPOTENCIA-SEGURIDAD.md#19-revisión-del-27-de-octubre-de-2026-y-plan-de-cierre-para-producción). Esa sección detalla evidencia, responsables por asignar, tareas, aceptación, pruebas externas y condiciones de promoción. Los checks históricos de implementación de este documento no significan que el flujo esté listo para producción.
+
+**Resultado de la revisión:** build correcto; suite completa 104 pruebas, 101 aprobadas y 3 fallidas. Las cifras 99/102 y 36/36 anteriores describen ejecuciones previas/específicas; no sustituyen este resultado de suite completa. El pago sandbox aprobado documentado arriba no se repitió durante esta revisión.
+
+| Referencia del plan principal | Pendiente de esta integración | Condición de cierre |
+|---|---|---|
+| AUD27-01 / P0 | Al procesar Bricks se valida intento/correo pero no se vuelve a comprobar solicitud cancelada/cerrada ni pago canónico antes del primer envío. | Coordinar atómicamente reserva de cobro, vigencia y cancelación. No llamar al proveedor si cancelación ganó; recuperar y conciliar si el cobro ya estaba en vuelo. |
+| AUD27-02 / P0 | Pro con múltiples intentos puede quedar sin asociación al recibir un pago sin preference_id/metadata, incluso si el ID externo ya se conoce. | Resolver por vínculo persistido consistente o identificador de intento soportado; mantener ambigüedad visible sin seleccionar el más reciente a ciegas. |
+| AUD27-03 / P1 | Con Bricks apagado, el portal puede bloquear un nuevo Pro después de un Bricks rechazado, porque decide por el último modo antes que por su estado terminal. | Rechazado conciliado permite nuevo Pro; pendiente/incierto conserva recuperación Bricks. Intento no enviado requiere invalidación segura antes de cambiar de método. |
+| AUD27-04 / validación P0 | Dos fallas de pruebas de notificación y una de ruta de origen desactualizada. | Actualizar contratos y expectativas manteniendo privacidad/idempotencia; suite completa sin fallas y build correcto. |
+| AUD27-06 / validación P0 | Faltan escenarios reales de rechazo, pendiente, incertidumbre, duplicados, regresión Pro y rollback. | Ejecutar matriz del plan principal, con correo real autorizado, recursos dev y pagos sandbox; registrar evidencia por caso. |
+
+### Acciones pendientes complementarias
+
+- [ ] Cerrar AUD27-01 antes de habilitar Bricks en producción; agregar pruebas de cancelación previa y concurrente, solicitud ya pagada y pestaña antigua.
+- [ ] Cerrar AUD27-02 antes de promover Pro y validar separación de credenciales/métodos al asociar pagos.
+- [ ] Cerrar AUD27-03 mediante backend y UI; comprobar apagar/encender flag sin modificar intentos históricos ni duplicar cobros.
+- [ ] Corregir las tres pruebas descritas en AUD27-04 sin eliminarlas, desactivarlas ni debilitar sus aserciones.
+- [ ] Ejecutar casos Bricks aprobado/rechazado/pendiente, doble clic, timeout/409, recarga y recuperación, y Pro aprobado/rechazado/pendiente/retorno/reintento.
+- [ ] Verificar recepción/autenticación de webhooks para las aplicaciones configuradas, eventos repetidos/antiguos y reembolsos/contracargos; no guardar valores de secretos en evidencia.
+- [ ] Probar separación de nota pública/interna, correos del cliente con «Consultar mis solicitudes», seguimiento desde sesión vigente/vencida y lista de varias solicitudes.
+- [ ] Conservar USD/TRM/fecha/COP antes de confirmar y durante resultado, en ambos idiomas; el importe final de tarjeta en otra moneda depende de la entidad financiera.
+- [ ] Resolver la divergencia de acceso directo/origen según AUD27-05 sin confundir token de atribución con autorización para cobrar.
+- [ ] Completar reportes/control financiero, resolución de excepciones y preparación operativa según AUD27-07/08/09 antes de declarar cerrada la entrega del alcance acordado.
+
+**Salida/rollback:** apagar Bricks no significa que se pueda crear Pro para cualquier solicitud. Primero deben conciliarse pagos enviados o inciertos. La condición de salida es el conjunto de pruebas y correcciones del método que se habilite; producción y `main` permanecen fuera de esta actualización documental.
