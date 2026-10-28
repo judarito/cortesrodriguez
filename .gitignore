@@ -41,3 +41,4 @@ Thumbs.db
 # Test and coverage output
 coverage/
 .nyc_output/
+test-results/

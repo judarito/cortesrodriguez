@@ -19,6 +19,8 @@ export async function handleClientPortal(request, env) {
   const bricksIntentMatch = url.pathname.match(/^\/api\/client\/requests\/([^/]+)\/payment-bricks-intent$/)
   const bricksProcessMatch = url.pathname.match(/^\/api\/client\/requests\/([^/]+)\/payment-bricks-process$/)
   const bricksRecoverMatch = url.pathname.match(/^\/api\/client\/requests\/([^/]+)\/payment-bricks-recover$/)
+  const isEmailChangeRequest = url.pathname === '/api/client/email-change' && request.method === 'POST'
+  const isEmailChangeVerify = url.pathname === '/api/client/email-change/verify' && request.method === 'POST'
   const routes = {
     '/api/client/access-code': request.method === 'POST',
     '/api/client/session': request.method === 'POST' || request.method === 'GET',
@@ -32,7 +34,7 @@ export async function handleClientPortal(request, env) {
   const isBricksIntent = Boolean(bricksIntentMatch) && request.method === 'POST'
   const isBricksProcess = Boolean(bricksProcessMatch) && request.method === 'POST'
   const isBricksRecover = Boolean(bricksRecoverMatch) && request.method === 'POST'
-  if (!routes[url.pathname] && !isRequestList && !isRequestDetail && !isAttachment && !isPaymentPreference && !isBricksIntent && !isBricksProcess && !isBricksRecover) return null
+  if (!routes[url.pathname] && !isRequestList && !isRequestDetail && !isAttachment && !isPaymentPreference && !isBricksIntent && !isBricksProcess && !isBricksRecover && !isEmailChangeRequest && !isEmailChangeVerify) return null
   if (!env.NEON_DATABASE_URL) return response({ error: 'El portal no está disponible temporalmente.' }, 503)
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
@@ -51,6 +53,8 @@ export async function handleClientPortal(request, env) {
   const email = await getSessionEmail(request, sql)
   if (!email) return response({ error: 'Inicia sesión para continuar.' }, 401)
   if (url.pathname === '/api/client/session') return response({ user: { email, role: 'client' } })
+  if (isEmailChangeRequest) return requestEmailChange(request, env, sql, email)
+  if (isEmailChangeVerify) return verifyEmailChange(request, env, sql, email)
 
   if (isRequestDetail) return requestDetail(sql, email, decodeSegment(requestMatch[1]))
   if (isAttachment) return clientAttachment(sql, email, decodeSegment(attachmentMatch[1]), attachmentMatch[2], env)
@@ -342,6 +346,115 @@ async function verifyAccessCode(request, env, sql) {
   await sql`INSERT INTO operations.client_sessions (email, token_hash, expires_at) VALUES (${verifiedEmail}, ${await sha256(tokenValue)}, NOW() + INTERVAL '14 days')`
   await sql`INSERT INTO operations.client_auth_events (email, event_type) VALUES (${verifiedEmail}, 'login')`
   return response({ user: { email: verifiedEmail, role: 'client' } }, 200, { 'set-cookie': sessionCookie(tokenValue) })
+}
+
+async function requestEmailChange(request, env, sql, currentEmail) {
+  if (Number(request.headers.get('content-length') || 0) > 4096) return response({ error: 'La solicitud supera el tamaño permitido.' }, 413)
+  const input = await request.json().catch(() => ({}))
+  const newEmail = typeof input.email === 'string' ? input.email.trim().toLowerCase() : ''
+  if (newEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) return response({ error: 'Ingresa un correo electrónico válido.' }, 400)
+  if (newEmail === currentEmail) return response({ error: 'El correo nuevo debe ser diferente al actual.' }, 400)
+  const [ownedRows, conflictRows] = await Promise.all([
+    sql`SELECT 1 FROM operations.requests WHERE lower(trim(email)) = ${currentEmail} LIMIT 1`,
+    sql`SELECT 1 FROM operations.clients WHERE email_normalized = ${newEmail}
+      UNION ALL SELECT 1 FROM operations.requests WHERE lower(trim(email)) = ${newEmail} LIMIT 1`,
+  ])
+  if (!ownedRows.length) return response({ error: 'No se encontraron solicitudes para esta cuenta.' }, 404)
+  if (conflictRows.length) return response({ error: 'Ese correo ya está asociado a otra cuenta de cliente.' }, 409)
+
+  const limits = await sql`INSERT INTO operations.client_email_change_rate_limits (current_email, window_started_at, request_count)
+    VALUES (${currentEmail}, NOW(), 1)
+    ON CONFLICT (current_email) DO UPDATE SET
+      window_started_at = CASE WHEN operations.client_email_change_rate_limits.window_started_at <= NOW() - INTERVAL '1 hour' THEN NOW() ELSE operations.client_email_change_rate_limits.window_started_at END,
+      request_count = CASE WHEN operations.client_email_change_rate_limits.window_started_at <= NOW() - INTERVAL '1 hour' THEN 1 ELSE operations.client_email_change_rate_limits.request_count + 1 END,
+      updated_at = NOW()
+    WHERE operations.client_email_change_rate_limits.window_started_at <= NOW() - INTERVAL '1 hour'
+      OR operations.client_email_change_rate_limits.request_count < 3
+    RETURNING request_count`
+  if (!limits.length) return response({ error: 'Ya solicitaste varios cambios de correo. Inténtalo más tarde.' }, 429)
+  if (!env.RESEND_FROM_EMAIL || !(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.OPERATIONS_JWT_SECRET) {
+    return response({ error: 'El envío de verificación no está disponible temporalmente.' }, 503)
+  }
+
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0')
+  const inserted = await sql`INSERT INTO operations.client_email_change_challenges (current_email, new_email, code_hash, expires_at)
+    VALUES (${currentEmail}, ${newEmail}, ${await hashAccessCode(env, newEmail, code)}, NOW() + INTERVAL '10 minutes') RETURNING id`
+  const challengeId = String(inserted[0]?.id || '')
+  if (!challengeId) return response({ error: 'No se pudo iniciar la verificación. Inténtalo de nuevo.' }, 500)
+  try {
+    await sql`UPDATE operations.client_email_change_challenges SET delivered_at = NOW() WHERE id = ${challengeId}::uuid`
+    const html = `<p>Hola,</p><p>Usa este código para verificar el nuevo correo de tu cuenta de Cortés Rodríguez Asesores:</p><p style="font-size:30px;font-weight:800;letter-spacing:8px;color:#0e4567">${code}</p><p>Vence en 10 minutos y solo puede usarse una vez. Si no solicitaste este cambio, ignora este correo.</p>`
+    const sent = await fetch('https://api.resend.com/emails', {
+      method: 'POST', headers: { Authorization: `Bearer ${env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: env.RESEND_FROM_EMAIL, to: [newEmail], subject: 'Verifica el nuevo correo de tu cuenta', html, text: `Tu código para verificar el nuevo correo es: ${code}\n\nVence en 10 minutos. Si no solicitaste este cambio, ignora este mensaje.` }),
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!sent.ok) throw new Error('email_provider_rejected')
+    await sql`INSERT INTO operations.client_auth_events (email, event_type) VALUES (${currentEmail}, 'email_change_requested')`
+    return response({ ok: true, message: 'Si el correo puede verificarse, enviaremos un código temporal.' })
+  } catch (error) {
+    await sql`UPDATE operations.client_email_change_challenges SET consumed_at = NOW() WHERE id = ${challengeId}::uuid AND consumed_at IS NULL`.catch(() => {})
+    console.warn(JSON.stringify({ event: 'client_email_change_delivery_failed', reason: error.message }))
+    return response({ error: 'No se pudo enviar el código de verificación. Inténtalo de nuevo.' }, 502)
+  }
+}
+
+async function verifyEmailChange(request, env, sql, currentEmail) {
+  if (Number(request.headers.get('content-length') || 0) > 4096) return response({ error: 'La solicitud supera el tamaño permitido.' }, 413)
+  const input = await request.json().catch(() => ({}))
+  const newEmail = typeof input.email === 'string' ? input.email.trim().toLowerCase() : ''
+  const code = typeof input.code === 'string' ? input.code.trim() : ''
+  if (newEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail) || !/^\d{6}$/.test(code)) return response({ error: 'El correo o el código no son válidos.' }, 400)
+  const codeHash = await hashAccessCode(env, newEmail, code)
+  const changed = await sql`WITH next_challenge AS MATERIALIZED (
+      SELECT id FROM operations.client_email_change_challenges
+      WHERE current_email = ${currentEmail} AND new_email = ${newEmail} AND delivered_at IS NOT NULL
+        AND consumed_at IS NULL AND expires_at > NOW() AND attempts_count < 5
+      ORDER BY created_at DESC LIMIT 1 FOR UPDATE
+    ), challenge AS (
+      UPDATE operations.client_email_change_challenges item
+      SET attempts_count = item.attempts_count + 1,
+        consumed_at = CASE WHEN item.code_hash = ${codeHash} THEN NOW() ELSE item.consumed_at END
+      FROM next_challenge
+      WHERE item.id = next_challenge.id
+      RETURNING item.current_email, item.new_email, item.code_hash = ${codeHash} AS verified
+    ), changed_client AS (
+      UPDATE operations.clients client SET email_normalized = challenge.new_email
+      FROM challenge
+      WHERE challenge.verified AND client.email_normalized = challenge.current_email
+        AND NOT EXISTS (SELECT 1 FROM operations.clients other WHERE other.email_normalized = challenge.new_email)
+      RETURNING client.id
+    ), changed_requests AS (
+      UPDATE operations.requests req SET email = challenge.new_email, updated_at = NOW()
+      FROM challenge, changed_client
+      WHERE challenge.verified AND req.client_id = changed_client.id AND lower(trim(req.email)) = challenge.current_email
+      RETURNING req.id
+    ), revoked AS (
+      UPDATE operations.client_sessions session SET revoked_at = NOW()
+      FROM challenge, changed_client
+      WHERE challenge.verified AND lower(session.email) = challenge.current_email AND session.revoked_at IS NULL
+      RETURNING session.id
+    ), audit AS (
+      INSERT INTO operations.client_email_change_audit (old_email, new_email, changed_request_count)
+      SELECT challenge.current_email, challenge.new_email, COUNT(changed_requests.id)::int
+      FROM challenge JOIN changed_client ON TRUE LEFT JOIN changed_requests ON TRUE
+      WHERE challenge.verified GROUP BY challenge.current_email, challenge.new_email
+      RETURNING id
+    ), auth_event AS (
+      INSERT INTO operations.client_auth_events (email, event_type)
+      SELECT current_email, 'email_changed' FROM challenge WHERE verified
+      RETURNING id
+    )
+    SELECT challenge.verified, (SELECT COUNT(*) FROM changed_client)::int AS client_count,
+      (SELECT COUNT(*) FROM changed_requests)::int AS request_count,
+      (SELECT COUNT(*) FROM audit)::int AS audit_count
+    FROM challenge`
+  const result = changed[0]
+  const codeVerified = result?.verified === true || result?.verified === 't' || result?.verified === 'true'
+  if (!codeVerified || Number(result.client_count) !== 1 || Number(result.audit_count) !== 1) {
+    return response({ error: 'El correo o el código no son válidos, vencieron, o el nuevo correo ya está en uso.' }, 400)
+  }
+  return response({ ok: true, email: newEmail, movedRequests: Number(result.request_count || 0) }, 200, { 'set-cookie': expiredCookie() })
 }
 
 async function getSessionEmail(request, sql) {

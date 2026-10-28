@@ -1,10 +1,12 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import ListView from '../shared/components/ListView.vue'
+import PaymentExceptionsPanel from './PaymentExceptionsPanel.vue'
 
 const props = defineProps({
   token: { type: String, required: true },
   canOpenRequests: { type: Boolean, default: false },
+  isAdmin: { type: Boolean, default: false },
   locale: { type: String, default: 'es' },
 })
 const emit = defineEmits(['open-request'])
@@ -88,6 +90,7 @@ onMounted(() => load())
       <div><p class="eyebrow">{{ t('Control financiero', 'Financial overview') }}</p><h1>{{ t('Pagos', 'Payments') }}</h1><p>{{ t('Consulta los intentos de pago, su estado y la solicitud asociada. Los estados se actualizan automáticamente.', 'Review payment attempts, their status, and the associated request. Statuses update automatically.') }}</p></div>
       <button type="button" class="secondary-button compact" :disabled="loading" @click="load(pagination.page)">↻ {{ t('Actualizar', 'Refresh') }}</button>
     </div>
+    <PaymentExceptionsPanel v-if="isAdmin" :token="token" :locale="locale" />
     <p v-if="error" class="request-error" role="alert">{{ error }}</p>
     <ListView
       :locale="locale"

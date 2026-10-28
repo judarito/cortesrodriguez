@@ -15,14 +15,18 @@
 
 | Tarea | Estado | Evidencia |
 |---|---|---|
+| F-P0-01 — Base E2E de navegador | **Parcial; 10/10 pruebas locales** | Playwright desktop y móvil; solicitud pública, portal, retorno Pro aprobado/incierto y respuesta de experto con aprobación administrativa. APIs simuladas; no valida el Worker, base de datos ni proveedores reales |
 | F-P0-06 — Dashboard sin datos ficticios | **Completado** | Métricas/pipeline inician vacíos; se eliminaron `defaultActivity` y `defaultPriorityRequests`; error con reintento; build correcto |
 | F-P1-03 — Ficha de cliente | **Implementado y probado a nivel de contrato** | `GET /api/app/clients/:id` + panel lateral; pruebas PGlite; pendiente smoke E2E con sesión real |
+| F-P1-02 — Actividad de solicitud | **Código listo; migración 045 aplicada en Dev; smoke pendiente** | Timeline unificado, notas internas, asignaciones y transiciones auditadas |
+| F-P1-04 — Excepciones financieras | **Código listo; migración 046 aplicada en Dev; smoke pendiente** | Seguimiento administrativo auditable; no ejecuta reembolsos ni cambia estados del proveedor |
+| F-P1-05 — Cambio de correo cliente | **Código listo; migración 047 aplicada en Dev; smoke pendiente** | Verificación en correo nuevo, auditoría, actualización de solicitudes y revocación de sesiones |
 | F-P1-08 — Configuración y copy | **Parcial** | El panel visible (`NotificationConfigPanel`) no menciona Wompi; se corrigió el bloque muerto, pero queda limpieza de código duplicado |
 | F-P1-10 — Tests y CI | **Completado** | `npm test` 141/141; workflow ejecuta `npm run check` antes del deploy |
 | F-P0-05a / F-P0-05b — Correcciones de conciliación | **Implementadas; pruebas locales aprobadas** | Plantillas cliente ES/EN, ID UUID compartido en UI/API; 8 casos de regresión nuevos; E2E Resend pendiente |
-| F-P0-01 a F-P0-05 | Pendientes de validación integral | Requieren cuentas, pagos sandbox y datos reales de Dev |
+| F-P0-01 a F-P0-05 | Pendientes de validación integral | La base E2E ya cubre cinco escenarios de navegador con mocks, incluida la revisión admin; faltan el recorrido integrado, feedback, notificaciones y pruebas Worker/backend/sandbox en Dev |
 
-**Verificación local:** `npm run check` pasa con 141/141 pruebas y build correcto. Las pruebas de conciliación usan transporte Neon simulado: no prueban entrega real en Resend ni el recorrido visual.
+**Verificación local (28-oct-2026):** `npm run check` pasa con 141/141 pruebas y build correcto; `npm run test:e2e` pasa 10/10 en escritorio y móvil. Las rutas API de los E2E están simuladas: no prueban Worker, Neon, Mercado Pago, Resend ni Cloudflare.
 
 ---
 
@@ -39,7 +43,7 @@ La revisión sobre `947f4b0` encontró dos bloqueos reproducibles en la concilia
 
 **Siguiente ejecución:** aplicar los casos de la sección de conciliación del documento `QA-FUNCIONAL-MVP.md` sobre Dev y registrar commit, actor, resultado y evidencia redactada. No se consideran cerrados F-P0-01 a F-P0-05 por el éxito de los tests locales.
 
-**Hallazgos restantes del análisis:** el reporte actual usa estados de solicitudes creadas dentro del rango, por lo que no equivale a un ledger financiero ni al balance de caja (AUD27-07); siguen pendientes las excepciones financieras completas (AUD27-08), cancelación/cierre/reapertura, comentarios y actividad unificada, el módulo Documentos y la matriz E2E de pagos, portal, roles y notificaciones. Sus tareas y criterios del plan se mantienen abiertos; no se incluyen como implementados en esta entrega.
+**Actualización de esta ejecución:** las migraciones 045–047 se aplicaron correctamente en Neon Dev. El código está listo para desplegar en Dev; tras el despliegue, faltará un recorrido manual con roles reales antes de marcarlos verificados. El registro de excepciones no ejecuta reembolsos ni cambia el estado que sincroniza Mercado Pago. Siguen pendientes el módulo Documentos, el ledger/conciliación bancaria y la matriz E2E ampliada.
 
 ---
 
@@ -49,16 +53,17 @@ La plataforma ya cubre el núcleo del negocio: solicitud pública, clientes, sol
 
 El foco ahora es **cerrar el producto funcional**, no preparar producción. Los principales huecos funcionales son:
 
-1. El flujo completo solicitud → pago → asignación → respuesta → aprobación → portal → feedback no tiene una validación E2E única.
+1. El flujo completo solicitud → pago → asignación → respuesta → aprobación → portal → feedback aún no tiene una validación E2E única. Ya se cubren por separado solicitud, portal y retorno Pro con APIs simuladas.
 2. La matriz funcional de pagos Pro/Bricks sigue incompleta.
 3. El portal de clientes no se ha probado con varias solicitudes, sesión vencida, código real y adjuntos.
 4. El módulo **Documentos** existe en el menú, pero es un placeholder.
-5. La ficha de solicitud no ofrece comentarios internos, historial de actividad unificado ni transiciones manuales de estado.
+5. **Desplegar y validar en Dev:** comentarios internos, timeline y transiciones auditadas de solicitud (F-P1-02; migración 045 ya aplicada).
 6. La ficha de cliente ya está implementada; falta validación E2E con sesión real.
-7. El dashboard ya no muestra datos ficticios; la “Actividad reciente” aún se deriva de solicitudes recientes, no de un timeline de actividad.
+7. El dashboard ya no muestra datos ficticios; la “Actividad reciente” aún se deriva de solicitudes recientes, no del timeline de solicitud.
 8. La configuración visible está correcta; queda eliminar bloques de código muerto/duplicado.
-9. Los casos financieros excepcionales (duplicado, reembolso, contracargo) no tienen flujo funcional completo.
-10. La experiencia bilingüe y la validación de roles todavía requieren una pasada funcional.
+9. **Desplegar y validar en Dev:** registro administrativo auditable de duplicados, reembolsos y contracargos (F-P1-04; migración 046 ya aplicada). No inicia un reembolso ni modifica estados del proveedor.
+10. **Desplegar y validar en Dev:** cambio de correo con código enviado al nuevo correo, auditoría, traslado de solicitudes y revocación de sesiones (F-P1-05; migración 047 ya aplicada).
+11. La experiencia bilingüe y la validación de roles todavía requieren una pasada funcional.
 
 **Resultado esperado:** un MVP operativo usable de punta a punta por administración, agentes, expertos y clientes, con evidencia de los recorridos principales y de sus excepciones.
 
@@ -98,10 +103,10 @@ Ver cliente → ver solicitud → asignar experto → verificar pago
 | Portal de clientes | `/portal-cliente` | Implementado; requiere E2E |
 | Feedback | `/feedback` | Implementado; requiere E2E |
 | Panel operativo | `/app` | Implementado con huecos |
-| Pagos | `/app` → Pagos | Listado y verificación; faltan excepciones |
+| Pagos | `/app` → Pagos | Listado, verificación y seguimiento de excepciones; validación Dev pendiente |
 | Documentos | `/app` → Documentos | **Placeholder** |
 | Clientes | `/app` → Clientes | Listado + ficha; pendiente E2E |
-| Solicitudes | `/app` → Solicitudes | Listado/detalle; faltan comentarios y estados manuales |
+| Solicitudes | `/app` → Solicitudes | Listado/detalle con timeline, notas internas y transiciones auditadas; validación Dev pendiente |
 | Reportes | `/app` → Reportes | Implementado |
 | Seguridad | `/app` → Usuarios y roles | Implementado |
 | Catálogo | `/app` → Servicios y consultas | Implementado |
@@ -118,14 +123,15 @@ Ver cliente → ver solicitud → asignar experto → verificar pago
 | Comprobación | Estado |
 |---|---|
 | Build | Correcto |
-| Suite automatizada | **133/133** |
-| Recorrido público completo | Parcialmente validado |
+| Suite automatizada | **141/141** |
+| Playwright local (desktop + mobile) | **10/10**; cinco escenarios con APIs simuladas |
+| Recorrido público completo | Parcialmente validado; falta backend, pago real sandbox, portal y feedback integrados |
 | Matriz Pro/Bricks | Pendiente |
-| Portal cliente E2E | Pendiente |
+| Portal cliente E2E | Parcial; acceso por código simulado, listado y detalle probados en desktop/móvil |
 | Matriz de roles/IDOR | Pendiente |
 | Cola/DLQ/realtime E2E | Pendiente |
 | Documentos | No implementado |
-| Comentarios/historial unificado de solicitud | No implementado |
+| Comentarios/historial unificado de solicitud | Implementado localmente; validación Dev pendiente |
 | Ficha de cliente | Implementada; pendiente smoke E2E |
 | Dashboard sin datos mock | **Corregido**; falta prueba manual de error |
 | Copy de configuración | Panel visible correcto; bloque muerto corregido; limpieza pendiente |
@@ -134,11 +140,11 @@ Ver cliente → ver solicitud → asignar experto → verificar pago
 
 1. **Documentos es un callejón sin salida.** El menú aparece para roles con `documents.read`, pero la vista cae en el placeholder “será desarrollado en la siguiente fase” ([OperationsApp.vue](src/operations/OperationsApp.vue#L108), [OperationsApp.vue](src/operations/OperationsApp.vue#L688)). Existen las tablas `operations.documents` y `operations.activity_log`, pero no hay endpoints ni UI ([001_operations.sql](worker/db/migrations/001_operations.sql#L55)).
 2. **La “Actividad reciente” no es un timeline real.** El dashboard ya no usa datos ficticios, pero deriva la actividad de las solicitudes recientes; no muestra eventos con actor, acción y fecha.
-3. **La solicitud no tiene comentarios internos ni un historial único.** El detalle devuelve datos, historial de solicitudes del cliente, respuestas y asignaciones ([operationsData.js](worker/routes/operationsData.js#L330)), pero no un timeline de actividad con actor, acción y fecha.
+3. **Resuelto en código local; pendiente Dev.** La solicitud ahora tiene timeline con actor, acción, asignaciones, pagos, respuestas y transiciones, además de comentarios internos.
 4. **No hay acciones manuales de estado.** El estado avanza por asignación y revisión de respuesta; no hay cancelar, cerrar o reabrir desde el panel.
 5. **La ficha de cliente ya existe.** `GET /api/app/clients/:id` y el panel lateral están implementados; falta la validación con sesión y datos reales de Dev.
 6. **La configuración visible no menciona Wompi.** El bloque que lo mencionaba era código muerto; el panel real (`NotificationConfigPanel.vue`) describe el flujo correcto. Queda eliminar ese bloque y otros duplicados.
-7. **Las excepciones financieras no tienen flujo.** Se muestran estados `duplicate_approved`, `refunded` y `charged_back`, pero no hay una acción administrativa guiada para resolverlos.
+7. **Resuelto en código local; pendiente Dev.** El panel de pagos registra el seguimiento y la auditoría de duplicados, reembolsos y contracargos. El reembolso sigue siendo una operación externa en Mercado Pago.
 8. **La cobertura de i18n es parcial.** Hay traducciones en línea y textos de estado/errores que pueden quedar en español en la vista inglesa.
 
 ---
@@ -182,27 +188,27 @@ La promoción a producción no forma parte de este calendario.
 
 ### F-P0-01 — Cierre del recorrido E2E principal
 
-**Estado:** la matriz manual de este recorrido ya existe en `QA-FUNCIONAL-MVP.md`; aún no hay una suite de navegador que lo ejecute. Esta tarea se implementará como E2E de dos capas: Playwright para navegador y llamadas de API verificables, con datos aislados/proveedores simulados en CI; smoke separado contra Dev con credenciales de prueba.
+**Estado: base parcial (28-oct-2026).** Playwright corre en escritorio y móvil. Hay specs para solicitud pública, acceso por código y detalle del portal, retorno Pro aprobado/incierto y respuesta de experto seguida de aprobación administrativa. Las APIs están interceptadas, así que la suite prueba la interfaz y sus contratos de solicitud, pero no ejecuta el Worker ni verifica persistencia. Falta el flujo integrado de extremo a extremo con pago, notificaciones y feedback, además de autorización por API; el smoke sandbox de Dev permanece separado.
 
 **Problema:** las piezas existen, pero no hay una validación automatizada única de todo el recorrido. Un fallo entre módulos puede pasar desapercibido.
 
 **Acciones:**
 
-1. Configurar Playwright con Chromium y dos perfiles: `local-mocked` para PR/CI y `dev-sandbox` manual o workflow protegido. La CI no tendrá secretos de proveedores.
+1. ~~Configurar Playwright con Chromium y dos perfiles: `local-mocked` para PR/CI y `dev-sandbox` manual o workflow protegido.~~ Base `local-mocked` instalada; proyectos Chromium desktop/móvil y workflow independiente `.github/workflows/e2e-dev.yml`, sin secretos. Smoke `dev-sandbox` pendiente.
 2. Crear fixtures únicos por ejecución (correo `e2e+<run>@...`, cliente, solicitud, experto y agente) y limpiarlos por API administrativa de test o expiración; jamás reutilizar usuarios/datos reales.
-3. En `local-mocked`, simular Mercado Pago, Resend y entrega de correo con respuestas deterministas; inspeccionar llamadas y webhooks, y ejecutar la interfaz real junto al Worker/local backend.
-4. En `dev-sandbox`, usar cuentas y tarjetas sandbox; cualquier pago que altere proveedor o envíe correo se ejecuta de forma explícita fuera de CI con reporte redactado.
+3. Parcial: los specs simulan contratos HTTP del frontend con respuestas deterministas; falta probar Worker/backend local y eventos de Mercado Pago/Resend con adaptadores simulados.
+4. En `dev-sandbox`, usar cuentas y tarjetas sandbox; cualquier pago que altere proveedor o envíe correo se ejecuta explícitamente fuera de CI con reporte redactado.
 5. Crear una solicitud pública de prueba en Dev/local.
 6. Pagar con Pro o Bricks según el escenario y verificar estado persistido desde API, no solo el retorno visual.
-3. Verificar asignación automática o manual a un experto.
-4. Responder como experto.
-5. Revisar y aprobar como administración.
-6. Verificar correo, campana y estado.
-7. Solicitar código de acceso y leer el correo del buzón de prueba; en CI usar bandeja simulada.
-8. Entrar al portal con el código y comprobar varias solicitudes propias y exclusión de las ajenas.
-9. Ver la solicitud, la respuesta aprobada y los adjuntos.
-10. Enviar feedback.
-11. Repetir el recorrido en español e inglés y un viewport móvil.
+7. Verificar asignación automática o manual a un experto.
+8. Responder como experto.
+9. Revisar y aprobar como administración.
+10. Verificar correo, campana y estado.
+11. Solicitar código de acceso y leer el correo del buzón de prueba; en CI usar bandeja simulada.
+12. Entrar al portal con el código y comprobar varias solicitudes propias y exclusión de las ajenas.
+13. Ver la solicitud, la respuesta aprobada y los adjuntos.
+14. Enviar feedback.
+15. Repetir el recorrido en español e inglés y un viewport móvil.
 
 **Criterio de aceptación:**
 
@@ -223,19 +229,21 @@ La promoción a producción no forma parte de este calendario.
 
 | Nivel | Qué cubre | Proveedores | Ejecución | Criterio |
 |---|---|---|---|---|
-| E2E local en navegador | Solicitud → pago → aprobación → portal → feedback; UI por rol y errores principales | Mercado Pago/Resend simulados; DB aislada | Cada PR, sin secretos | Rápida y repetible; verifica UI y llamadas al Worker |
-| E2E de seguridad | IDs ajenos, permisos, sesión vencida, adjuntos, rol inactivo | API y UI local | Cada PR para críticos | Sin fuga ni acción fuera del permiso |
+| E2E local en navegador | Solicitud pública, portal, retorno Pro, respuesta de experto y aprobación admin; el recorrido integrado con feedback sigue pendiente | APIs simuladas con `page.route`; sin Worker ni DB | Cada PR, sin secretos | Rápida y repetible; verifica UI y contratos HTTP observados por el navegador |
+| Pruebas backend existentes | Reglas de API, persistencia simulada y lógica de negocio cubierta por pruebas Node | Transporte/mocks locales según el caso | `npm run check` | No sustituye E2E de Worker con base aislada |
+| E2E de seguridad | IDs ajenos, permisos, sesión vencida, adjuntos, rol inactivo | API y UI local | Pendiente; agregar críticos a CI | Sin fuga ni acción fuera del permiso |
 | Smoke Dev sandbox | Checkout real sandbox Pro y Bricks, webhook, código de portal y correo de prueba | Cuentas sandbox segregadas | Manual/dispatch, al desplegar a Dev | Caso trazable y sin datos/pagos reales |
 | Recuperación Dev | Reintentos, correo incierto, DLQ, conciliación y no duplicación | Fallos controlados | Bajo demanda, con operador | Auditoría y estados coherentes |
 
 **Fases para proceder:**
 
-1. Instalar Playwright como dependencia de desarrollo y fijar Chromium en CI; mantener `npm run check` como verificación rápida.
-2. Añadir configuración, servidor local reproducible, fixtures sintéticos y helpers de autenticación/pruebas sin bypass en producción.
-3. Automatizar primero el recorrido cliente con pago/correo simulados y el rechazo de permisos por rol; guardar traces al fallar.
-4. Expandir a Pro/Bricks, portal multi-solicitud y aprobado/rechazado/pendiente/incertidumbre.
-5. Habilitar workflow manual de smoke Dev con secretos de entorno Dev protegidos y concurrencia serial; nunca correr cargos reales.
-6. Registrar evidencias y defectos en `QA-FUNCIONAL-MVP.md`; un smoke externo pendiente no se marca como aprobado por el E2E simulado.
+1. ~~Instalar Playwright como dependencia de desarrollo y fijar Chromium en CI; mantener `npm run check` como verificación rápida.~~ Completado en el workflow E2E independiente.
+2. ~~Añadir configuración, servidor local reproducible y mocks HTTP sintéticos sin bypass en producción.~~ Completado para UI; falta levantar el Worker y una base aislada para validar integración.
+3. Automatizar los flujos de agente, experto y revisión administrativa, con rechazo de permisos por rol; guardar traces al fallar.
+4. Ampliar la matriz de pagos Pro/Bricks y estados aprobado/rechazado/pendiente/incertidumbre; integrar flujo con portal y feedback.
+5. Levantar Worker y almacenamiento aislado en local para validar autorización y persistencia de extremo a extremo.
+6. Habilitar workflow manual de smoke Dev con secretos de entorno Dev protegidos y concurrencia serial; nunca correr cargos reales.
+7. Registrar evidencias y defectos en `QA-FUNCIONAL-MVP.md`; un smoke externo pendiente no se marca como aprobado por el E2E simulado.
 
 **Puerta de calidad:** todos los E2E locales pasan en el commit candidato; no quedan defectos S1/S2 abiertos; smoke sandbox queda aprobado o bloqueado con causa y responsable. Ninguna prueba lee/escribe Producción.
 
@@ -415,7 +423,9 @@ La promoción a producción no forma parte de este calendario.
 
 ### F-P1-02 — Comentarios, timeline y estados manuales de solicitud
 
-**Problema:** el detalle no permite dejar comentarios internos ni ver un timeline único con actor/acción/fecha. Tampoco hay acciones manuales de estado.
+**Estado al 28-oct-2026:** código listo y migración 045 aplicada en Neon Dev. `operationsRequestActivity.js` valida el alcance de admin, agente y experto asignado; el timeline reúne creación, asignaciones, estados, notas, pagos y respuestas. El detalle permite agregar notas y cancelar/cerrar/reabrir (reapertura solo admin). Falta desplegar el Worker/UI y hacer smoke con usuarios reales en Dev.
+
+**Problema original (resuelto en código local):** faltaban comentarios internos, timeline único con actor/acción/fecha y acciones manuales de estado. Falta validar el flujo en Dev.
 
 **Acciones:**
 
@@ -454,7 +464,9 @@ La promoción a producción no forma parte de este calendario.
 
 ### F-P1-04 — Excepciones financieras
 
-**Problema:** `duplicate_approved`, `refunded` y `charged_back` se muestran, pero no hay flujo para resolverlos.
+**Estado al 28-oct-2026:** código listo y migración 046 aplicada en Neon Dev. El panel Pagos lista casos, muestra el historial y permite registrar solicitud/confirmación de reembolso, conservar el pago válido y gestionar contracargos. Las acciones son idempotentes y no editan `request_payments.status`; tampoco llaman a Mercado Pago para efectuar el reembolso. Falta desplegar y verificar las acciones en Dev.
+
+**Problema original (resuelto en código local):** `duplicate_approved`, `refunded` y `charged_back` se mostraban sin flujo administrativo. Falta validar el seguimiento en Dev.
 
 **Acciones:**
 
@@ -471,6 +483,8 @@ La promoción a producción no forma parte de este calendario.
 ---
 
 ### F-P1-05 — Cambio verificado de correo del cliente
+
+**Estado al 28-oct-2026:** código listo y migración 047 aplicada en Neon Dev. El cliente autenticado solicita un código al correo nuevo; tras verificarlo, el backend actualiza la identidad y solicitudes asociadas, escribe auditoría y revoca las sesiones activas. Falta desplegar y comprobar entrega Resend y recuperación de acceso en Dev.
 
 **Problema:** un correo mal escrito bloquea el portal y la entrega de respuestas.
 
@@ -571,7 +585,7 @@ La promoción a producción no forma parte de este calendario.
 3. Añadir pruebas de los recorridos críticos restantes.
 4. ~~Documentar la matriz de evidencia.~~ Completado en [QA-FUNCIONAL-MVP.md](./QA-FUNCIONAL-MVP.md).
 
-**Criterio de aceptación:** un cambio roto no llega a Dev; la suite cubre los flujos críticos. La compuerta ya existe y pasa con 133/133 pruebas.
+**Criterio de aceptación:** un cambio roto no llega a Dev; la compuerta unitaria/build pasa con 141/141 pruebas. La suite E2E corre aparte; todavía no cubre todos los flujos críticos ni es una compuerta del despliegue.
 
 **Esfuerzo:** S–M.
 

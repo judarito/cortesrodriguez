@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { getInitialLocale, persistLocale } from '../lib/locale.js'
+import { getInitialLocale, localeTag, persistLocale } from '../lib/locale.js'
 import LanguageToggle from '../shared/components/LanguageToggle.vue'
 import logoUrl from '../assets/logo-cortes-rodriguez.png'
 
@@ -12,11 +12,19 @@ function setLocale(value) {
 function tr(es, en) { return locale.value === 'en' ? en : es }
 const state = ref('checking')
 const reference = ref('')
-const verificationMessage = ref('')
+const verificationMessageKey = ref('')
 const pendingPaymentMessage = () => tr(
   'Mercado Pago todavía no confirma el resultado. Si ya ves el cobro, no vuelvas a pagar; guarda tu código de seguimiento y vuelve a consultar en unos minutos.',
   'Mercado Pago has not confirmed the result yet. If you can see the charge, do not pay again; keep your tracking code and check again in a few minutes.',
 )
+const verificationMessage = computed(() => {
+  if (verificationMessageKey.value === 'pending') return pendingPaymentMessage()
+  if (verificationMessageKey.value === 'timeout') return tr(
+    'La verificación está tardando más de lo esperado. Si ya ves el cobro, no vuelvas a pagar; guarda tu código de seguimiento y vuelve a consultar en unos minutos.',
+    'Verification is taking longer than expected. If you can see the charge, do not pay again; keep your tracking code and check again in a few minutes.',
+  )
+  return ''
+})
 
 const content = computed(() => ({
   checking: {
@@ -47,7 +55,7 @@ onMounted(async () => {
     const paymentId = query.get('payment_id') || query.get('collection_id')
     if (!reference.value) {
       state.value = 'pending'
-      verificationMessage.value = pendingPaymentMessage()
+      verificationMessageKey.value = 'pending'
       return
     }
 
@@ -69,7 +77,7 @@ onMounted(async () => {
       const verificationResult = await Promise.race([verification, timedOut])
       if (!verificationResult) {
         state.value = 'pending'
-        verificationMessage.value = pendingPaymentMessage()
+        verificationMessageKey.value = 'pending'
         return
       }
       const { response, result } = verificationResult
@@ -78,14 +86,11 @@ onMounted(async () => {
       else if (response.ok && ['rejected', 'cancelled', 'refunded', 'charged_back'].includes(result.status)) state.value = 'failed'
       else {
         state.value = 'pending'
-        verificationMessage.value = pendingPaymentMessage()
+        verificationMessageKey.value = 'pending'
       }
     } catch {
       state.value = 'pending'
-      verificationMessage.value = tr(
-        'La verificación está tardando más de lo esperado. Si ya ves el cobro, no vuelvas a pagar; guarda tu código de seguimiento y vuelve a consultar en unos minutos.',
-        'Verification is taking longer than expected. If you can see the charge, do not pay again; keep your tracking code and check again in a few minutes.',
-      )
+      verificationMessageKey.value = 'timeout'
     } finally {
       window.clearTimeout(timeoutId)
     }

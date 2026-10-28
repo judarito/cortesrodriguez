@@ -17,6 +17,8 @@ import { handleClientPortal } from './routes/clientPortal.js'
 import { handleResendWebhook } from './routes/resendWebhooks.js'
 import { consumeQueuedNotification, dispatchPendingAppNotifications, dispatchPendingNotifications, recordQueueFailure } from './routes/operationsEmail.js'
 import { handleOperationsNotificationOps } from './routes/operationsNotificationOps.js'
+import { handleOperationsRequestActivity } from './routes/operationsRequestActivity.js'
+import { handleOperationsPaymentExceptions } from './routes/operationsPaymentExceptions.js'
 import {
   isLandingRequestApi,
   isLandingRequestButtonEnabled,
@@ -86,6 +88,12 @@ export default {
 
       const operationsDataResponse = await handleOperationsData(request, env)
       if (operationsDataResponse) return operationsDataResponse
+
+      const requestActivityResponse = await handleOperationsRequestActivity(request, env)
+      if (requestActivityResponse) return requestActivityResponse
+
+      const paymentExceptionResponse = await handleOperationsPaymentExceptions(request, env)
+      if (paymentExceptionResponse) return paymentExceptionResponse
 
       const operationsReportsResponse = await handleOperationsReports(request, env)
       if (operationsReportsResponse) return operationsReportsResponse

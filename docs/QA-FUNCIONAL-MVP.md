@@ -2,7 +2,7 @@
 
 **Fecha de inicio:** 27 de octubre de 2026  
 **Última actualización:** 28 de octubre de 2026
-**Commit de referencia:** `0987891`
+**Commit de referencia:** Dev (anotar hash del despliegue tras publicar)
 **Entorno:** Dev  
 **Objetivo:** registrar la ejecución de los recorridos funcionales del [plan priorizado](./PLAN-PRIORIZADO-OPERACIONES.md) y dejar evidencia reproducible.
 
@@ -172,6 +172,42 @@
 | DOC-06 | Borrado lógico | Deja de listarse | | |
 | DOC-07 | Auditoría | Registra actor y acción | | |
 
+### 7.2 Comentarios, timeline y estados — F-P1-02
+
+**Estado:** migración `045_request_activity.sql` aplicada en Neon Dev; desplegar el código y ejecutar estos casos en Dev.
+
+| ID | Caso | Esperado | Resultado | Evidencia |
+|---|---|---|---|---|
+| ACT-01 | Admin agrega comentario interno | Aparece en timeline con autor/fecha; no aparece en portal cliente | PENDIENTE | |
+| ACT-02 | Agente abre solicitud propia | Ve las notas internas y actividad de su alcance | PENDIENTE | |
+| ACT-03 | Agente/expert abre solicitud ajena/no asignada | API responde 404 sin devolver eventos ni comentarios | PENDIENTE | |
+| ACT-04 | Admin cancela, cierra y reabre | Se exige motivo y se registra cada transición; reapertura solo admin | PENDIENTE | |
+| ACT-05 | Reenvío con misma clave idempotente | No duplica comentario ni transición | PENDIENTE | |
+
+### 7.3 Excepciones de pagos — F-P1-04
+
+**Estado:** migración `046_payment_exception_resolution.sql` aplicada en Neon Dev; desplegar el código y ejecutar estos casos. El panel registra la gestión y auditoría; el reembolso se tramita fuera de esta pantalla y el estado de Mercado Pago no se altera manualmente.
+
+| ID | Caso | Esperado | Resultado | Evidencia |
+|---|---|---|---|---|
+| PAY-EX-01 | Pago duplicado | Caso visible; registrar pedido de reembolso y luego referencia de confirmación | PENDIENTE | |
+| PAY-EX-02 | Reembolso confirmado por proveedor | Registrar referencia y cerrar caso sin reescribir estado de pago | PENDIENTE | |
+| PAY-EX-03 | Contracargo | Reconocer, registrar disputa/cierre y conservar el historial | PENDIENTE | |
+| PAY-EX-04 | Usuario que no es admin | API lista y acciones responden 403 | PENDIENTE | |
+| PAY-EX-05 | Reintento idempotente | Reutilizar clave y contenido devuelve acción existente; contenido distinto devuelve 409 | PENDIENTE | |
+
+### 7.4 Cambio verificado de correo — F-P1-05
+
+**Estado:** migración `047_client_email_change.sql` aplicada en Neon Dev; desplegar el código y probar entrega Resend/sesiones en Dev.
+
+| ID | Caso | Esperado | Resultado | Evidencia |
+|---|---|---|---|---|
+| EMAIL-01 | Cliente autenticado solicita cambio | Código llega solo al correo nuevo; límite de envíos activo | PENDIENTE | |
+| EMAIL-02 | Código correcto vigente | Actualiza identidad y solicitudes asociadas, audita y revoca sesiones | PENDIENTE | |
+| EMAIL-03 | Código inválido/vencido o destino ya usado | No cambia datos | PENDIENTE | |
+| EMAIL-04 | Usuario sin sesión | No puede solicitar ni confirmar el cambio | PENDIENTE | |
+| EMAIL-05 | Inicio de sesión tras el cambio | Cliente accede con el nuevo correo y ve su historial; sesiones viejas rechazadas | PENDIENTE | |
+
 ---
 
 ## 8. Defectos encontrados
@@ -225,29 +261,42 @@
 No confundir aceptación con apertura/lectura ni con entrega final. La resolución manual exige verificar previamente en Resend el mensaje y su destinatario.
 
 
-## 11. Estrategia automatizada E2E — propuesta de ejecución
+## 11. Estrategia automatizada E2E — implementación inicial
 
-**Estado:** matriz manual definida; automatización Playwright pendiente de implementar. El E2E simulado no sustituye el smoke sandbox en Dev.
+**Estado al 28-oct-2026:** Playwright está configurado con Chromium desktop y emulación Pixel 7. `npm run test:e2e` ejecutó **10/10** casos localmente. `.github/workflows/e2e-dev.yml` ejecuta la suite para PR hacia `dev` y cambios de los archivos de aplicación/E2E en `dev`; no usa secretos. La suite actual levanta Vite y simula APIs en el navegador: no ejecuta el Worker ni una base aislada y no sustituye el smoke sandbox de Dev.
+
+La fixture compartida `tests/e2e/fixtures.js` bloquea por defecto las solicitudes del contexto del navegador (incluidas ventanas emergentes) que no sean al origen Vite local; Playwright también bloquea service workers. La configuración no reutiliza un servidor preexistente en el puerto de pruebas.
 
 ### Perfil local/CI sin secretos
 
-- Ejecutar la aplicación y Worker contra servicios simulados, base aislada y fixtures sintéticos por ejecución.
-- Interceptar APIs de Mercado Pago y Resend con escenarios aprobados, rechazados, pendientes, timeout y webhook repetido.
-- Mantener las rutas y validaciones reales de la aplicación; simular el proveedor externo, no saltarse el backend de pagos ni los permisos.
-- El correo de código llega a una bandeja simulada inspeccionable por el test.
+- La base actual sirve la SPA con Vite y usa `page.route` para simular las APIs necesarias; no hay Worker ni base de datos en estos E2E.
+- El siguiente paso es levantar el Worker contra almacenamiento aislado y simuladores de proveedor, manteniendo las rutas reales para verificar autorización, persistencia y lógica de negocio.
+- Nunca se llama a Mercado Pago, Resend ni otros servicios externos desde los specs locales.
 - Cada prueba usa datos propios; evitar carreras y borrado compartido. Conservar screenshot/trace solo ante fallo y redactar PII.
 
 ### Recorridos que se automatizarán
 
 | Orden | Flujo | Verificación principal | Estado |
 |---|---|---|---|
-| 1 | Cliente crea solicitud, paga simulado, entra al portal, consulta su caso y envía feedback | UI más API; solicitud y estados enlazados, sin duplicidad | Pendiente de implementación |
+| 1 | Cliente crea solicitud, paga simulado, entra al portal, consulta su caso y envía feedback | UI más API; solicitud y estados enlazados, sin duplicidad | Parcial: solicitud pública, retorno Pro y portal probados por separado; feedback y flujo integrado pendientes |
 | 2 | Agente comparte enlace; cliente crea solicitud | atribución al agente, agente sin alta interna | Pendiente |
-| 3 | Experto responde; admin revisa/aprueba; cliente consulta | experto solo asignados y sin datos personales; cliente ve solo aprobada | Pendiente |
-| 4 | Pago rechazado, pendiente e incierto; cliente reintenta | estado verificado en API; incierto no crea segundo cargo | Pendiente |
+| 3 | Experto responde; admin revisa/aprueba; cliente consulta | experto solo asignados y sin datos personales; cliente ve solo aprobada | Parcial: UI de respuesta y aprobación probada con API simulada; faltan autorización real, persistencia y portal integrado |
+| 4 | Pago rechazado, pendiente e incierto; cliente reintenta | estado verificado en API; incierto no crea segundo cargo | Parcial: aprobado y verificación incierta en UI con APIs simuladas; rechazo, pendiente, reintento y persistencia pendientes |
 | 5 | IDs ajenos, sesión vencida, rol inactivo y adjunto de otro cliente | 401/403/404 correctos por API y UI, sin datos filtrados | Pendiente |
 | 6 | Correo incierto/DLQ, conciliación/reintento | evento idempotente, auditoría y sin envío duplicado | Pendiente |
-| 7 | ES/EN, móvil y escritorio | controles navegables y mensajes traducidos | Pendiente |
+| 7 | ES/EN, móvil y escritorio | controles navegables y mensajes traducidos | Parcial: todos los specs pasan en escritorio/móvil; el retorno incierto prueba ES/EN; falta idioma para el resto de rutas |
+
+### Casos ejecutados en local — 28-oct-2026
+
+| Spec | Resultado por proyecto | Alcance real |
+|---|---:|---|
+| `tests/e2e/public-request.spec.js` | 2/2 | Solicitud pública, email obligatorio, teléfonos opcionales, referencia, enlace al portal y ningún pago para un servicio gratuito |
+| `tests/e2e/client-portal.spec.js` | 2/2 | Solicitud de código simulado, ingreso, listado de solicitud propia y detalle con respuesta aprobada |
+| `tests/e2e/payment-return.spec.js` | 4/4 | Checkout Pro preparado con respuesta simulada; retorno aprobado; pago incierto conserva referencia y recomienda no volver a pagar; cambio ES/EN |
+| `tests/e2e/expert-admin-review.spec.js` | 2/2 | Experto responde y envía a revisión; administración abre el detalle y aprueba la respuesta desde la UI |
+| **Total** | **10/10** | Dos perfiles: Chromium desktop y Pixel 7. No acredita la persistencia ni una llamada real a proveedores. |
+
+La prueba del retorno encontró y permitió corregir dos defectos funcionales en `PaymentReturnApp.vue`: faltaba importar `localeTag`, lo que detenía la verificación al montar; además, el aviso de pago incierto se guardaba como texto y quedaba en el idioma anterior al cambiar ES/EN. El flujo experto/admin encontró otro error en la plantilla del detalle de solicitud: intentaba invocar `agentLabel` sobre el objeto de detalle en vez de usar la función del componente. La apertura de detalle y aprobación ahora pasan en los dos perfiles E2E.
 
 ### Smoke separado contra Dev sandbox
 
