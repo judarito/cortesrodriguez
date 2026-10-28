@@ -831,6 +831,29 @@ No se autoriza despliegue a producción con esta actualización documental.
 Cada AUD27 debe registrar responsable, commit de corrección, estado (**pendiente / implementado / probado en dev / listo para promoción**) y evidencia. Un check de implementación no reemplaza prueba en servicios reales. No marcar cerrados los hallazgos de esta sección por la aprobación sandbox de un único pago.
 
 
+### 19.13 Implementación de AUD27-01 a AUD27-04
+
+**Commit de código:** `edb8e50` (`fix: guard payment submission and reconcile checkout retries`). Estado: **implementado y probado localmente; pendiente de validación integrada en dev**. No se aplicaron migraciones ni se desplegó ningún Worker durante esta ejecución.
+
+| Bloque | Cambio implementado | Evidencia y límite |
+|---|---|---|
+| AUD27-01 | Reserva SQL atómica del primer envío Bricks, bloqueando la solicitud y comprobando estado abierto, cobro requerido, titularidad/capacidad inicial vigente y ausencia de pago canónico/financiero incompatible. El intento solo se reserva si sigue pendiente y nunca se envió. El POST público de Bricks exige la autorización ligada a la solicitud, enviada por el formulario. | Pruebas con PostgreSQL embebido rechazan canceladas/cerradas, otro pago confirmado, propietario incorrecto y autorización vencida; dos reservas compiten por un solo envío. Un flujo completo de procesamiento de solicitud cancelada no llama al proveedor. No equivale a concurrencia multiinstancia real de Neon/Workers. |
+| AUD27-01: recuperación | Si el intento ya fue enviado o pudo ser recibido, un nuevo envío de formulario consulta al proveedor por ID/búsqueda; no vuelve a crear un cargo con un resultado incierto. La reserva es el punto de autorización: una cancelación posterior puede encontrar un cobro en vuelo y requiere conciliación. | Pruebas de reserva; falta verificar timeouts/recuperación con Mercado Pago sandbox. Una falla externa incierta puede requerir soporte; no se declara cancelado un cargo en vuelo. |
+| AUD27-02 | Selector utiliza ID externo de pago persistido, rechaza identidades contradictorias y no escoge el último intento por fecha. Las consultas de webhook/conciliación conservan dicho ID. Nuevas preferencias Pro incluyen metadata con ID de intento; el conciliador acepta esa asociación con el modo correcto. | Regresiones de varios intentos, pago conocido sin preference_id, metadata válida/contradictoria e identidad no sobrescribible. Verificar en sandbox la propagación efectiva de metadata de Pro; si faltan identificadores y el caso sigue ambiguo, permanece sin aprobación automática. |
+| AUD27-02: historial | Antes de preparar un nuevo checkout se concilia el historial con las credenciales del modo correspondiente. Pago aprobado/reembolsado/contracargo, estado incierto o proveedor inaccesible bloquean otro cobro. Resultados de proveedor que no pueden asociarse dejan estado prudente. | Pruebas de bloqueo por estados financieros e indisponibilidad; faltan las consultas reales de ambos métodos. La creación atómica sigue impidiendo otro intento mientras exista uno activo. |
+| AUD27-03 | Portal decide por estado y modo: un Bricks rechazado/cancelado puede generar Pro cuando el flag lo indica. Un Bricks preparado y nunca enviado se invalida atómicamente antes del nuevo Pro; una pestaña antigua ya no puede reservarlo. Intentos enviados/inciertos conservan recuperación Bricks. | Pruebas de PostgreSQL para invalidación/reserva y política de UI para intentos terminados, enviados, no enviados y estado desconocido. Falta recorrer flag/portal/pasarela en navegador con servicios dev. |
+| AUD27-04 | Corregidas expectativas de plantilla cliente, destinatarios y endpoint de emisión de origen; preservados controles de privacidad y claves idempotentes. Agregadas pruebas de límite y emisión válida del token actual y retirada del endpoint anterior. | Suite completa: **119 pruebas aprobadas, 0 fallidas**, sin skipped/todo. `npm run build` y `git diff --check` correctos. |
+
+**Pruebas nuevas:** `tests/paymentSafety.test.js` ejecuta SQL real en PostgreSQL embebido mediante PGlite (dependencia solo de desarrollo), más pruebas de asociación/política de checkout y la ruta de procesamiento sin cobro tras cancelación. Los límites de origen se verifican en `tests/publicRequestRateLimits.test.js`; privacidad y reintentos permanecen en `tests/notificationQueue.test.js`. El entorno embebido no prueba latencia, credenciales, triggers productivos ni concurrencia distribuida.
+
+**Pendientes conservados:** AUD27-05 a AUD27-09, recepción real de correos, pagos sandbox Pro/Bricks en todos sus estados, rollback del flag en Cloudflare, consultas/locks bajo concurrencia real y recuperación/DLQ. El origen directo no se modificó en esta implementación; su decisión funcional sigue pendiente. Reportes/balance no forman parte de este bloque de corrección.
+
+- [x] Implementar AUD27-01 a AUD27-04 y ejecutar regresiones locales completas.
+- [ ] Desplegar el commit de corrección en dev mediante el procedimiento autorizado y ejecutar la matriz de 19.8.
+- [ ] Validar identificación de pagos Pro nuevos/históricos y propagación de metadata con sandbox.
+- [ ] Probar flag apagado con rechazo, intento nunca enviado e intento enviado; ningún caso debe duplicar cobros.
+- [ ] Registrar evidencia externa antes de marcar estos bloques «probados en dev» o «listos para promoción».
+
 ## Referencias internas
 
 - Repositorio: https://github.com/judarito/cortesrodriguez

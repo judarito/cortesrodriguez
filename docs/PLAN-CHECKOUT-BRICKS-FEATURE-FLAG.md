@@ -120,3 +120,11 @@ La revisión del commit `35d1c8286cad4ce9db85a7355425694918f020a5` se consolidó
 - [ ] Completar reportes/control financiero, resolución de excepciones y preparación operativa según AUD27-07/08/09 antes de declarar cerrada la entrega del alcance acordado.
 
 **Salida/rollback:** apagar Bricks no significa que se pueda crear Pro para cualquier solicitud. Primero deben conciliarse pagos enviados o inciertos. La condición de salida es el conjunto de pruebas y correcciones del método que se habilite; producción y `main` permanecen fuera de esta actualización documental.
+
+## Implementación de correcciones AUD27-01 a AUD27-04
+
+Commit de código `edb8e50`. Se implementaron reserva atómica de envío Bricks, autorización ligada al cliente/solicitud, recuperación sin reenviar cargos inciertos, asociación de Pro por ID persistido/metadata y rollback a Pro con invalidación de intentos Bricks nunca enviados. Los enviados permanecen sujetos a conciliación. Se corrigieron las tres pruebas fallidas anteriores.
+
+Ver [detalle y pendientes de validación en 19.13 del plan principal](./PLAN-COLAS-IDEMPOTENCIA-SEGURIDAD.md#1913-implementación-de-aud27-01-a-aud27-04). Suite local completa: **119/119**, build y revisión de whitespace correctos. Se añadió PGlite solo como dependencia de desarrollo para probar las sentencias SQL con PostgreSQL embebido; no es una nueva base ni servicio de la aplicación.
+
+Este resultado no es evidencia de despliegue ni de pagos sandbox ejecutados con la corrección. Continúan pendientes la propagación de metadata de Pro, los casos externos de rechazo/pendiente/timeout, el rollback real del flag y la concurrencia Neon/Cloudflare. No se modificó producción ni se cambiaron secretos, migraciones o flags remotos.
