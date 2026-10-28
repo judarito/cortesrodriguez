@@ -2,6 +2,22 @@
 
 Agregar Mercado Pago Checkout Bricks como alternativa seleccionable por feature flag, conservando Checkout Pro como flujo predeterminado y fallback. El alcance inicial es Dev. La landing, la creación de solicitudes, la confirmación autoritativa por webhook y las notificaciones existentes deben seguir funcionando sin cambios de comportamiento cuando el flag esté apagado.
 
+
+## Estado vigente de las correcciones
+
+Código publicado en `dev`: `edb8e50`. Implementación registrada en `bf424c3`. **119/119 pruebas locales aprobadas**, compilación y revisión de formato correctas.
+
+| Bloque | Estado | Validación que falta |
+|---|---|---|
+| AUD27-01 | Implementado; probado localmente con PostgreSQL embebido | Cancelación/recuperación y concurrencia en servicios dev |
+| AUD27-02 | Implementado; asociación por ID persistido y metadata con rechazo de ambigüedad | Pagos Pro sandbox nuevos/históricos y propagación de metadata |
+| AUD27-03 | Implementado; cambio seguro a Pro e invalidación de Bricks nunca enviados | Rollback del flag remoto y pestañas abiertas |
+| AUD27-04 | Completado en alcance local; tres fallos anteriores corregidos | Mantener suite verde; la validación externa pertenece a AUD27-06 |
+
+**Pendiente inmediato:** desplegar expresamente estas correcciones al Worker dev y ejecutar la matriz externa. La publicación de commits no constituye despliegue ni promoción a producción. El pago sandbox aprobado descrito en el estado histórico es anterior al commit de corrección.
+
+El estado consolidado y los próximos pasos están en [19.14 del plan principal](./PLAN-COLAS-IDEMPOTENCIA-SEGURIDAD.md#1914-próximas-acciones-y-cierre-de-las-tareas).
+
 ## Alcance
 
 ### Incluye
@@ -53,7 +69,7 @@ El integrador principal fija los contratos anteriores y asigna rutas/archivos an
 - [x] Implementar UI de Bricks en la solicitud pública y portal cliente; respetar `locale` y mostrar errores, procesamiento y confirmación pendiente.
 - [x] Unificar ambos métodos en el mismo registro, conciliador y eventos existentes; conservar idempotencia ante doble clic, repetición de petición y reenvío de webhook.
 - [x] Crear la aplicación sandbox Mercado Pago `CortesRodriguezBricksDev` (MCO, Checkout Bricks) y guardar sus credenciales de prueba como `MP_BRICKS_PUBLIC_KEY` y `MP_BRICKS_ACCESS_TOKEN` en Cloudflare Dev; conservar `MP_ACCESS_TOKEN` de Pro sin cambios.
-- [x] Integrar, revisar permisos y datos sensibles, y ejecutar pruebas automatizadas de contrato, migración, flag e idempotencia. La suite completa tiene 3 fallos preexistentes en `notificationQueue.test.js` (2) y `publicRequestRateLimits.test.js` (1); las pruebas específicas de Bricks/pagos/flag/portal pasan.
+- [x] Integrar, revisar permisos y datos sensibles, y ejecutar pruebas automatizadas de contrato, migración, flag e idempotencia. Hubo tres fallos en la ejecución histórica; fueron corregidos por `edb8e50`. Resultado posterior de suite completa: 119/119. La validación externa sigue pendiente.
 - [x] Aplicar `043_checkout_bricks_attempts.sql` en Neon Dev.
 - [ ] En Dev con flag apagado, completar un pago de prueba por Pro y comprobar retorno, webhook, estado, correo/notificaciones y reintento.
 - [x] En Dev con flag encendido, completar un pago Bricks aprobado y verificar conciliación y notificación; conservar el desglose USD→COP durante el formulario y el resultado.
@@ -111,7 +127,7 @@ La revisión del commit `35d1c8286cad4ce9db85a7355425694918f020a5` se consolidó
 - [ ] Cerrar AUD27-01 antes de habilitar Bricks en producción; agregar pruebas de cancelación previa y concurrente, solicitud ya pagada y pestaña antigua.
 - [ ] Cerrar AUD27-02 antes de promover Pro y validar separación de credenciales/métodos al asociar pagos.
 - [ ] Cerrar AUD27-03 mediante backend y UI; comprobar apagar/encender flag sin modificar intentos históricos ni duplicar cobros.
-- [ ] Corregir las tres pruebas descritas en AUD27-04 sin eliminarlas, desactivarlas ni debilitar sus aserciones.
+- [x] Corregir las tres pruebas descritas en AUD27-04 sin eliminarlas, desactivarlas ni debilitar sus aserciones; añadir regresiones y aprobar suite completa 119/119.
 - [ ] Ejecutar casos Bricks aprobado/rechazado/pendiente, doble clic, timeout/409, recarga y recuperación, y Pro aprobado/rechazado/pendiente/retorno/reintento.
 - [ ] Verificar recepción/autenticación de webhooks para las aplicaciones configuradas, eventos repetidos/antiguos y reembolsos/contracargos; no guardar valores de secretos en evidencia.
 - [ ] Probar separación de nota pública/interna, correos del cliente con «Consultar mis solicitudes», seguimiento desde sesión vigente/vencida y lista de varias solicitudes.
