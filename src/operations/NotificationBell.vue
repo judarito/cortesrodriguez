@@ -18,6 +18,7 @@ let pollTimer
 let toastTimer
 let reconnectAttempt = 0
 let disposed = false
+let connectionGeneration = 0
 let notificationsInitialized = false
 const knownNotificationIds = new Set()
 
@@ -39,13 +40,15 @@ function localizedError(message, fallback) {
 
 async function load({ before = null, append = false, announce = !before && !append } = {}) {
   if (!props.token) return
+  const loadToken = props.token
   loading.value = true
   try {
     const params = new URLSearchParams({ limit: '20' })
     if (before) params.set('before', before)
-    const response = await fetch(`/api/app/notifications?${params}`, { headers: { Authorization: `Bearer ${props.token}` }, cache: 'no-store' })
+    const response = await fetch(`/api/app/notifications?${params}`, { headers: { Authorization: `Bearer ${loadToken}` }, cache: 'no-store' })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(localizedError(data.error, t('No se pudieron cargar las notificaciones.', 'Could not load notifications.')))
+    if (disposed || loadToken !== props.token) return
     const incoming = data.items || []
     if (!notificationsInitialized) {
       incoming.forEach((item) => knownNotificationIds.add(item.id))
@@ -64,6 +67,7 @@ async function load({ before = null, append = false, announce = !before && !appe
     nextCursor.value = data.nextCursor || null
     error.value = ''
   } catch (loadError) {
+    if (disposed || loadToken !== props.token) return
     error.value = localizedError(loadError.message, t('No se pudieron cargar las notificaciones.', 'Could not load notifications.'))
   } finally {
     loading.value = false
@@ -93,25 +97,57 @@ function loadMore() {
 
 async function connect() {
   if (disposed || !props.token) return
+  const generation = ++connectionGeneration
+  closeCurrentSocket()
+  const connectToken = props.token
   try {
-    const ticketResponse = await fetch('/api/app/notifications/realtime-ticket', { method: 'POST', headers: { Authorization: `Bearer ${props.token}` } })
+    const ticketResponse = await fetch('/api/app/notifications/realtime-ticket', { method: 'POST', headers: { Authorization: `Bearer ${connectToken}` } })
     const ticketData = await ticketResponse.json().catch(() => ({}))
     if (!ticketResponse.ok) throw new Error(localizedError(ticketData.error, t('Realtime no disponible.', 'Realtime is unavailable.')))
+    if (disposed || generation !== connectionGeneration || connectToken !== props.token) return
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    socket = new WebSocket(`${protocol}//${window.location.host}/api/app/notifications/realtime?ticket=${encodeURIComponent(ticketData.ticket)}`)
-    socket.onopen = () => { reconnectAttempt = 0; socketState.value = 'online'; emit('request-updated', { requestId: '', eventCode: 'reconnected' }) }
-    socket.onmessage = (event) => {
+    const nextSocket = new WebSocket(`${protocol}//${window.location.host}/api/app/notifications/realtime?ticket=${encodeURIComponent(ticketData.ticket)}`)
+    socket = nextSocket
+    const isCurrentSocket = () => !disposed && generation === connectionGeneration && socket === nextSocket
+    nextSocket.onopen = () => {
+      if (!isCurrentSocket()) return
+      reconnectAttempt = 0
+      socketState.value = 'online'
+      load()
+      emit('request-updated', { requestId: '', eventCode: 'reconnected' })
+    }
+    nextSocket.onmessage = (event) => {
+      if (!isCurrentSocket()) return
       try {
         const message = JSON.parse(event.data)
         if (message.type === 'notification') load()
         if (message.type === 'request-updated') emit('request-updated', message)
       } catch { /* Ignore malformed push frames. */ }
     }
-    socket.onclose = () => scheduleReconnect()
-    socket.onerror = () => { socketState.value = 'offline'; socket?.close() }
+    nextSocket.onclose = () => {
+      if (!isCurrentSocket()) return
+      socket = undefined
+      scheduleReconnect()
+    }
+    nextSocket.onerror = () => {
+      if (!isCurrentSocket()) return
+      socketState.value = 'offline'
+      nextSocket.close()
+    }
   } catch {
-    scheduleReconnect()
+    if (!disposed && generation === connectionGeneration && connectToken === props.token) scheduleReconnect()
   }
+}
+
+function closeCurrentSocket() {
+  const previous = socket
+  socket = undefined
+  if (!previous) return
+  previous.onopen = null
+  previous.onmessage = null
+  previous.onerror = null
+  previous.onclose = null
+  try { previous.close(1000, 'Session changed') } catch { /* Ignore already closed sockets. */ }
 }
 
 function scheduleReconnect() {
@@ -141,23 +177,42 @@ function onOutsideClick(event) {
   if (!event.target.closest('.notification-bell')) open.value = false
 }
 
-watch(() => props.token, async () => { await load(); await connect() })
+watch(() => props.token, async () => {
+  connectionGeneration += 1
+  window.clearTimeout(reconnectTimer)
+  reconnectTimer = undefined
+  closeCurrentSocket()
+  socketState.value = 'offline'
+  reconnectAttempt = 0
+  items.value = []
+  unreadCount.value = 0
+  nextCursor.value = null
+  knownNotificationIds.clear()
+  notificationsInitialized = false
+  error.value = ''
+  if (!props.token) return
+  await load()
+  await connect()
+})
 onMounted(() => {
   load()
   connect()
   pollTimer = window.setInterval(() => {
     load()
-    if (socketState.value !== 'online') emit('request-updated', { requestId: '', eventCode: 'poll_fallback' })
+    // Refresh the active request views even if the socket looks healthy. A push
+    // can be lost after publication while the connection itself remains open.
+    emit('request-updated', { requestId: '', eventCode: 'poll_fallback' })
   }, 60_000)
   document.addEventListener('click', onOutsideClick)
 })
 onBeforeUnmount(() => {
   disposed = true
+  connectionGeneration += 1
   window.clearTimeout(reconnectTimer)
   window.clearTimeout(toastTimer)
   window.clearInterval(pollTimer)
   document.removeEventListener('click', onOutsideClick)
-  socket?.close()
+  closeCurrentSocket()
 })
 </script>
 

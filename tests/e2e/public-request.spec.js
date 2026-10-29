@@ -92,3 +92,32 @@ test('permite enviar una solicitud pública sin iniciar un pago real', async ({ 
   expect(submittedForm).toContain(originToken)
   expect(calls.get('payments') || 0).toBe(0)
 })
+
+test('solicitud pública en inglés conserva labels accesibles y cabe en móvil', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('locale', 'en'))
+  await page.route('**/api/public/features', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ checkoutMode: 'pro' }),
+  }))
+  await page.route('**/api/public/request-start', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ token: originToken, type: 'direct_web' }),
+  }))
+  await page.route('**/api/public/turnstile-config', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ enabled: false, siteKey: '' }),
+  }))
+  await page.route('**/api/public/catalog', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(publicCatalog),
+  }))
+
+  await page.goto('/solicitud')
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en-US')
+  await expect(page.getByRole('heading', { name: 'Your operation details' })).toBeVisible()
+  await expect(page.getByLabel('Full name')).toBeVisible()
+  await expect(page.getByLabel('Email address')).toHaveAttribute('required', '')
+  await expect(page.getByLabel('Phone')).not.toHaveAttribute('required', '')
+  await expect(page.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true')
+
+  const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
+  expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport)
+  await page.getByRole('button', { name: 'Spanish' }).focus()
+  await expect(page.getByRole('button', { name: 'Spanish' })).toBeFocused()
+})

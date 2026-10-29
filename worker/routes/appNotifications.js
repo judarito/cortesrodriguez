@@ -225,20 +225,24 @@ export async function createEmailAppNotifications(sql, env, outboxItem, resendEm
 }
 
 export async function publishRequestStateUpdate(sql, env, outboxItem) {
-  if (!env.APP_NOTIFICATION_HUB) return
+  if (!env.APP_NOTIFICATION_HUB) {
+    console.warn(JSON.stringify({ event: 'request_realtime_publish_failed', severity: 'warning', errorCode: 'notification_hub_unavailable', eventCode: String(outboxItem.event_code) }))
+    return { ok: false, reason: 'notification_hub_unavailable' }
+  }
   const requests = await sql`
     SELECT id, source, source_channel, agent_id, assigned_expert_id
     FROM operations.requests WHERE id = ${outboxItem.request_id} LIMIT 1
   `
   const request = requests[0]
-  if (!request) return
+  if (!request) return { ok: true, recipients: 0 }
   let assignmentPayload = null
   if (outboxItem.event_code === 'expert_assigned') {
     try { assignmentPayload = typeof outboxItem.event_payload === 'string' ? JSON.parse(outboxItem.event_payload || '{}') : outboxItem.event_payload } catch { assignmentPayload = null }
     if (!validUuid(assignmentPayload?.assignmentId) || !validUuid(assignmentPayload?.expertId)) return
     if (String(request.assigned_expert_id || '') !== String(assignmentPayload.expertId)) return
   }
-  const recipients = requestUpdateRecipientIds(request)
+  const audiences = roleAudiences(outboxItem.event_code, request, Boolean(outboxItem.admin_only))
+  const recipients = requestUpdateRecipientIds(outboxItem.event_code, request, Boolean(outboxItem.admin_only))
   if (assignmentPayload) recipients.expertId = assignmentPayload.expertId
   const users = await sql`
     SELECT DISTINCT u.id
@@ -246,7 +250,7 @@ export async function publishRequestStateUpdate(sql, env, outboxItem) {
     JOIN operations.user_roles ur ON ur.user_id = u.id
     JOIN operations.roles role ON role.id = ur.role_id
     WHERE u.active = TRUE AND (
-      role.name = 'admin' OR
+      (role.name = 'admin' AND ${audiences.admin}) OR
       (role.name = 'agent' AND u.id = ${recipients.agentId}) OR
       (role.name = 'expert' AND u.id = ${recipients.expertId}
         AND (${assignmentPayload ? sql`EXISTS (
@@ -256,28 +260,33 @@ export async function publishRequestStateUpdate(sql, env, outboxItem) {
         )` : sql`TRUE`}))
     )
   `
+  let failed = 0
   for (const user of users) {
     try {
       const stub = env.APP_NOTIFICATION_HUB.get(env.APP_NOTIFICATION_HUB.idFromName(String(user.id)))
-      await stub.fetch('https://notifications.internal/publish', {
+      const result = await stub.fetch('https://notifications.internal/publish', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ type: 'request-updated', requestId: String(request.id), eventCode: String(outboxItem.event_code) }),
       })
+      if (!result.ok) failed += 1
     } catch {
-      console.warn(JSON.stringify({ event: 'request_realtime_publish_failed', severity: 'warning', errorCode: 'realtime_publish_failed' }))
+      failed += 1
     }
   }
+  if (failed) console.warn(JSON.stringify({ event: 'request_realtime_publish_failed', severity: 'warning', errorCode: 'realtime_publish_failed', eventCode: String(outboxItem.event_code), failedRecipients: failed }))
+  return { ok: failed === 0, recipients: users.length, failedRecipients: failed }
 }
 
 function validUuid(value) { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) }
 
-export function requestUpdateRecipientIds(request) {
-  const fromAgent = request.source_channel
-    ? request.source_channel === 'agent_link'
-    : request.source === 'agent'
+export function requestUpdateRecipientIds(eventCodeOrRequest, maybeRequest, adminOnly = false) {
+  // Keep the original one-argument helper contract for existing callers.
+  const eventCode = typeof eventCodeOrRequest === 'string' ? eventCodeOrRequest : 'status_changed'
+  const request = typeof eventCodeOrRequest === 'string' ? maybeRequest : eventCodeOrRequest
+  const audiences = roleAudiences(eventCode, request, adminOnly)
   return {
-    agentId: fromAgent ? request.agent_id || null : null,
-    expertId: request.assigned_expert_id || null,
+    agentId: audiences.agent ? request.agent_id || null : null,
+    expertId: audiences.expert ? request.assigned_expert_id || null : null,
   }
 }
 

@@ -144,3 +144,23 @@ test('el cliente accede con código y consulta solo sus solicitudes y respuesta 
   expect(apiCalls.some(({ path }) => path.includes('UNOWNED'))).toBe(false)
   expect(apiCalls.every(({ path }) => path.startsWith('/api/client/') || path === '/api/public/features')).toBe(true)
 })
+
+test('portal de clientes en inglés ofrece controles etiquetados y no desborda en móvil', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('locale', 'en'))
+  await page.route('**/api/public/features', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ checkoutMode: 'pro' }),
+  }))
+  await page.route('**/api/client/session', (route) => route.fulfill({
+    status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Inicia sesión para continuar.' }),
+  }))
+
+  await page.goto('/portal-cliente')
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en-US')
+  await expect(page.getByRole('heading', { name: 'View your requests' })).toBeVisible()
+  await expect(page.getByLabel('Email address')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Send code by email' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true')
+
+  const dimensions = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }))
+  expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport)
+})

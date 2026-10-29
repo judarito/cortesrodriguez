@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import LanguageToggle from '../shared/components/LanguageToggle.vue'
 import logoUrl from '../assets/logo-cortes-rodriguez.png'
+import { sharedText } from '../lib/translations.js'
 
 const props = defineProps({
   brandSubtitle: { type: String, default: 'Operaciones' },
@@ -11,10 +12,10 @@ const props = defineProps({
   locale: { type: String, default: 'es' },
   userName: { type: String, default: '' },
   userRole: { type: String, default: '' },
-  menuLabel: { type: String, default: 'Menú principal' },
+  menuLabel: { type: String, default: '' },
   secondaryMenuLabel: { type: String, default: 'Administración' },
-  logoutLabel: { type: String, default: 'Cerrar sesión' },
-  searchPlaceholder: { type: String, default: 'Buscar en la plataforma...' },
+  logoutLabel: { type: String, default: '' },
+  searchPlaceholder: { type: String, default: '' },
   menuItems: { type: Array, default: () => [] },
   showSearch: { type: Boolean, default: true },
 })
@@ -25,6 +26,9 @@ const initials = computed(() => {
   if (name.includes('@')) return name.split('@')[0].slice(0, 2).toUpperCase()
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase()
 })
+const effectiveMenuLabel = computed(() => props.menuLabel || sharedText(props.locale, 'mainMenu'))
+const effectiveLogoutLabel = computed(() => props.logoutLabel || sharedText(props.locale, 'signOut'))
+const effectiveSearchPlaceholder = computed(() => props.searchPlaceholder || sharedText(props.locale, 'searchPlatform'))
 
 function select(item) {
   mobileMenuOpen.value = false
@@ -41,17 +45,17 @@ function select(item) {
           <span><strong>Cortés Rodríguez</strong><small>{{ brandSubtitle }}</small></span>
         </div>
         <button class="mobile-menu-toggle" type="button" :aria-expanded="mobileMenuOpen" aria-controls="operations-navigation" @click="mobileMenuOpen = !mobileMenuOpen">
-          <span>☰</span><span>{{ menuLabel }}</span>
+          <span aria-hidden="true">☰</span><span>{{ effectiveMenuLabel }}</span>
         </button>
       </div>
-      <div class="sidebar-label">{{ menuLabel }}</div>
-      <nav id="operations-navigation" :class="{ open: mobileMenuOpen }" :aria-label="menuLabel">
+      <div class="sidebar-label">{{ effectiveMenuLabel }}</div>
+      <nav id="operations-navigation" :class="{ open: mobileMenuOpen }" :aria-label="effectiveMenuLabel">
         <template v-for="(item, index) in menuItems" :key="item.permission || item.label">
           <div v-if="index === 6" class="sidebar-label sidebar-secondary-label">{{ secondaryMenuLabel }}</div>
-          <a v-if="item.href" :href="item.href" :class="['operations-menu-item', { active: activePage === item.label }]">
+          <a v-if="item.href" :href="item.href" :aria-current="activePage === item.label ? 'page' : undefined" :class="['operations-menu-item', { active: activePage === item.label }]">
             <span class="menu-icon">{{ item.icon }}</span><span>{{ item.displayLabel || item.label }}</span>
           </a>
-          <button v-else type="button" :class="['operations-menu-item', { active: activePage === item.label }]" @click="select(item)">
+          <button v-else type="button" :aria-current="activePage === item.label ? 'page' : undefined" :class="['operations-menu-item', { active: activePage === item.label }]" @click="select(item)">
             <span class="menu-icon">{{ item.icon }}</span><span>{{ item.displayLabel || item.label }}</span>
             <span v-if="item.badge" class="menu-count">{{ item.badge }}</span>
           </button>
@@ -60,7 +64,7 @@ function select(item) {
       <div class="sidebar-profile">
         <div class="avatar avatar-small">{{ initials }}</div>
         <div><strong>{{ userName }}</strong><span>{{ userRole }}</span></div>
-        <button type="button" :aria-label="logoutLabel" :title="logoutLabel" @click="emit('logout')">↪</button>
+        <button type="button" :aria-label="effectiveLogoutLabel" :title="effectiveLogoutLabel" @click="emit('logout')">↪</button>
       </div>
     </aside>
 
@@ -69,7 +73,7 @@ function select(item) {
         <div class="breadcrumb"><span>{{ breadcrumbLabel }}</span><b>/</b><strong>{{ currentPage }}</strong></div>
         <div class="topbar-actions">
           <LanguageToggle :model-value="locale" @update:model-value="emit('update:locale', $event)" />
-          <label v-if="showSearch" class="search-box"><span>⌕</span><input :placeholder="searchPlaceholder" /></label>
+          <label v-if="showSearch" class="search-box"><span aria-hidden="true">⌕</span><input :aria-label="effectiveSearchPlaceholder" :placeholder="effectiveSearchPlaceholder" /></label>
           <slot name="topbar-actions" />
         </div>
       </header>

@@ -132,7 +132,7 @@ test('mantiene la solicitud como registrada si el pago no se puede verificar', a
   await expect(page.getByRole('link', { name: 'Iniciar una nueva solicitud' })).toHaveCount(0)
   expect(verificationCalls).toBe(1)
 
-  await page.getByRole('group', { name: 'Language / Idioma' }).getByRole('button', { name: 'EN' }).click()
+  await page.getByRole('group', { name: 'Idioma' }).getByRole('button', { name: 'Inglés' }).click()
   await expect(page.getByRole('heading', { name: 'Your request is still recorded' })).toBeVisible()
   await expect(page.locator('.payment-return-help')).toContainText('do not pay again')
 })

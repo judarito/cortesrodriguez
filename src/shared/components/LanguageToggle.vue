@@ -1,5 +1,6 @@
 <script setup>
 import { persistLocale } from '../../lib/locale.js'
+import { sharedText } from '../../lib/translations.js'
 
 defineProps({ modelValue: { type: String, default: 'es' } })
 const emit = defineEmits(['update:modelValue'])
@@ -10,9 +11,9 @@ function select(locale) {
 </script>
 
 <template>
-  <div class="language-toggle" role="group" aria-label="Language / Idioma">
-    <button type="button" :aria-pressed="modelValue === 'es'" :class="{ active: modelValue === 'es' }" @click="select('es')">ES</button>
-    <button type="button" :aria-pressed="modelValue === 'en'" :class="{ active: modelValue === 'en' }" @click="select('en')">EN</button>
+  <div class="language-toggle" role="group" :aria-label="sharedText(modelValue, 'language')">
+    <button type="button" :aria-label="sharedText(modelValue, 'spanish')" :aria-pressed="modelValue === 'es'" :class="{ active: modelValue === 'es' }" @click="select('es')">ES</button>
+    <button type="button" :aria-label="sharedText(modelValue, 'english')" :aria-pressed="modelValue === 'en'" :class="{ active: modelValue === 'en' }" @click="select('en')">EN</button>
   </div>
 </template>
 

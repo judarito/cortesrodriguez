@@ -459,7 +459,7 @@ function dateLabel(value) {
 }
 function money(cents, currency = 'USD') { return new Intl.NumberFormat(localeTag(locale.value), { style: 'currency', currency, maximumFractionDigits: currency === 'USD' ? 2 : 0 }).format((Number(cents) || 0) / 100) }
 function decimal(value, maximumFractionDigits = 4) { return Number(value).toLocaleString(localeTag(locale.value), { maximumFractionDigits }) }
-onMounted(() => { document.documentElement.lang = locale.value; load() })
+onMounted(() => { document.documentElement.lang = localeTag(locale.value); load() })
 </script>
 
 <template>

@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, onUpdated, ref } from 'vue'
+import { sharedText } from '../../lib/translations.js'
 
 defineProps({
   title: { type: String, default: '' },
@@ -39,14 +40,14 @@ onUpdated(syncResponsiveLabels)
   <section ref="listViewRoot" class="list-view panel">
     <header class="list-view-header">
       <div>
-        <div v-if="count !== null" class="list-view-summary"><strong>{{ count }}</strong><span>{{ locale === 'en' ? 'records found' : 'registros encontrados' }}</span></div>
+        <div v-if="count !== null" class="list-view-summary"><strong>{{ count }}</strong><span>{{ sharedText(locale, 'recordsFound') }}</span></div>
         <h2 v-if="title">{{ title }}</h2>
         <p v-if="description">{{ description }}</p>
       </div>
       <div class="list-view-header-actions"><slot name="actions" /></div>
     </header>
     <div v-if="$slots.toolbar" class="list-view-toolbar"><slot name="toolbar" /></div>
-    <div v-if="loading" class="list-view-skeleton" aria-busy="true" :aria-label="locale === 'en' ? 'Loading list' : 'Cargando listado'">
+    <div v-if="loading" class="list-view-skeleton" role="status" aria-busy="true" :aria-label="sharedText(locale, 'loadingList')">
       <div v-for="row in skeletonRows" :key="row" class="list-view-skeleton-row">
         <span v-for="column in columnCount" :key="column" :class="['skeleton-bar', `skeleton-bar-${column % 3}`]"></span>
       </div>
@@ -61,8 +62,8 @@ onUpdated(syncResponsiveLabels)
       </table>
     </div>
     <footer class="list-view-pagination">
-      <span>{{ locale === 'en' ? 'Page' : 'Página' }} {{ page }} {{ locale === 'en' ? 'of' : 'de' }} {{ totalPages }}</span>
-      <div><button type="button" :disabled="page <= 1 || loading" @click="$emit('previous')">{{ locale === 'en' ? 'Previous' : 'Anterior' }}</button><button type="button" :disabled="page >= totalPages || loading" @click="$emit('next')">{{ locale === 'en' ? 'Next' : 'Siguiente' }}</button></div>
+      <span>{{ sharedText(locale, 'page') }} {{ page }} {{ sharedText(locale, 'of') }} {{ totalPages }}</span>
+      <div><button type="button" :disabled="page <= 1 || loading" @click="$emit('previous')">{{ sharedText(locale, 'previous') }}</button><button type="button" :disabled="page >= totalPages || loading" @click="$emit('next')">{{ sharedText(locale, 'next') }}</button></div>
     </footer>
   </section>
 </template>

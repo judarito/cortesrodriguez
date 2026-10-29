@@ -521,6 +521,8 @@ La promoción a producción no forma parte de este calendario.
 
 ### F-P1-07 — Cobertura funcional bilingüe
 
+**Avance (28-oct-2026): parcial.** Se centralizaron recursos compartidos ES/EN y textos principales del panel operativo. E2E verifica los recorridos de solicitud pública y portal de cliente en ambos idiomas, en escritorio y móvil. Quedan textos inline en otras vistas y no se ha completado el inventario de todas las rutas, estados, modales y validaciones.
+
 **Problema:** hay traducciones en línea y textos que pueden quedar en español en la vista inglesa.
 
 **Acciones:**
@@ -556,6 +558,8 @@ La promoción a producción no forma parte de este calendario.
 ---
 
 ### F-P1-09 — Accesibilidad y responsive funcional
+
+**Avance (28-oct-2026): parcial.** Se añadieron nombres accesibles a los controles de idioma, etiquetas/roles de navegación y carga, y comprobaciones E2E de foco por teclado y desbordamiento horizontal en los recorridos públicos principales. Falta la revisión integral de teclado, lectores de pantalla y contraste en formularios, tablas, modales y vistas operativas.
 
 **Problema:** hay formularios, tablas y modales densos; falta una revisión funcional de teclado, foco y móvil.
 

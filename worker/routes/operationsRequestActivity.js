@@ -1,4 +1,6 @@
 import { requireActiveOperationsAuth } from './operationsAuth.js'
+import { publishRequestStateUpdate } from './appNotifications.js'
+import { publishNotificationEvent } from './operationsEmail.js'
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const idempotencyPattern = /^[A-Za-z0-9._:-]{1,128}$/
@@ -27,8 +29,10 @@ export async function handleOperationsRequestActivity(request, env) {
   if (action === 'activity') return listActivity(sql, requestId)
   const input = await request.json().catch(() => ({}))
   if (action === 'comments') return addComment(sql, requestId, claims, input)
-  if (!isAdmin && !isAgent) return response({ error: 'Solo administración o el agente responsable puede cambiar el estado.' }, 403)
-  return transitionStatus(sql, requestId, claims, input, isAdmin)
+  if (!isAdmin && !(isAgent && claims.permissions?.includes('requests.update'))) {
+    return response({ error: 'Se requiere permiso para actualizar solicitudes.' }, 403)
+  }
+  return transitionStatus(sql, env, requestId, claims, input, isAdmin)
 }
 
 async function listActivity(sql, requestId) {
@@ -93,7 +97,7 @@ async function addComment(sql, requestId, claims, input) {
   return response({ ok: true, item: { id: String(rows[0].id), body: String(rows[0].body), occurredAt: rows[0].created_at }, duplicate: !created }, created ? 201 : 200)
 }
 
-async function transitionStatus(sql, requestId, claims, input, isAdmin) {
+async function transitionStatus(sql, env, requestId, claims, input, isAdmin) {
   const action = typeof input.action === 'string' ? input.action : ''
   const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
   const idempotencyKey = typeof input.idempotencyKey === 'string' ? input.idempotencyKey : ''
@@ -128,7 +132,39 @@ async function transitionStatus(sql, requestId, claims, input, isAdmin) {
         AND NOT EXISTS (SELECT 1 FROM transition)
     ) SELECT * FROM result LIMIT 1`
   if (!rows[0]) return response({ error: 'La solicitud cambió de estado o ya no admite esta transición. Actualiza el detalle.' }, 409)
-  return response({ ok: true, duplicate: !rows[0].created, transition: { action, from: String(rows[0].from_status), to: String(rows[0].to_status), occurredAt: rows[0].created_at } })
+  const created = rows[0].created === true || rows[0].created === 't' || rows[0].created === 'true'
+  if (created) {
+    try {
+      // The trigger stores this event in the durable outbox in the same
+      // transaction as the status update. Publish only after the commit.
+      const events = await sql`
+        SELECT id, request_id, event_code, admin_only, event_payload
+        FROM operations.notification_outbox
+        WHERE request_id = ${requestId} AND event_code = 'status_changed'
+          AND created_at = ${rows[0].created_at}
+        ORDER BY id DESC LIMIT 1
+      `
+      if (events[0]) {
+        try {
+          await publishRequestStateUpdate(sql, env, events[0])
+        } catch {
+          console.warn(JSON.stringify({ event: 'request_realtime_publish_failed', severity: 'warning', errorCode: 'realtime_publish_failed', eventCode: 'status_changed' }))
+        }
+        // Dispatch the durable event now so the bell/email consumers do not
+        // wait for the scheduled outbox sweep. The dispatcher is idempotent.
+        try {
+          await publishNotificationEvent(sql, env, String(events[0].id))
+        } catch {
+          console.warn(JSON.stringify({ event: 'notification_event_dispatch_failed', severity: 'warning', errorCode: 'queue_dispatch_failed', eventCode: 'status_changed' }))
+        }
+      }
+    } catch {
+      // The committed status/outbox remain authoritative; scheduled dispatch
+      // can recover if the immediate outbox lookup itself is unavailable.
+      console.warn(JSON.stringify({ event: 'request_status_event_lookup_failed', severity: 'warning', errorCode: 'status_event_lookup_failed', eventCode: 'status_changed' }))
+    }
+  }
+  return response({ ok: true, duplicate: !created, transition: { action, from: String(rows[0].from_status), to: String(rows[0].to_status), occurredAt: rows[0].created_at } })
 }
 
 function response(payload, status = 200) {
