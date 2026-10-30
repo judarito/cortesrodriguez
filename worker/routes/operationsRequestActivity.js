@@ -50,9 +50,12 @@ async function listActivity(sql, requestId) {
         CASE WHEN assignment.status = 'reassigned' THEN 'Experto reasignado'
           WHEN assignment.status = 'completed' THEN 'Asignación de experto completada'
           WHEN assignment.status = 'failed' THEN 'Asignación de experto fallida'
+          WHEN assignment.status = 'similarity_review' THEN 'Coincidencia pendiente de revisión administrativa'
           ELSE 'Experto asignado' END,
         assignment.assigned_by, COALESCE(actor.full_name, 'Sistema'), assignment.assigned_at,
-        COALESCE(assignment.reason, expert.full_name)
+        CASE WHEN assignment.status = 'similarity_review'
+          THEN 'Se detectó una respuesta anterior parecida. Administración debe decidir si se reutiliza o se asigna un experto.'
+          ELSE COALESCE(assignment.reason, expert.full_name) END
       FROM operations.request_assignments assignment
       LEFT JOIN operations.users actor ON actor.id = assignment.assigned_by
       LEFT JOIN operations.users expert ON expert.id = assignment.expert_id

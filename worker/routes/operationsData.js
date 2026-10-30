@@ -431,7 +431,7 @@ async function getRequestDetail(sql, requestId, claims) {
   const accessFilter = claims.roles?.includes('admin') ? sql`TRUE` : sql`(r.agent_id = ${claims.sub} OR (r.agent_id IS NULL AND r.created_by = ${claims.sub}))`
   const [requestRows, historyRows, responseRows] = await Promise.all([
     sql`
-      SELECT r.id, r.reference, r.source, r.legal_entity_type, r.email, r.phone, r.whatsapp, r.payment_required,
+      SELECT r.id, r.reference, r.question, r.source, r.legal_entity_type, r.email, r.phone, r.whatsapp, r.payment_required,
         r.service_name, r.service_amount_cents, r.service_currency, r.service_type, r.freight_agent,
         r.product_type, r.status, r.created_at, r.updated_at, r.notification_status, r.consultation_type_id,
         r.consultation_type_name, r.assigned_expert_id, assigned.full_name AS assigned_expert_name,
@@ -733,6 +733,7 @@ export function serializeRequest(row) {
   return {
     id: String(row.id),
     reference: String(row.reference),
+    question: row.question ? String(row.question) : '',
     source: sourceChannel === 'agent_link' ? 'Agente' : sourceChannel === 'admin_entry' ? 'Administración' : 'Página web',
     sourceChannel,
     legalEntityType: String(row.legal_entity_type),

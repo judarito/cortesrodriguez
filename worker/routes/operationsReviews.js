@@ -6,10 +6,11 @@ export async function handleOperationsReviews(request, env) {
   const isFeedbackList = url.pathname === '/api/app/reviews/feedback' && request.method === 'GET'
   const isSimilarityList = url.pathname === '/api/app/reviews/similar-questions' && request.method === 'GET'
   const similarityMatch = url.pathname.match(/^\/api\/app\/reviews\/similar-questions\/([^/]+)$/)
+  const isSimilarityDetail = Boolean(similarityMatch) && request.method === 'GET'
   const isSimilarityAction = Boolean(similarityMatch) && request.method === 'PUT'
   const match = url.pathname.match(/^\/api\/app\/reviews\/responses\/([^/]+)$/)
   const isUpdate = Boolean(match) && request.method === 'PUT'
-  if (!isList && !isFeedbackList && !isSimilarityList && !isSimilarityAction && !isUpdate) return null
+  if (!isList && !isFeedbackList && !isSimilarityList && !isSimilarityDetail && !isSimilarityAction && !isUpdate) return null
 
   const claims = await requireOperationsAuth(request, env)
   if (!claims) return response({ error: 'Sesión requerida.' }, 401)
@@ -18,9 +19,10 @@ export async function handleOperationsReviews(request, env) {
 
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
-  if (isSimilarityList || isSimilarityAction) {
+  if (isSimilarityList || isSimilarityDetail || isSimilarityAction) {
     if (!claims.roles?.includes('admin')) return response({ error: 'Solo administración puede validar preguntas similares.' }, 403)
     if (isSimilarityList) return listSimilarQuestions(sql, url)
+    if (isSimilarityDetail) return getSimilarQuestion(sql, similarityMatch[1])
     return resolveSimilarQuestion(sql, request, similarityMatch[1], claims, env)
   }
   if (isFeedbackList) {
@@ -107,6 +109,43 @@ export async function handleOperationsReviews(request, env) {
       publicNote: reviewed.public_note || '',
     },
   }, action === 'approve' ? 202 : 200)
+}
+
+async function getSimilarQuestion(sql, requestId) {
+  const rows = await sql`
+    SELECT sr.request_id, sr.created_at, r.reference, r.question, r.service_type,
+      r.consultation_type_name, COALESCE(r.source_channel, CASE WHEN r.source = 'agent' THEN 'agent_link' ELSE 'direct_web' END) AS source_channel,
+      r.agent_id, agent.full_name AS agent_name
+    FROM operations.request_similarity_reviews sr
+    JOIN operations.requests r ON r.id = sr.request_id
+    LEFT JOIN operations.users agent ON agent.id = r.agent_id
+    WHERE sr.request_id = ${requestId} AND sr.status = 'pending'
+    LIMIT 1
+  `
+  if (!rows[0]) return response({ error: 'La revisión de similitud no existe o ya fue resuelta.' }, 404)
+  const candidates = await sql`
+    SELECT sc.response_id, sc.similarity_score, sc.shared_terms,
+      er.body AS response_body, er.version, er.sent_at,
+      source_request.reference AS source_reference, source_request.question AS source_question,
+      source_request.consultation_type_name
+    FROM operations.request_similarity_candidates sc
+    JOIN operations.expert_responses er ON er.id = sc.response_id AND er.status = 'sent'
+    JOIN operations.requests source_request ON source_request.id = er.request_id
+    WHERE sc.request_id = ${requestId}
+    ORDER BY sc.similarity_score DESC
+  `
+  const row = rows[0]
+  return response({ item: {
+    requestId: String(row.request_id), reference: String(row.reference), question: String(row.question || ''),
+    serviceType: String(row.service_type), consultationType: row.consultation_type_name ? String(row.consultation_type_name) : '',
+    sourceChannel: String(row.source_channel), agentName: row.agent_name ? String(row.agent_name) : '',
+    createdAt: String(row.created_at), candidates: candidates.map((candidate) => ({
+      responseId: String(candidate.response_id), score: Number(candidate.similarity_score), sharedTerms: candidate.shared_terms || [],
+      responseBody: String(candidate.response_body), version: Number(candidate.version), sentAt: candidate.sent_at ? String(candidate.sent_at) : '',
+      sourceReference: String(candidate.source_reference), sourceQuestion: String(candidate.source_question),
+      consultationType: candidate.consultation_type_name ? String(candidate.consultation_type_name) : '',
+    })),
+  } })
 }
 
 // One statement makes the conditional review, outbox event, and case status atomic.
