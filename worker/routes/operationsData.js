@@ -580,7 +580,7 @@ export async function assignRequestExpert(sql, request, requestId, claims, env) 
     ), audit_entry AS (
       INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata)
       SELECT ${claims.sub}, 'assign', 'request', updated.id,
-        jsonb_build_object('expertId', ${expertId}, 'previousExpertId', original.assigned_expert_id)
+        jsonb_build_object('expertId', CAST(${expertId} AS uuid), 'previousExpertId', original.assigned_expert_id)
       FROM updated_request updated
       JOIN locked_request original ON original.id = updated.id
       RETURNING entity_id
