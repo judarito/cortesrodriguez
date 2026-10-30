@@ -2,6 +2,14 @@
 
 La plataforma operativa vive en el mismo repositorio y despliegue que la landing, pero mantiene separados su frontend, API, dominio y base de datos.
 
+## Diagrama de arquitectura
+
+![Arquitectura actual de la aplicación](architecture/arquitectura-app-eventos.png)
+
+El diagrama resume los flujos implementados: frontend Vue y API en Cloudflare, pagos con Mercado Pago, estado operacional y outbox en Neon, entrega de eventos con Cloudflare Queues, efectos idempotentes, almacenamiento de adjuntos en R2, correo con Resend y notificaciones realtime dirigidas por usuario mediante Durable Objects. Los feature flags controlan el botón de solicitud pública y la alternativa de Checkout Bricks.
+
+El original editable está disponible en [arquitectura-app-eventos.svg](architecture/arquitectura-app-eventos.svg).
+
 ## Frontend
 
 - `src/landing/`: sitio público y administración editorial existente.
@@ -60,23 +68,9 @@ La plataforma operativa vive en el mismo repositorio y despliegue que la landing
 
 ## Base de datos
 
-La operación usará PostgreSQL en Neon. Se recomienda separar las tablas editoriales existentes de las tablas operativas mediante el esquema `operations`.
+La aplicación operativa ya usa PostgreSQL en Neon y las migraciones versionadas crean y actualizan sus tablas en el esquema `operations`. Ahí viven identidad y permisos, clientes, solicitudes, catálogo de servicios y consultas, asignaciones, respuestas, pagos, metadatos de adjuntos, auditoría, reglas y outbox de notificaciones, efectos de correo, notificaciones in-app y fallos de procesamiento.
 
-```text
-public.site_content
-public.contact_leads
-public.testimonial_submissions
-
-operations.users
-operations.companies
-operations.contacts
-operations.operations
-operations.documents
-operations.tasks
-operations.activity_log
-```
-
-Esta estructura es inicial y no cambia todavía la aplicación en producción.
+Los archivos privados se guardan en Cloudflare R2; PostgreSQL conserva sus metadatos y relaciones con solicitudes. Los datos editoriales de la landing siguen su flujo existente y no deben confundirse con las tablas operativas. La estructura vigente se define por `worker/db/migrations/`, no por el esquema hipotético de versiones anteriores de este documento.
 
 ## Plantillas de correo y seguimiento de apertura
 
