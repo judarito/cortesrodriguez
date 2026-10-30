@@ -26,9 +26,16 @@ const t = (es, en) => isEnglish.value ? en : es
 const visibleCount = computed(() => unreadCount.value > 99 ? '99+' : unreadCount.value)
 function emailStatusLabel(status) {
   const labels = isEnglish.value
-    ? { not_sent: 'Not applicable', accepted: 'Accepted by Resend', sent: 'Sent', delivered: 'Delivered', opened: 'Opened', failed: 'Failed', bounced: 'Bounced', complained: 'Reported', pending_retry: 'Retry pending' }
-    : { not_sent: 'No aplica', accepted: 'Aceptado por Resend', sent: 'Enviado', delivered: 'Entregado', opened: 'Abierto', failed: 'Fallido', bounced: 'Rebotado', complained: 'Reportado', pending_retry: 'Pendiente de reintento' }
+    ? { not_sent: 'Not applicable', accepted: 'Accepted by Resend', sent: 'Sent', delivered: 'Delivered', opened: 'Possible open', failed: 'Failed', bounced: 'Bounced', complained: 'Reported', pending_retry: 'Retry pending' }
+    : { not_sent: 'No aplica', accepted: 'Aceptado por Resend', sent: 'Enviado', delivered: 'Entregado', opened: 'Posible apertura', failed: 'Fallido', bounced: 'Rebotado', complained: 'Reportado', pending_retry: 'Pendiente de reintento' }
   return labels[status] || status
+}
+function emailStatusTitle(status) {
+  if (status !== 'opened') return ''
+  return t(
+    'El correo pudo cargarse automáticamente. Esto no confirma que alguien lo haya leído.',
+    'The email may have loaded automatically. This does not confirm that someone read it.',
+  )
 }
 function formatDate(value) { return new Intl.DateTimeFormat(localeTag(props.locale), { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
 function localizedError(message, fallback) {
@@ -221,7 +228,7 @@ onBeforeUnmount(() => {
       <div v-if="loading && !items.length" class="notification-empty">{{ t('Cargando…', 'Loading…') }}</div>
       <div v-else-if="!items.length" class="notification-empty">{{ t('No tienes notificaciones.', 'You have no notifications.') }}</div>
       <button v-for="item in items" :key="item.id" type="button" class="notification-item" :class="{ unread: !item.readAt }" @click="markRead(item)">
-        <span class="notification-copy"><strong>{{ item.title }}</strong><span>{{ item.message }}</span><small>{{ formatDate(item.createdAt) }} · {{ t('Correo:', 'Email:') }} {{ emailStatusLabel(item.emailStatus) }}</small></span>
+        <span class="notification-copy"><strong>{{ item.title }}</strong><span>{{ item.message }}</span><small :title="emailStatusTitle(item.emailStatus)">{{ formatDate(item.createdAt) }} · {{ t('Correo:', 'Email:') }} {{ emailStatusLabel(item.emailStatus) }}</small></span>
         <i v-if="!item.readAt" :aria-label="t('Sin leer', 'Unread')" />
       </button>
       <button v-if="nextCursor" class="notification-more" type="button" :disabled="loading" @click="loadMore">{{ loading ? t('Cargando…', 'Loading…') : t('Cargar anteriores', 'Load earlier') }}</button>

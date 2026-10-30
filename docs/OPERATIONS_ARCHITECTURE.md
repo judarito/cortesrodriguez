@@ -77,3 +77,10 @@ operations.activity_log
 ```
 
 Esta estructura es inicial y no cambia todavía la aplicación en producción.
+
+## Plantillas de correo y seguimiento de apertura
+
+- Los correos operativos usan la identidad de Cortés Rodríguez Asesores: logo, azul marino, rojo corporativo y una estructura compatible con clientes de correo basada en tablas y estilos en línea.
+- El logo optimizado para correo se sirve en `/email-logo.png`; las plantillas incluyen texto alternativo para clientes que bloquean imágenes remotas.
+- La respuesta aprobada del experto destaca la respuesta y presenta acciones separadas para enviar feedback y consultar solicitudes. Las confirmaciones de pago y avisos mantienen idioma ES/EN, referencia y CTA correspondientes.
+- El evento `email.opened` de Resend significa que se cargó el píxel de seguimiento; no demuestra que una persona leyó el mensaje. La interfaz lo presenta como **Posible apertura** y explica que la carga puede ser automática. La entrega se muestra como un estado independiente.

@@ -230,6 +230,14 @@ La acción administrativa **Verificar pago** consulta el recurso de pago en Merc
 - Se completó un pago sandbox Bricks aprobado; el intento y la notificación `payment_approved` quedaron confirmados/enviados. El estado de atención de la solicitud sigue siendo independiente del estado del pago.
 - `npm run deploy:dev` compiló y desplegó correctamente. Las pruebas de regresión Pro y los casos Bricks rechazado, pendiente, duplicado y rollback del flag siguen pendientes.
 
+### Plantillas de correo con marca corporativa (2026-10-30)
+
+- Worker Dev desplegado: `cortes-rodriguez-asesores-dev`, versión `47cefef4-e777-40d3-8800-93571dd3409b`. Producción y `main` no se modificaron.
+- Las respuestas aprobadas, confirmaciones de pago y avisos usan logo corporativo optimizado, azul marino y acento rojo. La respuesta al cliente presenta la respuesta, su referencia y enlaces separados para feedback y portal.
+- `public/email-logo.png` se publica como `/email-logo.png`; el recurso respondió HTTP 200 en Dev. La landing `/` también respondió HTTP 200.
+- El estado de Resend `email.opened` se presenta como “Posible apertura” con explicación: el píxel puede cargarse automáticamente y no confirma lectura. Está disponible en español e inglés.
+- `npm run deploy:dev` compiló correctamente; no se ejecutaron pruebas automatizadas.
+
 ### Ajuste visual del resumen Bricks y CTA al portal (2026-10-27)
 
 - Se eliminó de la parte superior del formulario Bricks la repetición de precio USD, TRM/fecha, total COP y su explicación. Ahí queda la referencia de la solicitud; el desglose de precio y conversión se conserva una sola vez junto al checkout.
