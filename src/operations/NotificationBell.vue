@@ -14,7 +14,6 @@ const socketState = ref('offline')
 const toastNotification = ref(null)
 let socket
 let reconnectTimer
-let pollTimer
 let toastTimer
 let reconnectAttempt = 0
 let disposed = false
@@ -197,12 +196,6 @@ watch(() => props.token, async () => {
 onMounted(() => {
   load()
   connect()
-  pollTimer = window.setInterval(() => {
-    load()
-    // Refresh the active request views even if the socket looks healthy. A push
-    // can be lost after publication while the connection itself remains open.
-    emit('request-updated', { requestId: '', eventCode: 'poll_fallback' })
-  }, 60_000)
   document.addEventListener('click', onOutsideClick)
 })
 onBeforeUnmount(() => {
@@ -210,7 +203,6 @@ onBeforeUnmount(() => {
   connectionGeneration += 1
   window.clearTimeout(reconnectTimer)
   window.clearTimeout(toastTimer)
-  window.clearInterval(pollTimer)
   document.removeEventListener('click', onOutsideClick)
   closeCurrentSocket()
 })

@@ -15,7 +15,8 @@ La plataforma operativa vive en el mismo repositorio y despliegue que la landing
 - La bandeja independiente **Revisión de respuestas** se retiró para evitar duplicar acciones y contexto. **Feedback de clientes** permanece como vista administrativa separada.
 - Los controles de aprobación solo se muestran a administración y usan el endpoint protegido `PUT /api/app/reviews/responses/:responseId`; la API vuelve a validar permisos y estado pendiente. Antes de aprobar, verifica que el cliente tenga correo para no dejar una respuesta aprobada sin posibilidad de notificación.
 - El panel de detalle ocupa la mitad del viewport en escritorio y el ancho completo en pantallas pequeñas.
-- **Preguntas similares** sigue siendo un flujo separado: administración revisa candidatos antes de asignar la solicitud o adaptar una respuesta previa.
+- El detalle de solicitud se divide en pestañas **Resumen**, **Pago**, **Experto**, **Respuestas**, **Actividad** e **Historial** para reducir el contenido simultáneo. La pestaña Experto muestra la coincidencia y permite a administración asignar un experto o revisar, adaptar y enviar una respuesta previa.
+- **Preguntas similares** conserva su bandeja administrativa; las decisiones también están disponibles en el detalle de la solicitud para mantener juntos la pregunta, sus candidatas y la resolución.
 
 ## Backend
 
@@ -28,7 +29,8 @@ La plataforma operativa vive en el mismo repositorio y despliegue que la landing
 - Los eventos de negocio del outbox también emiten por `NotificationHub` una señal liviana `request-updated` a los usuarios autorizados: administradores, el agente de origen cuando aplica y el experto actualmente asignado.
 - La señal solo contiene el ID interno de la solicitud y el código del evento; no incluye datos del cliente ni la respuesta. El cliente actualiza la vista consultando de nuevo la API, que mantiene los permisos como fuente de verdad.
 - La API de la campanita vuelve a autorizar cada fila según el rol vigente y la relación actual con la solicitud: un experto solo lista/lee avisos cuyo caso siga asignado a su usuario; un agente solo los de sus propios enlaces. Esto también oculta registros históricos fuera de alcance y limita el contador de no leídas.
-- Si el usuario tiene abierta la lista o el detalle de solicitudes, se refresca esa vista. La bandeja del experto actualiza sus asignaciones. Al reconectar se resincroniza la vista y, si el WebSocket está caído, se usa un refresco de respaldo cada minuto.
+- Si el usuario tiene abierta la lista o el detalle de solicitudes, un evento realtime correspondiente refresca esa vista. El detalle permanece montado durante la carga para conservar la pestaña y la posición de scroll. La bandeja del experto actualiza sus asignaciones.
+- No hay sondeo periódico del cliente para solicitudes ni notificaciones. Al abrir/reconectar el WebSocket se resincroniza la información; el usuario también puede actualizar manualmente desde la interfaz. Si el WebSocket no conecta, se aplican reintentos con espera creciente.
 - La actualización realtime es independiente del resultado de Resend: publicar el estado no confirma la entrega del correo ni altera el estado de pago.
 
 ### Navegación y listado de solicitudes
@@ -47,7 +49,7 @@ La plataforma operativa vive en el mismo repositorio y despliegue que la landing
 - Las asignaciones automáticas iniciales generan `expert_assigned`; si la solicitud exige pago y aún no se ha pagado, el aviso previo queda limitado al admin. El experto recibe notificación después de la confirmación de pago.
 - `031_app_notifications_without_email.sql` agrega `not_sent` a los estados de email de la campana para representar eventos que no deben producir correo.
 - Al detectar una notificación nueva, la campanita presenta un aviso emergente temporal con su título y mensaje, además del contador. El aviso permite abrir la solicitud (y marcar la notificación como leída), cerrarse manualmente o desaparecer a los siete segundos.
-- La carga inicial solo registra los IDs ya existentes para no generar avisos retroactivos. Las cargas posteriores comparan IDs conocidos para evitar duplicados por refrescos o reconexión; el polling de respaldo también detecta novedades. La bandeja persistida sigue siendo la fuente de verdad.
+- La carga inicial solo registra los IDs ya existentes para no generar avisos retroactivos. Las cargas posteriores comparan IDs conocidos para evitar duplicados por avisos push o reconexión. La bandeja persistida sigue siendo la fuente de verdad y se actualiza al recibir un evento, al reconectar o bajo petición manual; no usa polling periódico.
 
 ## Rutas previstas
 

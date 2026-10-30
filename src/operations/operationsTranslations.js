@@ -22,7 +22,7 @@ export const uiEnglishExtra = {
   'Cerrar ficha del cliente': 'Close client details', 'Ficha del cliente': 'Client details', 'Resumen de la relación': 'Relationship summary', 'Solicitudes totales': 'Total requests',
   'Abiertas': 'Open', 'Pagos aprobados': 'Approved payments', 'Pagos pendientes': 'Pending payments', 'Solicitudes del cliente': 'Client requests', 'Este cliente aún no tiene solicitudes.': 'This client has no requests yet.', 'Ver solicitud': 'View request',
   'No tienes permisos para consultar este módulo.': 'You do not have permission to view this module.',
-  'Resumen': 'Overview', 'Respuestas': 'Responses', 'Actividad': 'Activity', 'Historial': 'History',
+  'Resumen': 'Overview', 'Pago': 'Payment', 'Experto': 'Expert', 'Respuestas': 'Responses', 'Actividad': 'Activity', 'Historial': 'History',
   'Pregunta del cliente': 'Client question', 'No se registró una pregunta para esta solicitud.': 'No question was recorded for this request.',
   'Coincidencia pendiente de validar': 'Potential match awaiting review',
   'Se encontró una respuesta anterior parecida. Decide si sirve para este caso o deriva la solicitud a un experto.': 'A similar previous response was found. Decide whether it applies or send the request to an expert.',

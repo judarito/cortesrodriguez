@@ -350,7 +350,7 @@ La promoción a producción no forma parte de este calendario.
 
 ### F-P0-05 — Ciclo funcional de notificaciones
 
-**Estado al 28-oct:** corregidos en código los bloqueos F-P0-05a/F-P0-05b, con regresión local aprobada. La validación integral sigue pendiente.
+**Estado al 30-oct:** el cliente ya refresca solicitudes por eventos realtime y al reconectar, sin polling periódico. El panel conserva pestaña y scroll al recibir una actualización. Los bloqueos F-P0-05a/F-P0-05b están corregidos en código; la validación integral del ciclo cola/campana/correo en Dev sigue pendiente.
 
 **Problema:** la cola, DLQ y WebSocket están implementados, pero falta demostrar el ciclo real en Dev.
 
@@ -559,7 +559,7 @@ La promoción a producción no forma parte de este calendario.
 
 ### F-P1-09 — Accesibilidad y responsive funcional
 
-**Avance (28-oct-2026): parcial.** Se añadieron nombres accesibles a los controles de idioma, etiquetas/roles de navegación y carga, y comprobaciones E2E de foco por teclado y desbordamiento horizontal en los recorridos públicos principales. Falta la revisión integral de teclado, lectores de pantalla y contraste en formularios, tablas, modales y vistas operativas.
+**Avance (30-oct-2026): parcial.** Se añadieron nombres accesibles a los controles de idioma, etiquetas/roles de navegación y carga, y comprobaciones E2E de foco por teclado y desbordamiento horizontal en los recorridos públicos principales. El detalle de solicitud ahora separa Resumen, Pago, Experto, Respuestas, Actividad e Historial; se corrigió el tamaño del radio de selección de respuesta. Falta la revisión integral de teclado, lectores de pantalla y contraste en formularios, tablas, modales y vistas operativas.
 
 **Problema:** hay formularios, tablas y modales densos; falta una revisión funcional de teclado, foco y móvil.
 
