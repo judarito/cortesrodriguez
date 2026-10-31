@@ -76,6 +76,13 @@
 | PAY-13 | Flag Bricks apagado | | | Nuevo intento Pro | | |
 | PAY-14 | Rollback de flag | | | Intento histórico conserva modo | | |
 | PAY-15 | Retorno manipulado | | | No confirma pago | | |
+| PAY-16 | Inicio Pro y luego intento Bricks | | | API devuelve conflicto; no crea intento externo | | |
+| PAY-17 | Inicio Bricks y luego intento Pro | | | API devuelve conflicto; no crea preferencia | | |
+| PAY-18 | Pago pendiente/incierto; intenta otro método | | | Bloqueado hasta conciliar | | |
+| PAY-19 | Rechazo/cancelación terminal; mismo método | | | Reintento permitido, modo conservado | | |
+| PAY-20 | Rechazo/cancelación terminal; método alterno | | | Método alterno sigue bloqueado | | |
+| PAY-21 | Dos pestañas reservan Pro y Bricks en paralelo | | | Una reserva atómica gana | | |
+| PAY-22 | Rollback de flag con intento reservado | | | Método original se conserva | | |
 
 ---
 
@@ -306,3 +313,8 @@ La prueba del retorno encontró y permitió corregir dos defectos funcionales en
 Se ejecuta bajo demanda y secuencialmente con cuentas sandbox aisladas: pago Pro aprobado, pago Bricks aprobado, retorno/webhook, correo/código de acceso y portal. Registrar commit, IDs de prueba redactados y estados; no incluir secretos, cookies, códigos de acceso ni datos bancarios. Para casos que requieran un correo/cargo externo se requiere entorno sandbox y operador responsable; ninguna prueba usa producción.
 
 **Criterio para declarar E2E listo:** casos 1, 3, 4 y 5 pasan en CI local; trace disponible en fallo; smoke sandbox se informa separado. Los escenarios no ejecutados o bloqueados permanecen como tales.
+
+
+### Política de bloqueo entre métodos — decisión por validar
+
+El método se fija al reservar el primer intento. La UI deshabilita la alternativa y el backend la rechaza incluso si se invoca directamente. Con estado pendiente/incierto no se permite otro intento; tras rechazo/cancelación confirmada solo se permite reintentar el mismo método. La reserva es atómica. El bloqueo no vence por tiempo ni se libera por rollback del flag. Ver PAY-16 a PAY-22.

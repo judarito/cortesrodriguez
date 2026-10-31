@@ -268,6 +268,10 @@ La promoción a producción no forma parte de este calendario.
 | Pago duplicado | Sí | Sí | `duplicate_approved`, alerta, una sola atención |
 | Flag Bricks apagado | Sí | — | Nuevo intento usa Pro |
 | Rollback del flag | — | Sí | Intento histórico conserva su modo |
+| Cambio de método en la misma solicitud | Pro → Bricks y Bricks → Pro | Ambas direcciones | Rechazar nuevo intento por método alterno tras reservar el primero |
+| Dos pestañas inician métodos distintos | Pro y Bricks simultáneos | Ambas direcciones | Una sola reserva atómica gana |
+| Pago pendiente o incierto | Intenta método alterno | Intenta método alterno | Bloquear hasta conciliar con Mercado Pago |
+| Pago rechazado/cancelado confirmado | Reintento | Reintento | Permitir solo el método originalmente elegido |
 
 2. Probar el retorno del navegador y el webhook por separado.
 3. Probar el portal después de cada estado.
@@ -279,6 +283,12 @@ La promoción a producción no forma parte de este calendario.
 - Ningún caso deja un cobro sin estado local.
 - Un pago incierto no permite un segundo cobro ciego.
 - El rollback del flag no altera intentos existentes.
+- La solicitud queda vinculada al método del primer intento reservado. El backend rechaza cualquier inicio por método alterno; ocultar/deshabilitar esa opción en UI solo mejora la experiencia.
+- La reserva del método es atómica para impedir carreras entre pestañas, doble clic o solicitudes concurrentes.
+- Con pago `pending`, `in_process` o `uncertain`, no se inicia otro intento hasta conciliar el existente.
+- Tras rechazo/cancelación terminal confirmada, se permite reintentar únicamente con el método ya reservado. El rollback del flag no cambia el método.
+
+**Decisión funcional:** método inmutable por solicitud desde el primer intento reservado. No se libera por tiempo; una eventual liberación administrativa requiere verificar que no existe pago aceptado/en curso y dejar auditoría.
 
 **Esfuerzo:** M–L. **Dependencias:** F-P0-01, credenciales sandbox.
 
