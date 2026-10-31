@@ -83,6 +83,13 @@
 | PAY-20 | Rechazo/cancelación terminal; método alterno | | | Método alterno sigue bloqueado | | |
 | PAY-21 | Dos pestañas reservan Pro y Bricks en paralelo | | | Una reserva atómica gana | | |
 | PAY-22 | Rollback de flag con intento reservado | | | Método original se conserva | | |
+| PAY-23 | Selecciona “Tarjeta en esta página” | | | Renderiza Brick y usa ruta Bricks, sin crear preferencia Pro | | |
+| PAY-24 | Selecciona “PSE u otros medios” | | | Backend crea/recupera preferencia Pro y navegador redirige a `init_point` | | |
+| PAY-25 | Regresa de Checkout Pro con `status=approved` manipulado | | | UI no declara pagado hasta verificación backend/webhook | | |
+| PAY-26 | Checkout Pro devuelve pago pendiente | | | Retorno informa pendiente y bloquea Bricks/otro intento | | |
+| PAY-27 | Pro/PSE crea intento primero; luego intenta Bricks | | | Backend devuelve conflicto y no llama a proveedor para Bricks | | |
+| PAY-28 | Bricks crea intento primero; luego intenta Pro/PSE | | | Backend devuelve conflicto y no crea preferencia | | |
+| PAY-29 | Rechazo Pro/PSE confirmado; reintenta Checkout Pro | | | Reutiliza política de mismo método e idempotencia, sin doble intento concurrente | | |
 
 ---
 
@@ -318,3 +325,8 @@ Se ejecuta bajo demanda y secuencialmente con cuentas sandbox aisladas: pago Pro
 ### Política de bloqueo entre métodos — decisión por validar
 
 El método se fija al reservar el primer intento. La UI deshabilita la alternativa y el backend la rechaza incluso si se invoca directamente. Con estado pendiente/incierto no se permite otro intento; tras rechazo/cancelación confirmada solo se permite reintentar el mismo método. La reserva es atómica. El bloqueo no vence por tiempo ni se libera por rollback del flag. Ver PAY-16 a PAY-22.
+
+
+### Checkout Pro como ruta de PSE — pendiente de implementación
+
+En la pantalla previa al pago se ofrecerán dos elecciones: tarjeta integrada con Bricks, y PSE/otros medios con Checkout Pro alojado por Mercado Pago. La segunda crea o recupera su preferencia en el backend y redirige al `init_point`. Los `back_urls` muestran el resultado del retorno, pero el estado final se obtiene del backend/webhook. La solicitud queda bloqueada al método de su primer intento; no puede saltar de Bricks a Pro ni de Pro a Bricks, incluso tras rechazo terminal. Ejecutar PAY-23 a PAY-29 en mocks E2E y sandbox.

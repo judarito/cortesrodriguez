@@ -268,14 +268,20 @@ La promoción a producción no forma parte de este calendario.
 | Pago duplicado | Sí | Sí | `duplicate_approved`, alerta, una sola atención |
 | Flag Bricks apagado | Sí | — | Nuevo intento usa Pro |
 | Rollback del flag | — | Sí | Intento histórico conserva su modo |
+| Pago por PSE con redirección a Checkout Pro | Pro / Checkout Pro | Bricks / tarjeta | Cliente elige PSE/otros, backend crea o recupera preferencia y redirige; pago se confirma por backend/webhook |
+| Pago con tarjeta integrada | Bricks | Pro / Checkout Pro | Conserva formulario integrado y procesa con su ruta actual |
 | Cambio de método en la misma solicitud | Pro → Bricks y Bricks → Pro | Ambas direcciones | Rechazar nuevo intento por método alterno tras reservar el primero |
 | Dos pestañas inician métodos distintos | Pro y Bricks simultáneos | Ambas direcciones | Una sola reserva atómica gana |
 | Pago pendiente o incierto | Intenta método alterno | Intenta método alterno | Bloquear hasta conciliar con Mercado Pago |
 | Pago rechazado/cancelado confirmado | Reintento | Reintento | Permitir solo el método originalmente elegido |
 
-2. Probar el retorno del navegador y el webhook por separado.
-3. Probar el portal después de cada estado.
-4. Registrar evidencia por caso.
+2. Ofrecer antes del primer intento: **Tarjeta en esta página (Bricks)** o **PSE y otros medios (Checkout Pro)**; mostrar solo los métodos disponibles para la cuenta/país.
+3. Para Checkout Pro, crear o recuperar la preferencia en el backend y redirigir al `init_point`; nunca crear preferencia desde el navegador.
+4. Reservar atómicamente el método de la solicitud. La otra opción se deshabilita y el backend rechaza inicios por método alterno, incluso desde otra pestaña.
+5. Configurar `back_urls` para aprobado/pendiente/fallo y notificación del proveedor. Al regresar, verificar con backend/webhook; los parámetros de retorno no acreditan el pago.
+6. Verificar que ambos métodos preservan referencia, monto COP, cotización/TRM e idempotencia.
+7. Probar el retorno del navegador y webhook por separado, y consultar portal tras cada estado.
+8. Registrar evidencia por caso.
 
 **Criterio de aceptación:**
 
@@ -283,6 +289,8 @@ La promoción a producción no forma parte de este calendario.
 - Ningún caso deja un cobro sin estado local.
 - Un pago incierto no permite un segundo cobro ciego.
 - El rollback del flag no altera intentos existentes.
+- La interfaz ofrece tarjeta integrada por Bricks y PSE/otros medios mediante Checkout Pro; confirmar disponibilidad en cuenta/sandbox Mercado Pago Colombia.
+- Checkout Pro usa preferencia del backend y retorno/webhook; el retorno de navegador nunca confirma pago por sí solo.
 - La solicitud queda vinculada al método del primer intento reservado. El backend rechaza cualquier inicio por método alterno; ocultar/deshabilitar esa opción en UI solo mejora la experiencia.
 - La reserva del método es atómica para impedir carreras entre pestañas, doble clic o solicitudes concurrentes.
 - Con pago `pending`, `in_process` o `uncertain`, no se inicia otro intento hasta conciliar el existente.
