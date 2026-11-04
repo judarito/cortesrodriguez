@@ -3,6 +3,7 @@
 **Fecha:** 28 de octubre de 2026
 **Rama de referencia:** `dev` (`ba1280f`; actividad de solicitudes, excepciones financieras y cambio de correo)
 **Foco:** completar y validar la funcionalidad de la plataforma operativa en Dev.  
+**Decisión comercial añadida (4-nov-2026):** primer contacto gratuito; reserva pagada después de responder al cliente.
 **Producción:** queda para una fase posterior. Este plan no incluye promoción, hardening de infraestructura ni cambios de `main`/Producción.
 
 **Fuera de alcance:** landing pública (`/`), CMS editorial (`/admin`, `/login`), SEO, contenido, imágenes y rendimiento de la landing.
@@ -73,18 +74,21 @@ El foco ahora es **cerrar el producto funcional**, no preparar producción. Los 
 
 ## 2. Definición del MVP funcional
 
-El MVP funcional se considera completo cuando este recorrido funciona de extremo a extremo:
+El MVP funcional se considera completo cuando funciona este flujo comercial y operativo, desde la cotización gratuita hasta la asesoría pagada:
 
 ```text
-Cliente abre /solicitud
-  → completa y envía la solicitud
-  → paga (Pro o Bricks) si aplica
-  → la solicitud queda asignada a un experto
-  → el experto responde
-  → administración revisa y aprueba
-  → el cliente recibe la respuesta y accede al portal
-  → el cliente consulta su solicitud y deja feedback
+Cliente envía formulario de cotización gratuito desde la landing
+  → el equipo responde desde la app operativa
+  → el correo ofrece “Completar datos y reservar”
+  → cliente completa la información faltante y elige método de pago
+  → paga por Bricks (tarjeta) o Checkout Pro (PSE/otros)
+  → pago confirmado por backend/webhook; solicitud pasa a “reservada”
+  → se asigna/activa la atención del experto
+  → experto responde; administración revisa y aprueba
+  → cliente consulta la respuesta y deja feedback en el portal
 ```
+
+El primer formulario es **gratuito**: no genera cobro ni reserva. La reserva se ofrece tras la respuesta del equipo y solo queda confirmada cuando Mercado Pago confirma el pago por backend/webhook.
 
 Y cuando administración puede operar el caso sin tocar la base de datos:
 
@@ -92,6 +96,18 @@ Y cuando administración puede operar el caso sin tocar la base de datos:
 Ver cliente → ver solicitud → asignar experto → verificar pago
 → leer respuesta → aprobar/devolver → consultar historial → cerrar/cancelar
 ```
+
+### Flujo comercial: cotización gratuita → reserva pagada (pendiente de implementación)
+
+1. **Primer contacto gratuito:** la landing presenta un formulario de cotización. Enviarlo registra el prospecto/pregunta para atención desde la app actual; no exige pago, no genera intento de Mercado Pago y no marca la solicitud como reservada.
+2. **Respuesta del equipo:** desde el panel actual, el usuario responde al prospecto. El correo incluye botón/enlace individual **“Completar datos y reservar”**, con referencia/token seguro y vigencia; no expone datos del cliente ni permite alterar precio, origen o servicio mediante parámetros manipulables.
+3. **Continuación:** el formulario precarga los datos ya entregados y solicita solo los faltantes para formalizar la reserva y pagar. El cliente puede revisar/corregirlos. A clientes recurrentes se les reutilizan datos autorizados y solo se pide información nueva o vencida.
+4. **Campos que pasan según la imagen:** tipo de persona (turista, persona natural o jurídica); servicio/operación (importación, exportación, seguro, transporte, agente de carga y, cuando aplique, reserva); tipo de consulta (básica/especializada); tipo de producto. Se conserva además nombre/contacto, pregunta, referencia de cotización y atribución de agente/origen si existe.
+5. **Precio:** mostrar antes del pago el valor vigente definido en catálogo/servidor. Los “$10/$50” manuscritos de la imagen son valores por confirmar, no tarifas definitivas.
+6. **Pago y estado:** una confirmación del backend/webhook cambia la solicitud a `reservada`, guarda el intento confirmado y dispara avisos idempotentes. El retorno del navegador por sí solo no reserva.
+7. **Pago pendiente/fallo:** no marcar `reservada`; conservar seguimiento y bloquear método/intento alterno según F-P0-02. Un rechazo terminal permite reintento sujeto a esa regla.
+
+**Criterio:** cotizar y responder no cobra; solo se cobra al reservar. El enlace no permite reservar para otro cliente, alterar tarifa/servicio ni saltar verificación. Se conservan cotización, respuesta e historial. La página común de resultado muestra “verificando” con consultas progresivas por hasta 10 segundos; si continúa pendiente, muestra referencia y recomienda no volver a pagar. El backend/webhook puede actualizar después aunque el cliente cierre la página.
 
 ### Superficies funcionales incluidas
 
@@ -194,21 +210,14 @@ La promoción a producción no forma parte de este calendario.
 
 **Acciones:**
 
-1. ~~Configurar Playwright con Chromium y dos perfiles: `local-mocked` para PR/CI y `dev-sandbox` manual o workflow protegido.~~ Base `local-mocked` instalada; proyectos Chromium desktop/móvil y workflow independiente `.github/workflows/e2e-dev.yml`, sin secretos. Smoke `dev-sandbox` pendiente.
-2. Crear fixtures únicos por ejecución (correo `e2e+<run>@...`, cliente, solicitud, experto y agente) y limpiarlos por API administrativa de test o expiración; jamás reutilizar usuarios/datos reales.
-3. Parcial: los specs simulan contratos HTTP del frontend con respuestas deterministas; falta probar Worker/backend local y eventos de Mercado Pago/Resend con adaptadores simulados.
-4. En `dev-sandbox`, usar cuentas y tarjetas sandbox; cualquier pago que altere proveedor o envíe correo se ejecuta explícitamente fuera de CI con reporte redactado.
-5. Crear una solicitud pública de prueba en Dev/local.
-6. Pagar con Pro o Bricks según el escenario y verificar estado persistido desde API, no solo el retorno visual.
-7. Verificar asignación automática o manual a un experto.
-8. Responder como experto.
-9. Revisar y aprobar como administración.
-10. Verificar correo, campana y estado.
-11. Solicitar código de acceso y leer el correo del buzón de prueba; en CI usar bandeja simulada.
-12. Entrar al portal con el código y comprobar varias solicitudes propias y exclusión de las ajenas.
-13. Ver la solicitud, la respuesta aprobada y los adjuntos.
-14. Enviar feedback.
-15. Repetir el recorrido en español e inglés y un viewport móvil.
+1. Enviar cotización gratuita; comprobar que no hay cobro ni intento de pago.
+2. Responder desde la app y verificar el correo con enlace individual seguro.
+3. Abrir el enlace y completar los datos faltantes; comprobar precarga de persona, servicio, consulta, producto y agente.
+4. Pagar con Bricks o Checkout Pro; verificar por API que el estado solo cambia a `reservada` tras confirmación.
+5. Si Checkout Pro no tiene confirmación inmediata, consultar progresivamente hasta 10 segundos en la página común; luego mostrar estado pendiente, referencia y aviso de no pagar otra vez.
+6. Verificar asignación al experto, respuesta, revisión/aprobación administrativa, correo/campana e historial.
+7. Entrar al portal, consultar solo solicitudes propias, respuesta aprobada/adjuntos y enviar feedback.
+8. Repetir en ES/EN, escritorio/móvil y ambos métodos de pago en sandbox.
 
 **Criterio de aceptación:**
 

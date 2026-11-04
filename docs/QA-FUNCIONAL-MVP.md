@@ -1,7 +1,7 @@
 # QA funcional — MVP plataforma operativa
 
 **Fecha de inicio:** 27 de octubre de 2026  
-**Última actualización:** 28 de octubre de 2026
+**Última actualización:** 4 de noviembre de 2026
 **Commit de referencia:** `ba1280f`
 **Worker Dev:** `4f1eb1b4-3633-4805-958c-bc439bffa354`
 **Entorno:** Dev  
@@ -39,6 +39,24 @@
 **Publicación Dev (28-oct-2026):** commit `ba1280f`, Worker `4f1eb1b4-3633-4805-958c-bc439bffa354`; migraciones operativas 045, 046 y 047 aplicadas en Neon Dev. Comprobación HTTP básica: `/`, `/solicitud`, `/portal-cliente` y `/app` respondieron `200`. Esto confirma disponibilidad de las páginas, no sustituye los casos de aceptación funcional de este documento.
 
 ---
+
+## 2.1 Cotización gratuita y conversión a reserva — pendiente de implementación
+
+| ID | Caso | Esperado | Resultado | Evidencia | Defecto |
+|---|---|---|---|---|---|
+| QUO-01 | Enviar primer contacto desde landing | Prospecto creado sin pago ni intento de Mercado Pago | | | |
+| QUO-02 | Responder desde panel operativo | Correo incluye enlace seguro para completar datos/reservar | | | |
+| QUO-03 | Abrir enlace válido | Formulario reconoce prospecto y precarga campos conocidos | | | |
+| QUO-04 | Precarga persona/servicio/consulta/producto | Coincide con origen; conserva pregunta/contacto/agente si aplica | | | |
+| QUO-05 | Alterar token, referencia, precio o servicio del URL | Rechazo; precio y origen siempre determinados por servidor | | | |
+| QUO-06 | Pago confirmado por backend/webhook | Solicitud pasa a `reservada`; aviso idempotente | | | |
+| QUO-07 | Retorno dice aprobado sin confirmación del proveedor | No reservar ni habilitar atención | | | |
+| QUO-08 | Pago pendiente/incierto | No `reservada`; seguimiento, sin segundo cobro | | | |
+| QUO-09 | Rechazo terminal y reintento | Se conserva el método permitido; reserva solo tras confirmar | | | |
+| QUO-10 | Enlace vencido/usado o de otro cliente | Revalidar; impedir reserva ajena | | | |
+| QUO-11 | Checkout Pro sin webhook inmediato | Verificación progresiva por hasta 10 s; luego pendiente, referencia y aviso de no pagar otra vez | | | |
+
+**Datos precargados según la imagen:** tipo persona (turista/natural/jurídica), servicio (importación/exportación/seguro/transporte/agente de carga/reserva según catálogo), tipo de consulta (básica/especializada), tipo de producto, contacto, pregunta, referencia y agente si aplica. Los “$10/$50” anotados no se consideran precios aprobados.
 
 ## 2. Matriz de recorrido principal — F-P0-01
 
@@ -330,3 +348,8 @@ El método se fija al reservar el primer intento. La UI deshabilita la alternati
 ### Checkout Pro como ruta de PSE — pendiente de implementación
 
 En la pantalla previa al pago se ofrecerán dos elecciones: tarjeta integrada con Bricks, y PSE/otros medios con Checkout Pro alojado por Mercado Pago. La segunda crea o recupera su preferencia en el backend y redirige al `init_point`. Los `back_urls` muestran el resultado del retorno, pero el estado final se obtiene del backend/webhook. La solicitud queda bloqueada al método de su primer intento; no puede saltar de Bricks a Pro ni de Pro a Bricks, incluso tras rechazo terminal. Ejecutar PAY-23 a PAY-29 en mocks E2E y sandbox.
+
+
+## Flujo comercial cotización → reserva
+
+El primer formulario de la landing es gratuito. El equipo responde desde la app actual y el correo invita a completar los datos faltantes y pagar. Solo la confirmación del backend/webhook cambia la solicitud a `reservada`; el retorno del navegador no basta. Ejecutar QUO-01 a QUO-11 antes de dar por validado el recorrido pagado.
