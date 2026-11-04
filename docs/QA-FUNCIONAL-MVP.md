@@ -44,12 +44,12 @@
 
 | ID | Caso | Esperado | Resultado | Evidencia | Defecto |
 |---|---|---|---|---|---|
-| QUO-01 | Enviar primer contacto desde landing | Prospecto creado sin pago ni intento de Mercado Pago | | | |
+| QUO-01 | Enviar primer contacto desde landing | Lead guardado en Turso `contact_leads`, sin pago ni intento de Mercado Pago | | | |
 | QUO-02 | Responder desde panel operativo | Correo incluye enlace seguro para completar datos/reservar | | | |
 | QUO-03 | Abrir enlace válido | Formulario reconoce prospecto y precarga campos conocidos | | | |
 | QUO-04 | Precarga persona/servicio/consulta/producto | Coincide con origen; conserva pregunta/contacto/agente si aplica | | | |
 | QUO-05 | Alterar token, referencia, precio o servicio del URL | Rechazo; precio y origen siempre determinados por servidor | | | |
-| QUO-06 | Pago confirmado por backend/webhook | Solicitud pasa a `reservada`; aviso idempotente | | | |
+| QUO-06 | Pago confirmado por backend/webhook | Reserva Neon vinculada al `leadId` Turso; estado `reservada` y aviso idempotente | | | |
 | QUO-07 | Retorno dice aprobado sin confirmación del proveedor | No reservar ni habilitar atención | | | |
 | QUO-08 | Pago pendiente/incierto | No `reservada`; seguimiento, sin segundo cobro | | | |
 | QUO-09 | Rechazo terminal y reintento | Se conserva el método permitido; reserva solo tras confirmar | | | |
@@ -353,3 +353,11 @@ En la pantalla previa al pago se ofrecerán dos elecciones: tarjeta integrada co
 ## Flujo comercial cotización → reserva
 
 El primer formulario de la landing es gratuito. El equipo responde desde la app actual y el correo invita a completar los datos faltantes y pagar. Solo la confirmación del backend/webhook cambia la solicitud a `reservada`; el retorno del navegador no basta. Ejecutar QUO-01 a QUO-11 antes de dar por validado el recorrido pagado.
+
+
+### Persistencia y atribución del agente
+
+- Confirmar que el formulario inicial sigue insertando en Turso `contact_leads` y conserva el `leadId` aunque falle el correo de notificación.
+- Para un enlace de agente, validar que el servidor resuelve y persiste la atribución al guardar el lead; manipular `agent_id` desde el navegador no debe cambiarla.
+- Al convertir, mantener el lead Turso y crear una sola reserva Neon enlazada al mismo `leadId`; reabrir/reenvíar el enlace no debe duplicarla.
+- El agente solo lista los leads atribuidos a sus enlaces y el estado de conversión; no puede crear la reserva en nombre del cliente ni ver datos sensibles del pago.

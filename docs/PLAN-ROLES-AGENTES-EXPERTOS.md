@@ -1,6 +1,6 @@
 # Plan: agentes, expertos y solicitudes de asesoría
 
-Evolucionar la plataforma operativa para que cada solicitud de asesoría aduanera tenga un origen, una especialidad, un precio, un experto responsable y una respuesta aprobada por administración. Toda solicitud pública debe registrar una de las dos fuentes: **directa desde nuestra página** o **proveniente de un enlace compartido por un agente**. Las altas internas de administración usan el canal independiente admin_entry; no se cuentan como una referencia de agente ni como visita pública. La landing seguirá siendo un módulo separado; el enlace de agente solo abrirá el formulario público y no permitirá que el agente cree solicitudes desde el panel.
+Evolucionar la plataforma operativa para que cada solicitud de asesoría aduanera tenga un origen, una especialidad, un precio, un experto responsable y una respuesta aprobada por administración. Toda solicitud pública debe registrar una de las dos fuentes: **directa desde nuestra página** o **proveniente de un enlace compartido por un agente**. Las altas internas de administración usan el canal independiente admin_entry; no se cuentan como una referencia de agente ni como visita pública. La landing seguirá siendo un módulo separado. El enlace de agente abre el formulario existente de cotización gratuita; el agente no crea leads ni reservas desde el panel. Después de que el equipo responde desde la app, el cliente usa un enlace seguro para completar la nueva reserva y pagar. La cotización conserva su guardado actual en Turso y el caso pagado se vincula a ella en la plataforma operativa.
 
 ## Alcance
 
@@ -9,6 +9,20 @@ Evolucionar la plataforma operativa para que cada solicitud de asesoría aduaner
 - **Altas administrativas:** guardar el canal admin_entry y `created_by` como el usuario operador; dejar `agent_id` vacío salvo que una atribución de enlace válida haya sido verificada. `created_by` sirve para auditoría y acceso a casos internos autorizados, nunca como sustituto de la atribución comercial.
 - **Regla de atribución:** un cliente que inició el flujo mediante un enlace de agente debe conservar ese origen aunque navegue dentro de la página, recargue el formulario o abandone y regrese durante la vigencia del enlace. No se debe confiar en un campo oculto del navegador para determinar el agente.
 - **No incluye:** migración de la landing, creación manual de solicitudes por agentes, comunicación directa experto-cliente sin aprobación, ni cambios directos en `main` o producción.
+
+## Flujo de agente actualizado: cotización Turso → reserva operativa
+
+1. El agente comparte su enlace a la landing. El servidor valida el token y fija la atribución; no se acepta `agent_id` desde campos editables del navegador.
+2. El cliente envía el **formulario de cotización gratuito existente** (`POST /api/quote-requests`). Se mantiene su persistencia actual en Turso, tabla `contact_leads`; la fila debe guardar el `leadId` y la atribución validada del agente.
+3. El equipo responde al cliente desde la app operativa usando el lead referido. El correo de respuesta lleva un enlace individual, de un solo uso o con vigencia/revocación, para completar la reserva.
+4. El cliente abre el nuevo formulario de reserva. Precarga tipo de persona, servicio/operación, tipo de consulta, tipo de producto, contacto y demás datos ya presentes; solo solicita faltantes.
+5. Al iniciar reserva, crear el caso/intento en Neon y guardar relación única con `leadId` de Turso. No borrar ni trasladar el lead Turso; el estado gratuito y el pago/reserva son etapas distintas.
+6. El cliente elige tarjeta Bricks o Checkout Pro (PSE/otros), paga; la reserva solo queda confirmada como `reservada` cuando backend/webhook verifica el pago.
+7. El panel de agente muestra cotizaciones referidas y, cuando existan, su conversión/estado de reserva. El alcance por agente se deriva de la atribución almacenada por servidor. El agente no puede editar cotización, crear reserva, cambiar precio ni consultar credenciales/datos de pago sensibles.
+
+**Vínculo entre bases:** usar `leadId` inmutable de Turso como referencia externa y persistirlo en Neon con unicidad/idempotencia para evitar que reenvíos o doble clic creen dos reservas para el mismo lead. Mantener la atribución validada del agente en ambos registros o resolverla desde la relación firmada; nunca confiar en parámetros del formulario de reserva.
+
+**Datos que se transfieren:** tipo de persona, servicio (importación/exportación/seguro/transporte/agente de carga/reserva según catálogo), tipo de consulta, tipo de producto, nombre/correo/teléfono, pregunta, idioma, referencia y agente cuando aplique. Corregir un dato en el formulario de reserva debe actualizar el expediente operativo y conservar la captura original de la cotización para auditoría.
 
 ## Modelo funcional
 
@@ -399,3 +413,16 @@ Esta fase protege el formulario público y consolida la seguridad de la platafor
 - Una sesión vencida redirige al login y no permite continuar operando mediante llamadas directas a la API.
 - El CAPTCHA y el rate limiting se validan en backend y tienen configuración independiente por entorno.
 - No se publican secretos, tokens permanentes ni credenciales en el bundle del frontend.
+
+
+## Nueva etapa comercial: cotización gratuita y reserva pagada (4-nov-2026)
+
+- [x] Se confirma como requisito conservar el endpoint actual `POST /api/quote-requests` y la escritura a Turso `contact_leads` para el primer contacto gratuito.
+- [ ] Implementar atribución de agente validada por servidor en el lead de Turso.
+- [ ] Responder al lead desde la app y añadir el CTA seguro de completar reserva.
+- [ ] Crear nuevo formulario de reserva que precargue campos y cree el registro operativo/pago en Neon con referencia única al `leadId` de Turso.
+- [ ] Cambiar a estado `reservada` únicamente tras confirmación backend/webhook; agregar idempotencia entre Turso y Neon.
+- [ ] Añadir al panel del agente leads referidos más su resultado de conversión, con aislamiento por agente y datos mínimos.
+- [ ] Cubrir QUO/AGT E2E, pagos Pro/Bricks/Checkout Pro, reintentos y enlaces vencidos.
+
+La marca `[x]` solo confirma la decisión de conservar el guardado actual; el flujo conectado y el panel aún no están implementados.
