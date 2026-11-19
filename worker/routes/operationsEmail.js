@@ -605,7 +605,7 @@ async function sendApprovedResponseNotification(sql, env, item) {
   const responseId = String(payload?.responseId || '')
   if (!responseId || !env.JWT_SECRET) throw new Error('notification_payload_invalid')
   const rows = await sql`
-    SELECT er.id, er.request_id, er.body, er.admin_note, r.reference, r.email, c.full_name AS client_name
+    SELECT er.id, er.request_id, er.body, er.admin_note, r.reference, r.email, r.status AS request_status, c.full_name AS client_name
     FROM operations.expert_responses er
     JOIN operations.requests r ON r.id = er.request_id
     JOIN operations.clients c ON c.id = r.client_id
@@ -624,14 +624,25 @@ async function sendApprovedResponseNotification(sql, env, item) {
   const baseUrl = env.PUBLIC_APP_URL || 'https://cortes-rodriguez-asesores-dev.juan-d-ricardo-t.workers.dev'
   const feedbackUrl = `${baseUrl}/feedback?token=${encodeURIComponent(token)}`
   const portalUrl = `${baseUrl}/portal-cliente`
+  let reservationUrl = ''
+  if (String(row.request_status) === 'cotizacion') {
+    const reservationToken = createEmailOpaqueToken()
+    await sql`
+      UPDATE operations.requests
+      SET quote_token_hash = ${await sha256(reservationToken)}, quote_expires_at = NOW() + INTERVAL '2 hours', updated_at = NOW()
+      WHERE id = ${row.request_id} AND status = 'cotizacion'
+    `
+    reservationUrl = `${baseUrl}/solicitud#quoteToken=${encodeURIComponent(reservationToken)}`
+  }
   const logoUrl = new URL('/email-logo.png', baseUrl).toString()
   const subject = `Respuesta a tu solicitud · ${row.reference}`
-  const textBody = [`Hola ${row.client_name},`, '', row.body, row.admin_note ? `\nNota de administración:\n${row.admin_note}` : '', '', `¿Quieres continuar el proceso con nosotros? Accede al portal de clientes: ${portalUrl}`, '', `Evalúa esta respuesta: ${feedbackUrl}`, '', 'Gracias por confiar en Cortés Rodríguez Asesores.'].join('\n')
+  const textBody = [`Hola ${row.client_name},`, '', row.body, row.admin_note ? `\nNota de administración:\n${row.admin_note}` : '', reservationUrl ? `\nReserva tu asesoría: ${reservationUrl}` : '', '', `¿Quieres continuar el proceso con nosotros? Accede al portal de clientes: ${portalUrl}`, '', `Evalúa esta respuesta: ${feedbackUrl}`, '', 'Gracias por confiar en Cortés Rodríguez Asesores.'].join('\n')
   const safeName = escapeHtml(row.client_name)
   const safeReference = escapeHtml(row.reference)
   const safeResponse = escapeHtml(row.body).replaceAll('\n', '<br />')
   const adminNote = row.admin_note ? `<tr><td style="padding:0 28px 24px"><div style="padding:16px 18px;border-left:3px solid #2d83ad;border-radius:5px;background:#f2f7fa;color:#344b60;font-size:14px;line-height:1.7"><strong style="display:block;margin-bottom:6px;color:#173b58">Nota de nuestro equipo</strong>${escapeHtml(row.admin_note).replaceAll('\n', '<br />')}</div></td></tr>` : ''
-  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"></head><body style="margin:0;padding:28px 12px;background:#f3f6f9;font-family:Arial,Helvetica,sans-serif;color:#243b53"><div style="display:none;max-height:0;overflow:hidden;opacity:0">La respuesta de tu solicitud ${safeReference} ya está disponible.</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center"><table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #e1e8ef;border-radius:12px;overflow:hidden">${emailBrandHeader(logoUrl, 'es')}<tr><td style="padding:28px 28px 10px"><p style="margin:0 0 9px;color:#ed1c24;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase">Respuesta a tu solicitud</p><h1 style="margin:0;color:#0b3553;font-size:25px;line-height:1.25">Hola, ${safeName}</h1><p style="margin:12px 0 0;color:#63788b;font-size:15px;line-height:1.6">Nuestro equipo revisó la respuesta para tu solicitud.</p></td></tr><tr><td style="padding:14px 28px 20px"><div style="padding:17px 19px;border:1px solid #dce7ef;border-left:4px solid #ed1c24;border-radius:7px;background:#f7fafc;color:#243b53;font-size:15px;line-height:1.75">${safeResponse}</div></td></tr>${adminNote}<tr><td style="padding:0 28px 23px"><p style="margin:0 0 8px;color:#78899a;font-size:12px">Referencia de tu solicitud</p><p style="margin:0;color:#173b58;font-size:14px;font-weight:700">${safeReference}</p></td></tr><tr><td style="padding:0 28px 24px"><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="padding-right:10px"><a href="${escapeHtml(feedbackUrl)}" style="display:inline-block;padding:12px 17px;border-radius:6px;background:#ed1c24;color:#fff;font-size:13px;font-weight:700;text-decoration:none">Déjanos tu opinión</a></td><td><a href="${escapeHtml(portalUrl)}" style="display:inline-block;padding:11px 16px;border:1px solid #cbd9e4;border-radius:6px;background:#fff;color:#104b6d;font-size:13px;font-weight:700;text-decoration:none">Ver mis solicitudes</a></td></tr></table></td></tr><tr><td style="padding:17px 28px;border-top:1px solid #e8edf2;color:#8796a5;font-size:11px;line-height:1.6">Gracias por confiar en Cortés Rodríguez Asesores.<br>Mensaje automático. Si tienes dudas, responde a este correo.</td></tr></table></td></tr></table></body></html>`
+  const reservationButton = reservationUrl ? `<td style="padding-right:10px"><a href="${escapeHtml(reservationUrl)}" style="display:inline-block;padding:12px 17px;border-radius:6px;background:#0e4567;color:#fff;font-size:13px;font-weight:700;text-decoration:none">Reservar</a></td>` : ''
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"></head><body style="margin:0;padding:28px 12px;background:#f3f6f9;font-family:Arial,Helvetica,sans-serif;color:#243b53"><div style="display:none;max-height:0;overflow:hidden;opacity:0">La respuesta de tu solicitud ${safeReference} ya está disponible.</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center"><table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #e1e8ef;border-radius:12px;overflow:hidden">${emailBrandHeader(logoUrl, 'es')}<tr><td style="padding:28px 28px 10px"><p style="margin:0 0 9px;color:#ed1c24;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase">Respuesta a tu solicitud</p><h1 style="margin:0;color:#0b3553;font-size:25px;line-height:1.25">Hola, ${safeName}</h1><p style="margin:12px 0 0;color:#63788b;font-size:15px;line-height:1.6">Nuestro equipo revisó la respuesta para tu solicitud.</p></td></tr><tr><td style="padding:14px 28px 20px"><div style="padding:17px 19px;border:1px solid #dce7ef;border-left:4px solid #ed1c24;border-radius:7px;background:#f7fafc;color:#243b53;font-size:15px;line-height:1.75">${safeResponse}</div></td></tr>${adminNote}<tr><td style="padding:0 28px 23px"><p style="margin:0 0 8px;color:#78899a;font-size:12px">Referencia de tu solicitud</p><p style="margin:0;color:#173b58;font-size:14px;font-weight:700">${safeReference}</p></td></tr><tr><td style="padding:0 28px 24px"><table role="presentation" cellspacing="0" cellpadding="0"><tr>${reservationButton}<td style="padding-right:10px"><a href="${escapeHtml(feedbackUrl)}" style="display:inline-block;padding:12px 17px;border-radius:6px;background:#ed1c24;color:#fff;font-size:13px;font-weight:700;text-decoration:none">Déjanos tu opinión</a></td><td><a href="${escapeHtml(portalUrl)}" style="display:inline-block;padding:11px 16px;border:1px solid #cbd9e4;border-radius:6px;background:#fff;color:#104b6d;font-size:13px;font-weight:700;text-decoration:none">Ver mis solicitudes</a></td></tr></table></td></tr><tr><td style="padding:17px 28px;border-top:1px solid #e8edf2;color:#8796a5;font-size:11px;line-height:1.6">Gracias por confiar en Cortés Rodríguez Asesores.<br>Mensaje automático. Si tienes dudas, responde a este correo.</td></tr></table></td></tr></table></body></html>`
   const emailResult = await sendEmailEffect(sql, env, {
     effectKey: `cra-${item.id}/general-v1`,
     recipient: String(row.email).trim().toLowerCase(),
@@ -665,6 +676,14 @@ async function feedbackTokenForResponse(secret, responseId) {
 async function sha256(value) {
   const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
   let binary = ''; bytes.forEach((byte) => { binary += String.fromCharCode(byte) })
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function createEmailOpaqueToken() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  let binary = ''
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte) })
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 

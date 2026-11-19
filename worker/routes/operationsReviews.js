@@ -184,7 +184,7 @@ export async function transitionReview(sql, { responseId, requestId, action, act
       SELECT id FROM event_written
     ), request_updated AS (
       UPDATE operations.requests
-      SET status = 'closed', updated_at = NOW()
+      SET status = CASE WHEN status = 'cotizacion' THEN 'cotizacion' ELSE 'closed' END, updated_at = NOW()
       WHERE id = ${requestId} AND EXISTS (SELECT 1 FROM durable_event)
         AND EXISTS (SELECT 1 FROM changed)
       RETURNING id

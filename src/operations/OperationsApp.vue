@@ -927,8 +927,6 @@ onMounted(restoreSession)
           <span :class="['status-pill', statusClass(requestDetail.request.status)]"><i></i>{{ labelValue(requestDetail.request.status) }}</span>
           <div v-if="isAdmin && requestDetail.request.status === 'cotizacion'" class="request-detail-actions">
             <button type="button" class="primary-button compact" @click="requestDetailTab = 'responses'">Responder</button>
-            <button type="button" class="primary-button compact" :disabled="reservationLinkLoading" @click="issueReservationLink">{{ reservationLinkLoading ? 'Generando…' : 'Generar enlace de reserva' }}</button>
-            <a v-if="reservationLink" class="secondary-button compact" :href="reservationLink" target="_blank" rel="noopener">Abrir enlace</a>
           </div>
           <p v-if="requestDetailError" class="request-error" role="alert">{{ requestDetailError }}</p>
           <nav class="request-detail-tabs" aria-label="Secciones del detalle">

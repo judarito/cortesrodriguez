@@ -46,7 +46,6 @@ import {
   fetchAdminLeads,
   fetchAdminTestimonialDetail,
   fetchAdminTestimonials,
-  fetchAttachmentRequirements,
   fetchContent,
   fetchContentVersions,
   fetchPublicCatalog,
@@ -120,7 +119,6 @@ const quoteTurnstileEnabled = ref(false)
 const quoteTurnstileToken = ref('')
 const quoteTurnstileError = ref('')
 const quoteTurnstileLoading = ref(false)
-const quoteAttachments = ref([])
 let quoteTurnstileWidgetId = null
 const testimonialForm = ref(createEmptyTestimonialForm(activeLocale.value))
 const testimonialFormStatus = ref('')
@@ -315,33 +313,6 @@ const quoteCatalogLabels = {
   },
 }
 
-// La matriz documental se consulta al Worker (operations.request_attachment_requirements);
-// este componente no mantiene categorías ni obligatoriedad hardcodeadas.
-const quoteAttachmentRequirements = ref([])
-let quoteRequirementsRequestId = 0
-
-async function loadQuoteAttachmentRequirements(serviceType) {
-  const requestId = ++quoteRequirementsRequestId
-  quoteAttachmentRequirements.value = []
-  if (!serviceType) return
-  const requirements = await fetchAttachmentRequirements({ serviceType, stage: 'cotizacion' })
-  if (requestId !== quoteRequirementsRequestId) return
-  quoteAttachmentRequirements.value = requirements.map((requirement) => ({
-    category: requirement.category,
-    es: requirement.labelEs || requirement.category,
-    en: requirement.labelEn || requirement.labelEs || requirement.category,
-    required: Number(requirement.minFiles || 0) > 0,
-    minFiles: Number(requirement.minFiles || 0),
-    maxFiles: Number(requirement.maxFiles || 1),
-    maxSizeBytes: Number(requirement.maxSizeBytes || 10 * 1024 * 1024),
-    allowedMimeTypes: Array.isArray(requirement.allowedMimeTypes) ? requirement.allowedMimeTypes : [],
-    allowedExtensions: Array.isArray(requirement.allowedExtensions)
-      ? requirement.allowedExtensions.map((extension) => String(extension).toLowerCase())
-      : [],
-  }))
-}
-
-const quoteAttachmentProgress = computed(() => quoteAttachments.value.length ? Math.round(quoteAttachments.value.reduce((sum, item) => sum + item.progress, 0) / quoteAttachments.value.length) : 0)
 
 const quoteServerErrorTranslations = {
   'El enlace de origen no es válido. Recarga el formulario e inténtalo de nuevo.': 'The source link is invalid. Reload the form and try again.',
@@ -811,8 +782,6 @@ function openLeadModal() {
   quoteAttributionToken.value = ''
   quoteTurnstileToken.value = ''
   quoteTurnstileError.value = ''
-  quoteAttachments.value = []
-  loadQuoteAttachmentRequirements('')
   loadQuoteCatalog()
   resolveQuoteAttributionToken()
   initializeQuoteTurnstile()
@@ -933,43 +902,6 @@ async function retryQuoteTurnstile() {
 
 function changeLeadService() {
   leadForm.value.consultationType = ''
-  quoteAttachments.value = []
-  loadQuoteAttachmentRequirements(leadForm.value.serviceType)
-}
-
-function attachmentCategoryRequirement(category) {
-  return quoteAttachmentRequirements.value.find((requirement) => requirement.category === category)
-}
-
-function attachmentAccept(requirement) {
-  const types = requirement?.allowedMimeTypes?.length
-    ? requirement.allowedMimeTypes
-    : ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
-  const extensions = (requirement?.allowedExtensions || []).map((extension) => `.${extension}`)
-  return [...types, ...extensions].join(',')
-}
-
-function selectQuoteAttachment(event, category) {
-  const file = event.target.files?.[0]
-  event.target.value = ''
-  if (!file) return
-  const requirement = attachmentCategoryRequirement(category)
-  const allowedTypes = requirement?.allowedMimeTypes?.length ? requirement.allowedMimeTypes : ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
-  const allowedExtensions = requirement?.allowedExtensions || []
-  const extension = String(file.name).toLowerCase().match(/\.([a-z0-9]{1,10})$/)?.[1] || ''
-  const maxSizeBytes = requirement?.maxSizeBytes || 10 * 1024 * 1024
-  if (!allowedTypes.includes(file.type) || (allowedExtensions.length && !allowedExtensions.includes(extension)) || file.size > maxSizeBytes) {
-    leadFormError.value = activeLocale.value === 'en'
-      ? 'The file does not match the type or size allowed for this category.'
-      : 'El archivo no cumple el tipo o tamaño permitido para esta categoría.'
-    return
-  }
-  quoteAttachments.value = [...quoteAttachments.value.filter((item) => item.category !== category), { file, category, progress: 100 }]
-  leadFormError.value = ''
-}
-
-function removeQuoteAttachment(category) {
-  quoteAttachments.value = quoteAttachments.value.filter((item) => item.category !== category)
 }
 
 function quoteServiceName(item) {
@@ -1013,8 +945,6 @@ function validateLeadForm() {
   if (!leadConsultationOptions.value.some((item) => item.consultationCode === leadForm.value.consultationType)) return copy.validationConsultation
   if (!quoteProductOptions.some((option) => option.value === leadForm.value.productType)) return copy.validationProduct
   if (question.length < 20 || question.length > 3000) return copy.validationQuestion
-  const missing = quoteAttachmentRequirements.value.find((item) => item.required && !quoteAttachments.value.some((file) => file.category === item.category))
-  if (missing) return activeLocale.value === 'en' ? `Attach the required file: ${missing.en}.` : `Adjunta el archivo obligatorio: ${missing.es}.`
   return ''
 }
 
@@ -1191,12 +1121,11 @@ async function submitLead() {
       question: String(leadForm.value.question).trim(),
       locale: activeLocale.value,
       attributionToken: quoteAttributionToken.value,
-      attachments: quoteAttachments.value,
     }
 
     // The Turnstile token is single-use, so it is excluded from the
     // idempotency signature to keep retries deduplicated server-side.
-    const signature = JSON.stringify({ ...payload, attachments: quoteAttachments.value.map(({ category, file }) => [category, file.name, file.size, file.lastModified]) })
+    const signature = JSON.stringify(payload)
     if (!quoteIdempotencyKey.value || quotePayloadSignature.value !== signature) {
       quoteIdempotencyKey.value = globalThis.crypto?.randomUUID?.() || `quote-${Date.now()}`
       quotePayloadSignature.value = signature
@@ -2834,18 +2763,7 @@ watch(site, (newSite) => {
                 <textarea v-model="leadForm.question" rows="5" minlength="20" maxlength="3000" :placeholder="leadCopy.questionPlaceholder" required></textarea>
                 <small class="lead-form-help">{{ leadCopy.questionHint }}</small>
               </label>
-              <fieldset v-if="leadForm.serviceType" class="lead-form-full quote-attachments-fieldset">
-                <legend>{{ activeLocale === 'en' ? 'Documents and supporting files' : 'Documentos y archivos de soporte' }} <small>· {{ quoteAttachmentProgress }}%</small></legend>
-                <div v-for="requirement in quoteAttachmentRequirements" :key="requirement.category" class="quote-attachment-row">
-                  <div><strong>{{ activeLocale === 'en' ? requirement.en : requirement.es }}</strong><small>{{ requirement.required ? (activeLocale === 'en' ? 'Required' : 'Obligatorio') : (activeLocale === 'en' ? 'Optional' : 'Opcional') }}</small></div>
-                  <template v-if="quoteAttachments.find((item) => item.category === requirement.category)">
-                    <span class="quote-attachment-name">{{ quoteAttachments.find((item) => item.category === requirement.category).file.name }}</span>
-                    <button type="button" class="quote-attachment-remove" @click="removeQuoteAttachment(requirement.category)">{{ activeLocale === 'en' ? 'Remove' : 'Eliminar' }}</button>
-                  </template>
-                  <label v-else class="quote-attachment-upload"><input type="file" :accept="attachmentAccept(requirement)" @change="selectQuoteAttachment($event, requirement.category)" />{{ activeLocale === 'en' ? 'Add file' : 'Agregar archivo' }}</label>
-                </div>
-                <small class="lead-form-help">{{ activeLocale === 'en' ? 'PDF, PNG, JPG or WEBP · max. 10 MB per file. You can replace a file before sending.' : 'PDF, PNG, JPG o WEBP · máximo 10 MB por archivo. Puedes reemplazarlo antes de enviar.' }}</small>
-              </fieldset>
+              <p class="lead-form-help lead-form-full">{{ activeLocale === 'en' ? 'Supporting documents are requested during reservation and payment, after your quote is approved.' : 'Los documentos de soporte se solicitan durante la reserva y el pago, después de aprobar tu cotización.' }}</p>
               <div v-if="quoteTurnstileEnabled" class="lead-form-full">
                 <span class="lead-form-turnstile-label">{{ leadCopy.turnstileLabel }}</span>
                 <div ref="quoteTurnstileContainer" class="quote-turnstile-container"></div>

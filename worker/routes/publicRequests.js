@@ -299,6 +299,9 @@ async function createPublicQuote(request, env) {
   const limited = await enforcePublicRateLimit(request, env, 'quote', 5, 3600)
   if (limited) return limited
   const parsed = await parseInput(request)
+  if (parsed.files.length) {
+    return response({ error: 'Los adjuntos se cargan durante la reserva y el pago, después de aprobar la cotización.' }, 400)
+  }
   let input
   try { input = validate(parsed.fields) } catch (error) { return response({ error: error.message }, error.status || 400) }
   const attributionToken = text(parsed.fields.attributionToken || parsed.fields.agentToken)
@@ -315,20 +318,6 @@ async function createPublicQuote(request, env) {
   if (!attribution) return response({ error: 'El enlace de origen es inválido o venció. Recarga el formulario e inténtalo de nuevo.' }, 400)
   const service = await resolvePublicService(sql, input)
   if (!service) return response({ error: 'La especialidad seleccionada no está disponible.' }, 503)
-  let verifiedAttachments
-  let requirements
-  try {
-    requirements = await loadAttachmentRequirements(sql, input.serviceType, 'cotizacion')
-    verifiedAttachments = await verifyAttachmentFiles({
-      files: parsed.files,
-      categories: parsed.attachmentCategories,
-      requirements,
-      snapshot: { counts: new Map(), checksums: new Set(), total: 0 },
-    })
-    if (parsed.files.length && !env.GALLERY_IMAGES) return response({ error: 'El almacenamiento de archivos no está configurado.' }, 503)
-  } catch (error) {
-    return response({ error: error.message }, error.status || 400)
-  }
   const keyHash = await sha256(idempotencyKey)
   const token = createOpaqueToken()
   const quoteTokenHash = await sha256(token)
@@ -338,7 +327,7 @@ async function createPublicQuote(request, env) {
   const payloadHash = await sha256(JSON.stringify({
     input,
     service: service.consultation_type_id,
-    attachments: verifiedAttachments.map((attachment) => attachment.checksum),
+    attachments: [],
   }))
   const rows = await sql`
     WITH new_client AS (
@@ -372,37 +361,12 @@ async function createPublicQuote(request, env) {
     return response({ ok: true, reference: String(existing[0].reference), status: 'cotizacion', expiresAt: String(existing[0].quote_expires_at) }, 200)
   }
 
-  // Los archivos se cargan a R2 y se registran sobre el request_id recién
-  // creado; nunca se acepta un identificador de solicitud enviado por el
-  // navegador. La cotización ya existe si algo falla aquí, por lo que el cliente
-  // puede reintentar con la misma clave y completar los adjuntos por el
-  // endpoint de archivos.
-  const storedAttachments = await storeRequestAttachments({
-    sql,
-    env,
-    requestId,
-    attachments: verifiedAttachments,
-    stage: 'cotizacion',
-    uploadedByKind: 'client',
-  })
-  const attachments = storedAttachments.map((attachment) => attachmentPayload({
-    id: attachment.attachmentId,
-    original_name: attachment.file.name,
-    mime_type: attachment.mimeType,
-    size_bytes: attachment.size,
-    category: attachment.category,
-    stage: 'cotizacion',
-    status: 'validated',
-    created_at: null,
-  }))
   return response({
     ok: true,
     reference,
     status: 'cotizacion',
     quoteToken: token,
     expiresAt: String(rows[0].quote_expires_at),
-    attachments,
-    requirements: requirements.map(requirementPayload),
   }, 201)
 }
 

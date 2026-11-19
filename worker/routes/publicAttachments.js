@@ -160,7 +160,7 @@ async function uploadQuoteAttachments(sql, request, env) {
 
   const quote = await resolveQuote(sql, token)
   assertQuoteAcceptsAttachments(quote)
-  await assertServiceActive(sql, String(quote.service_type))
+  throw new RequestError('Los adjuntos se cargan durante la reserva y el pago, después de aprobar la cotización.', 409)
 
   const requirements = await loadAttachmentRequirements(sql, String(quote.service_type), 'cotizacion')
   const snapshot = await loadAttachmentSnapshot(sql, String(quote.id))

@@ -17,6 +17,8 @@
   18/18 después de corregir la navegación de la revisión administrativo-experto.
 - Cobertura adicional: descarga de adjunto ajeno rechazada sin leer almacenamiento y
   adjuntos de reserva conservan estado `validated` al convertir.
+- El cliente no recibe ni puede usar un enlace de reserva antes de la respuesta aprobada;
+  el correo de esa respuesta genera el token opaco y contiene el botón `Reservar`.
 - Pendiente externo: ejecutar la matriz de aceptación sobre Dev con Neon, Resend,
   Mercado Pago sandbox y cuentas de prueba; no se considera validado por los mocks
   locales. No incluye secretos ni despliegue automático.
@@ -44,7 +46,7 @@ La cotización crea una fila en `operations.requests` con estado `cotizacion`. A
 - Crear y conservar la solicitud desde el inicio en Neon.
 - Reutilizar la misma solicitud para reserva, pago, asignación y seguimiento.
 - Mantener clasificación operativa, cliente, atribución, seguridad, ES/EN y responsive.
-- Permitir múltiples archivos adjuntos, con requisitos y tipos aceptados dependientes del servicio seleccionado.
+- Solicitar los archivos adjuntos únicamente durante la reserva/pago, con requisitos y tipos aceptados dependientes del servicio seleccionado.
 - Mantener Turso solo para contenido editorial.
 - No cambiar precios, catálogo, reglas de asignación ni pasarelas.
 
@@ -53,19 +55,19 @@ La cotización crea una fila en `operations.requests` con estado `cotizacion`. A
 La fila sigue este ciclo:
 
 ```text
-cotizacion → reserva/pago → pending → in_progress → closed
+cotizacion → respuesta aprobada → enlace `Reservar` en el correo → reserva/pago → pending → in_progress → closed
                          ↘ cancelled / expired
 ```
 
 La cotización conserva `service_type`, `consultation_type_id`, `product_type`, `question`, cliente, locale, `source_channel`, `agent_id`, `agent_link_id` y los metadatos de catálogo.
 
-Los archivos adjuntos se manejan como una colección, no como un único archivo. Cada elemento debe conservar al menos `id`, `storage_key`, `original_name`, `mime_type`, `size_bytes`, `category`, `stage` y estado de validación. Las categorías permitidas y los archivos requeridos dependen del servicio seleccionado en el formulario:
+Los archivos adjuntos se manejan como una colección, no como un único archivo. Cada elemento debe conservar al menos `id`, `storage_key`, `original_name`, `mime_type`, `size_bytes`, `category`, `stage` y estado de validación. Se solicitan únicamente en la etapa `reserva`/pago; la cotización no acepta ni almacena adjuntos. Las categorías permitidas y los archivos requeridos dependen del servicio seleccionado:
 
 - `importacion`: conjunto documental configurado para importación.
 - `exportacion`: conjunto documental configurado para exportación.
 - `agente_carga`: conjunto documental configurado para operaciones de agente de carga.
 
-La matriz exacta de documentos obligatorios y opcionales debe quedar definida en el catálogo/configuración operativa antes de cerrar la implementación. El navegador solo propone la categoría; el servidor valida servicio, categoría, cantidad, extensión MIME, tamaño, duplicados y permisos. Los archivos se pueden adjuntar en la cotización o en la reserva, pero pertenecen a la misma solicitud Neon y no deben duplicarse al convertirla.
+La matriz exacta de documentos obligatorios y opcionales debe quedar definida en el catálogo/configuración operativa antes de cerrar la implementación. El navegador solo propone la categoría; el servidor valida servicio, categoría, cantidad, extensión MIME, tamaño, duplicados y permisos. La conversión valida y almacena los documentos de reserva sobre la misma solicitud Neon.
 
 ## Decisión: descarga pública con `quoteToken`
 
@@ -196,9 +198,9 @@ operativa divergente y `contact_leads` no participa en el flujo de cotización.
 - Leer el token opaco desde el enlace.
 - Mostrar `Reserva` como etapa, no como servicio.
 - Mostrar clasificación heredada sin permitir cambios no soportados.
-- Solicitar solo datos faltantes, adjuntos y pago.
-- Mostrar la lista de adjuntos requeridos y opcionales según el servicio heredado; permitir varios archivos, progreso individual, reemplazo/eliminación antes de confirmar y errores por archivo.
-- Conservar los adjuntos ya validados al pasar de cotización a reserva y permitir completar los faltantes sin volver a subir los existentes.
+- Solicitar solo datos faltantes, adjuntos de reserva y pago.
+- Mostrar la lista de adjuntos requeridos y opcionales en la etapa de reserva; permitir varios archivos, progreso individual, reemplazo/eliminación antes de confirmar y errores por archivo.
+- Rechazar adjuntos enviados con la cotización y cargar los documentos únicamente al convertir a reserva/pago.
 - Obtener precio y moneda del servidor.
 - Manejar token inválido, vencido, convertido, inexistente y catálogo desactivado.
 - Mantener pago e idempotencia, ES/EN y responsive.
@@ -259,7 +261,7 @@ operativa divergente y `contact_leads` no participa en el flujo de cotización.
 - Probar cambio de servicio y limpieza de consulta incompatible.
 - Probar múltiples adjuntos por servicio: categorías válidas e inválidas para importación, exportación y agente de carga.
 - Probar límites de cantidad/tamaño, MIME no permitido, duplicados, adjuntos obligatorios ausentes, eliminación y reemplazo.
-- Probar que los adjuntos validados sobreviven a la conversión y que los faltantes se pueden completar en reserva.
+- Probar que los adjuntos de reserva se validan durante la conversión y que la cotización no permite adjuntos.
 - Probar que un usuario sin permiso no puede leer ni descargar adjuntos de otra solicitud.
 - Probar solicitudes antiguas e incompletas.
 - Añadir E2E: cotización → enlace → reserva → pago → operación.
