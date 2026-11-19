@@ -1,6 +1,6 @@
 import { requireOperationsAuth } from './operationsAuth.js'
 import { enqueueNotification, publishNotificationEvent } from './operationsEmail.js'
-import { refreshRequestPayment, verifyRequestPayment } from './publicRequests.js'
+import { createOpaqueToken, refreshRequestPayment, sha256, verifyRequestPayment } from './publicRequests.js'
 import { normalizeClientEmail } from '../lib/clientIdentity.js'
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -22,12 +22,14 @@ export async function handleOperationsData(request, env) {
   const isRequestAssignment = Boolean(requestAssignmentMatch) && request.method === 'POST'
   const requestPaymentVerifyMatch = url.pathname.match(/^\/api\/app\/requests\/([^/]+)\/payment\/verify$/)
   const isRequestPaymentVerify = Boolean(requestPaymentVerifyMatch) && request.method === 'POST'
+  const requestReservationLinkMatch = url.pathname.match(/^\/api\/app\/requests\/([^/]+)\/reservation-link$/)
+  const isRequestReservationLink = Boolean(requestReservationLinkMatch) && request.method === 'POST'
   const isDashboard = url.pathname === '/api/app/dashboard' && request.method === 'GET'
-  if (!isClients && !isClientDetail && !isPayments && !isRequests && !createRequest && !isRequestDetail && !isRequestAssignment && !isRequestPaymentVerify && !isDashboard) return null
+  if (!isClients && !isClientDetail && !isPayments && !isRequests && !createRequest && !isRequestDetail && !isRequestAssignment && !isRequestPaymentVerify && !isRequestReservationLink && !isDashboard) return null
 
   const claims = await requireOperationsAuth(request, env)
   if (!claims) return response({ error: 'Sesión requerida.' }, 401)
-  const permission = isClients || isClientDetail ? 'clients.read' : isPayments ? 'payments.read' : createRequest ? 'requests.create' : isRequestAssignment || isRequestPaymentVerify ? 'requests.update' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
+  const permission = isClients || isClientDetail ? 'clients.read' : isPayments ? 'payments.read' : createRequest ? 'requests.create' : isRequestAssignment || isRequestPaymentVerify || isRequestReservationLink ? 'requests.update' : isRequests || isRequestDetail ? 'requests.read' : 'dashboard.read'
   if (!claims?.permissions?.includes(permission)) {
     return response({ error: 'No tienes permisos para consultar este módulo.' }, 403)
   }
@@ -47,6 +49,10 @@ export async function handleOperationsData(request, env) {
     const result = await verifyRequestPayment(sql, requestPaymentVerifyMatch[1], env, claims.sub)
     if (!result) return response({ error: 'Solicitud no encontrada.' }, 404)
     return response({ ...result, message: paymentDiagnosisMessage(result.reasonCode) })
+  }
+  if (isRequestReservationLink) {
+    if (!claims.roles?.includes('admin')) return response({ error: 'Solo administración puede generar enlaces de reserva.' }, 403)
+    return issueReservationLink(sql, requestReservationLinkMatch[1], claims, env, request)
   }
   if (isRequestAssignment) {
     if (!claims.roles?.includes('admin')) return response({ error: 'Solo administración puede asignar o reasignar expertos.' }, 403)
@@ -472,7 +478,7 @@ async function getRequestDetail(sql, requestId, claims) {
   ])
   if (!requestRows[0]) return response({ error: 'Solicitud no encontrada.' }, 404)
   const isAdmin = claims.roles?.includes('admin')
-  const [assignmentHistory, eligibleExperts, paymentDiagnosticRows, paymentOutboxRows] = await Promise.all([
+  const [assignmentHistory, eligibleExperts, paymentDiagnosticRows, paymentOutboxRows, attachmentsRows, attachmentGapRows] = await Promise.all([
     sql`SELECT a.id, a.expert_id, u.full_name AS expert_name, a.status, a.strategy, a.candidate_count, a.reason, a.assigned_at
       FROM operations.request_assignments a LEFT JOIN operations.users u ON u.id = a.expert_id
       WHERE a.request_id = ${requestId} ORDER BY a.assigned_at DESC`,
@@ -495,6 +501,18 @@ async function getRequestDetail(sql, requestId, claims) {
       FROM operations.notification_outbox
       WHERE request_id = ${requestId} AND event_code = 'payment_approved'
       LIMIT 1
+    ` : Promise.resolve([]),
+    claims.permissions?.includes('attachments.read') ? sql`
+      SELECT id, category, stage, status, mime_type, original_name, size_bytes, created_at, updated_at
+      FROM operations.request_attachments
+      WHERE request_id = ${requestId}
+      ORDER BY category, created_at DESC
+    ` : Promise.resolve([]),
+    claims.permissions?.includes('attachments.read') ? sql`
+      SELECT category, label_es, label_en, stage, min_files, validated_count
+      FROM operations.request_attachment_gaps
+      WHERE request_id = ${requestId}
+      ORDER BY category
     ` : Promise.resolve([]),
   ])
   return response({
@@ -521,7 +539,31 @@ async function getRequestDetail(sql, requestId, claims) {
       errorCode: paymentOutboxRows[0].last_error_code ? String(paymentOutboxRows[0].last_error_code) : '',
       updatedAt: String(paymentOutboxRows[0].updated_at),
     } : null,
+    attachments: attachmentsRows.map((row) => ({
+      id: String(row.id), category: String(row.category), stage: String(row.stage), status: String(row.status),
+      mimeType: row.mime_type ? String(row.mime_type) : '', originalName: row.original_name ? String(row.original_name) : '',
+      sizeBytes: row.size_bytes == null ? null : Number(row.size_bytes), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+    })),
+    gaps: attachmentGapRows.map((row) => ({
+      category: String(row.category), labelEs: String(row.label_es), labelEn: String(row.label_en), stage: String(row.stage),
+      minFiles: Number(row.min_files), validatedCount: Number(row.validated_count),
+    })),
   })
+}
+
+async function issueReservationLink(sql, requestId, claims, env, request) {
+  if (!uuidPattern.test(requestId)) return response({ error: 'Solicitud no encontrada.' }, 404)
+  const token = createOpaqueToken()
+  const rows = await sql`
+    UPDATE operations.requests
+    SET quote_token_hash = ${await sha256(token)}, quote_expires_at = NOW() + INTERVAL '2 hours', updated_at = NOW()
+    WHERE id = ${requestId} AND status = 'cotizacion'
+    RETURNING id, reference, quote_expires_at
+  `
+  if (!rows[0]) return response({ error: 'Solo se puede generar un enlace para una cotización activa.' }, 409)
+  await sql`INSERT INTO operations.audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (${claims.sub}, 'issue_reservation_link', 'request', ${requestId}, ${JSON.stringify({ expiresAt: String(rows[0].quote_expires_at) })}::jsonb)`
+  const origin = env.PUBLIC_APP_URL || new URL(request.url).origin
+  return response({ ok: true, reference: String(rows[0].reference), reservationUrl: `${origin.replace(/\/$/, '')}/solicitud#quoteToken=${encodeURIComponent(token)}`, expiresAt: String(rows[0].quote_expires_at) }, 201, { 'cache-control': 'no-store' })
 }
 
 export async function assignRequestExpert(sql, request, requestId, claims, env) {
@@ -804,10 +846,10 @@ function serializeRequestResponse(row, canViewBody, canViewInternalNote = false)
   }
 }
 
-function response(payload, status = 200) {
+function response(payload, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers: { 'content-type': 'application/json; charset=utf-8', ...extraHeaders },
   })
 }
 

@@ -31,7 +31,9 @@ test('public request POST rejects a missing attribution token before rate-limit 
 })
 
 test('rate limit cleanup selects at most 100 expired rows in index order', async () => {
-  const route = await readFile(new URL('../worker/routes/publicRequests.js', import.meta.url), 'utf8')
+  // El limitador público vive ahora en el módulo compartido que también usan
+  // los endpoints de adjuntos públicos.
+  const route = await readFile(new URL('../worker/routes/publicAttachments.js', import.meta.url), 'utf8')
   const migration = await readFile(new URL('../worker/db/migrations/035_public_request_rate_limits.sql', import.meta.url), 'utf8')
   const cleanupSql = route.slice(route.indexOf('WITH expired_rate_rows'), route.indexOf('RETURNING request_count'))
 

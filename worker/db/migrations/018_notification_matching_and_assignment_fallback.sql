@@ -37,4 +37,4 @@ ALTER TABLE operations.request_assignments
 ALTER TABLE operations.request_assignments
   DROP CONSTRAINT IF EXISTS request_assignments_status_check;
 ALTER TABLE operations.request_assignments
-  ADD CONSTRAINT request_assignments_status_check CHECK (status IN ('assigned', 'reassigned', 'completed', 'failed'));
+  ADD CONSTRAINT request_assignments_status_check CHECK (status IN ('assigned', 'reassigned', 'completed', 'failed', 'similarity_review'));

@@ -32,6 +32,19 @@ Entrega: resumen breve, archivos modificados, comandos/pruebas, riesgos y pendie
 
 Codex mantiene la responsabilidad de revisar cambios, pruebas y riesgos. Esta guía orienta la delegación; no fuerza al cliente a llamar al MCP.
 
+## Reparto obligatorio de subagentes
+
+- Cuando una tarea sea paralelizable y se utilicen subagentes, iniciar como mínimo 2 agentes Claude/DeepSeek y como mínimo 2 agentes Codex basados en GPT-5.6 Luna.
+- La cantidad mínima aplica por proveedor, aunque el trabajo se divida en más slices; no considerar una única tarea grande como sustituto de los dos agentes requeridos.
+- Para las tareas que se deleguen, distribuir aproximadamente el 50% entre agentes Claude/DeepSeek y el 50% entre agentes Codex basados en GPT-5.6 Luna.
+- Ejecutar ambos grupos en modo `low`, salvo que la solicitud actual autorice explícitamente otro nivel.
+- El reparto se mide por número de tareas o slices delegados, no por cantidad de tokens ni por tiempo de ejecución.
+- Antes de delegar, asignar cada slice al proveedor que corresponda y registrar en el resumen qué tareas ejecutó cada grupo.
+- Mantener el mismo alcance, restricciones, ownership de archivos y criterios de aceptación para ambos grupos.
+- No delegar secretos, archivos `.env`, credenciales, tokens ni despliegues.
+- Codex conserva la responsabilidad de integrar, revisar diffs, ejecutar pruebas y resolver conflictos.
+- Si un proveedor no está disponible, informar la desviación y no sustituir silenciosamente el reparto.
+
 ## Entorno y despliegues
 
 - Trabaja en la rama `dev` para los cambios solicitados en este proyecto. No subas cambios a `main` ni despliegues a Producción.

@@ -6,6 +6,7 @@ import { handleOperationsData } from './routes/operationsData.js'
 import { handleOperationsReports } from './routes/operationsReports.js'
 import { handleOperationsAttachments } from './routes/operationsAttachments.js'
 import { handlePublicRequests } from './routes/publicRequests.js'
+import { handlePublicAttachments } from './routes/publicAttachments.js'
 import { handleOperationsSecurity } from './routes/operationsSecurity.js'
 import { handleOperationsNotifications } from './routes/operationsNotifications.js'
 import { handleOperationsEmail } from './routes/operationsEmail.js'
@@ -128,6 +129,9 @@ export default {
       const operationsCatalogResponse = await handleOperationsCatalog(request, env)
       if (operationsCatalogResponse) return operationsCatalogResponse
 
+      const publicAttachmentsResponse = await handlePublicAttachments(request, env)
+      if (publicAttachmentsResponse) return publicAttachmentsResponse
+
       const publicRequestResponse = await handlePublicRequests(request, env)
       if (publicRequestResponse) return publicRequestResponse
 
@@ -202,8 +206,11 @@ export default {
       }
 
       if (url.pathname === '/api/quote-requests' && request.method === 'POST') {
-        await ensureSchema(env)
-        return submitQuoteRequest(request, env)
+        return json({
+          ok: false,
+          code: 'quote_endpoint_retired',
+          error: 'El endpoint legacy de cotizaciones fue retirado. Usa /api/public/quotes.',
+        }, request, 410, { 'cache-control': 'no-store' })
       }
 
       if (url.pathname === '/api/testimonials' && request.method === 'POST') {
@@ -767,58 +774,6 @@ async function getApprovedTestimonials(env) {
   }, { es: [], en: [] })
 }
 
-async function submitQuoteRequest(request, env) {
-  const input = validateLeadPayload(await request.json())
-  const { content } = await getLandingContent(env)
-  const localeContent = content.locales?.[input.locale] || content.locales?.[content.defaultLocale] || content.locales?.es || defaultContent.locales.es
-  const recipientEmail = localeContent.contact?.email || defaultContent.locales.es.contact.email
-
-  const insertResult = await getClient(env).execute({
-    sql: `
-      INSERT INTO contact_leads (
-        locale,
-        full_name,
-        email,
-        phone,
-        message,
-        recipient_email,
-        email_status,
-        email_error
-      )
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL)
-    `,
-    args: [input.locale, input.fullName, input.email, input.phone, input.message, recipientEmail],
-  })
-
-  const leadId = Number(insertResult.lastInsertRowid)
-
-  try {
-    await sendLeadEmail(env, {
-      id: leadId,
-      locale: input.locale,
-      fullName: input.fullName,
-      email: input.email,
-      phone: input.phone,
-      message: input.message,
-      recipientEmail,
-      createdAt: new Date().toISOString(),
-    })
-
-    await updateLeadEmailStatus(env, leadId, 'sent', null)
-    return json({ ok: true, leadId, emailSent: true }, request, 201)
-  } catch (error) {
-    await updateLeadEmailStatus(env, leadId, 'failed', error.message || 'No se pudo enviar el correo.')
-    return json({
-      ok: true,
-      leadId,
-      emailSent: false,
-      warning: input.locale === 'en'
-        ? 'Your request was saved, but the email notification could not be sent.'
-        : 'Tu solicitud fue guardada, pero no se pudo enviar la notificación por correo.',
-    }, request, 201)
-  }
-}
-
 async function submitTestimonial(request, env) {
   const input = validateTestimonialPayload(await request.json())
   const { content } = await getLandingContent(env)
@@ -1016,21 +971,6 @@ async function reviewAdminTestimonial(request, env) {
   return json({ ok: true, item: serializeTestimonialDetail(result.rows[0]) }, request)
 }
 
-function validateLeadPayload(payload) {
-  const locale = payload?.locale === 'en' ? 'en' : 'es'
-  const fullName = normalizeText(payload?.fullName)
-  const email = normalizeText(payload?.email).toLowerCase()
-  const phone = normalizeText(payload?.phone)
-  const message = normalizeText(payload?.message)
-
-  if (!fullName) throw new HttpError(locale === 'en' ? 'Name is required.' : 'El nombre es obligatorio.', 400)
-  if (!isValidEmail(email)) throw new HttpError(locale === 'en' ? 'Enter a valid email.' : 'Ingresa un correo válido.', 400)
-  if (!phone) throw new HttpError(locale === 'en' ? 'Phone is required.' : 'El teléfono es obligatorio.', 400)
-  if (!message) throw new HttpError(locale === 'en' ? 'Message is required.' : 'El mensaje es obligatorio.', 400)
-
-  return { locale, fullName, email, phone, message }
-}
-
 function validateTestimonialPayload(payload) {
   const locale = payload?.locale === 'en' ? 'en' : 'es'
   const fullName = normalizeText(payload?.fullName)
@@ -1046,36 +986,6 @@ function validateTestimonialPayload(payload) {
   if (!message) throw new HttpError(locale === 'en' ? 'Testimonial is required.' : 'El testimonio es obligatorio.', 400)
 
   return { locale, fullName, role, company, email, phone, message }
-}
-
-async function sendLeadEmail(env, lead) {
-  if (!env.RESEND_API_KEY) throw new Error('Falta RESEND_API_KEY.')
-  if (!env.RESEND_FROM_EMAIL) throw new Error('Falta RESEND_FROM_EMAIL.')
-
-  const subject = lead.locale === 'en'
-    ? `New quote request from ${lead.fullName}`
-    : `Nueva solicitud de cotización de ${lead.fullName}`
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: env.RESEND_FROM_EMAIL,
-      to: [lead.recipientEmail],
-      reply_to: lead.email,
-      subject,
-      text: formatLeadEmailText(lead),
-      html: formatLeadEmailHtml(lead),
-    }),
-  })
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => null)
-    throw new Error(error?.message || 'Resend no aceptó el envío.')
-  }
 }
 
 async function sendTestimonialEmail(env, testimonial) {
@@ -1106,86 +1016,6 @@ async function sendTestimonialEmail(env, testimonial) {
     const error = await response.json().catch(() => null)
     throw new Error(error?.message || 'Resend no aceptó el envío.')
   }
-}
-
-function formatLeadEmailText(lead) {
-  const labels = lead.locale === 'en'
-    ? {
-        title: 'New quote request',
-        name: 'Name',
-        email: 'Email',
-        phone: 'Phone',
-        message: 'Message',
-        locale: 'Language',
-        createdAt: 'Created at',
-      }
-    : {
-        title: 'Nueva solicitud de cotización',
-        name: 'Nombre',
-        email: 'Correo',
-        phone: 'Teléfono',
-        message: 'Mensaje',
-        locale: 'Idioma',
-        createdAt: 'Fecha',
-      }
-
-  return [
-    labels.title,
-    `${labels.name}: ${lead.fullName}`,
-    `${labels.email}: ${lead.email}`,
-    `${labels.phone}: ${lead.phone}`,
-    `${labels.locale}: ${lead.locale.toUpperCase()}`,
-    `${labels.createdAt}: ${lead.createdAt}`,
-    '',
-    `${labels.message}:`,
-    lead.message,
-  ].join('\n')
-}
-
-function formatLeadEmailHtml(lead) {
-  const labels = lead.locale === 'en'
-    ? {
-        title: 'New quote request',
-        name: 'Name',
-        email: 'Email',
-        phone: 'Phone',
-        message: 'Message',
-        locale: 'Language',
-        createdAt: 'Created at',
-      }
-    : {
-        title: 'Nueva solicitud de cotización',
-        name: 'Nombre',
-        email: 'Correo',
-        phone: 'Teléfono',
-        message: 'Mensaje',
-        locale: 'Idioma',
-        createdAt: 'Fecha',
-      }
-
-  return `
-    <div style="margin:0;padding:32px 16px;background:#f4f7fb;font-family:Arial,sans-serif;color:#102544;">
-      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #dbe3ee;border-radius:18px;overflow:hidden;box-shadow:0 18px 48px rgba(16,37,68,0.08);">
-        <div style="padding:28px 32px;background:linear-gradient(135deg,#0a2a57,#123d79);color:#ffffff;">
-          <div style="font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;opacity:0.82;">Cortes Rodriguez Asesores</div>
-          <h1 style="margin:10px 0 0;font-size:28px;line-height:1.2;">${escapeHtml(labels.title)}</h1>
-        </div>
-        <div style="padding:28px 32px;">
-          <div style="display:grid;gap:14px;">
-            ${renderEmailRow(labels.name, lead.fullName)}
-            ${renderEmailRow(labels.email, lead.email)}
-            ${renderEmailRow(labels.phone, lead.phone)}
-            ${renderEmailRow(labels.locale, lead.locale.toUpperCase())}
-            ${renderEmailRow(labels.createdAt, lead.createdAt)}
-          </div>
-          <div style="margin-top:24px;padding:20px 22px;background:#f7f9fc;border:1px solid #e3eaf3;border-radius:14px;">
-            <div style="margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#5b6d85;">${escapeHtml(labels.message)}</div>
-            <p style="margin:0;font-size:15px;line-height:1.7;color:#102544;">${escapeHtml(lead.message).replace(/\n/g, '<br />')}</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  `
 }
 
 function formatTestimonialEmailText(testimonial) {
@@ -1287,13 +1117,6 @@ function renderEmailRow(label, value) {
       <div style="font-size:16px;line-height:1.5;color:#102544;">${escapeHtml(value)}</div>
     </div>
   `
-}
-
-async function updateLeadEmailStatus(env, leadId, status, errorMessage) {
-  await getClient(env).execute({
-    sql: 'UPDATE contact_leads SET email_status = ?, email_error = ? WHERE id = ?',
-    args: [status, errorMessage, leadId],
-  })
 }
 
 async function updateTestimonialEmailStatus(env, testimonialId, status, errorMessage) {

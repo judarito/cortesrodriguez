@@ -41,3 +41,13 @@ test('request creation rejects missing attribution even when a client agentId is
   assert.equal(response.status, 400)
   assert.match((await response.json()).error, /enlace de origen no es válido/i)
 })
+
+test('quote conversion rejects a missing or non-opaque quote token', async () => {
+  const response = await handlePublicRequests(new Request('https://example.test/api/public/quotes/convert', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'ana@example.com' }),
+  }), { NEON_DATABASE_URL: 'postgres://unused' })
+  assert.equal(response.status, 400)
+  assert.match((await response.json()).error, /cotización no es válida/i)
+})

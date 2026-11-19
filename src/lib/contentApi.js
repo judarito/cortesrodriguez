@@ -101,18 +101,89 @@ export async function uploadImage(blob, jwt, fileName = 'imagen.webp') {
   }, 'No se pudo subir la imagen.')
 }
 
+// Slice D contract: the quote endpoint is owned by the Worker/API slice.
+// The landing form only sends classification codes, client data, locale,
+// attribution and an idempotency key; the server resolves catalog and price.
+const QUOTE_REQUEST_PATH = '/api/public/quotes'
+const PUBLIC_CATALOG_PATH = '/api/public/catalog'
+const ATTACHMENT_REQUIREMENTS_PATH = '/api/public/attachment-requirements'
+const QUOTE_ATTRIBUTION_PATH = '/api/public/request-start'
+
+const QUOTE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{40,60}$/
+
+export async function fetchPublicCatalog() {
+  const response = await fetch(PUBLIC_CATALOG_PATH, { cache: 'no-store' })
+  if (!response.ok) {
+    throw await parseJsonError(response, 'No se pudo cargar el catálogo.')
+  }
+
+  const data = await response.json().catch(() => ({ items: [] }))
+  return Array.isArray(data.items) ? data.items : []
+}
+
+// Matriz documental configurada en operations.request_attachment_requirements.
+// El frontend nunca hardcodea categorías ni obligatoriedad: pide el catálogo
+// del servicio y la etapa al Worker. Ante un fallo devuelve una lista vacía
+// para no inventar requisitos ni bloquear el formulario.
+export async function fetchAttachmentRequirements({ serviceType, stage = 'cotizacion' } = {}) {
+  if (!serviceType) return []
+  const params = new URLSearchParams({ serviceType, stage })
+  try {
+    const response = await fetch(`${ATTACHMENT_REQUIREMENTS_PATH}?${params}`, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    })
+    if (!response.ok) return []
+    const data = await response.json().catch(() => ({}))
+    return Array.isArray(data.requirements) ? data.requirements : []
+  } catch {
+    return []
+  }
+}
+
+export async function fetchQuoteAttributionToken() {
+  try {
+    const response = await fetch(QUOTE_ATTRIBUTION_PATH, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    })
+    if (!response.ok) return ''
+
+    const data = await response.json().catch(() => ({}))
+    return QUOTE_TOKEN_PATTERN.test(data?.token || '') ? data.token : ''
+  } catch {
+    // Attribution is optional for direct traffic; the server decides.
+    return ''
+  }
+}
+
 export async function submitQuoteRequest(payload) {
-  const response = await fetch('/api/quote-requests', {
+  const files = Array.isArray(payload?.attachments) ? payload.attachments : []
+  const requestBody = files.length
+    ? (() => {
+        const form = new FormData()
+        Object.entries(payload).forEach(([key, value]) => {
+          if (key !== 'attachments') form.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value ?? ''))
+        })
+        files.forEach(({ file, category }) => {
+          form.append('attachments', file)
+          form.append('attachmentCategory', category)
+        })
+        return form
+      })()
+    : JSON.stringify(payload)
+  const response = await fetch(QUOTE_REQUEST_PATH, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
+    ...(files.length ? {} : { headers: { 'Content-Type': 'application/json' } }),
+    body: requestBody,
   })
 
-  const data = await response.json().catch(() => ({ error: 'No se pudo enviar la solicitud.' }))
+  const data = await response.json().catch(() => ({ error: 'No se pudo enviar la cotización.' }))
   if (!response.ok) {
-    throw new Error(data.error || 'No se pudo enviar la solicitud.')
+    throw new ApiError(data.error || 'No se pudo enviar la cotización.', {
+      status: response.status,
+      payload: data,
+    })
   }
 
   return data

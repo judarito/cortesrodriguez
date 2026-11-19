@@ -2,7 +2,7 @@ import express from 'express'
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createServer as createViteServer } from 'vite'
 import 'dotenv/config'
 import { db, ensureSchema } from './db.js'
@@ -17,7 +17,7 @@ const jwtSecret = process.env.JWT_SECRET || 'local-development-secret'
 const contentCacheTtlMs = Number(process.env.CONTENT_CACHE_TTL_SECONDS || 0) * 1000
 let contentCache = null
 
-const app = express()
+export const app = express()
 const localImageDir = path.join(__dirname, 'local-r2', 'images')
 
 app.post('/api/admin/images', express.raw({ type: 'image/webp', limit: '480kb' }), requireAdmin, async (req, res) => {
@@ -45,7 +45,42 @@ app.use('/images', express.static(localImageDir, {
 
 app.use(express.json({ limit: '10mb' }))
 
-await ensureSchema()
+// Node/Turso solo mantiene contenido editorial y testimonios. El flujo operativo
+// (cotizaciones, solicitudes y reservas) vive exclusivamente en Neon a través del
+// Worker, por lo que aquí se responde de forma explícita que no está disponible.
+export const OPERATIONAL_NOT_AVAILABLE_CODE = 'not_available'
+
+const operationalNotAvailableMessages = {
+  es: 'Esta función operativa no está disponible en el servidor Node local. Usa la API del Worker respaldada por Neon.',
+  en: 'This operational feature is not available on the local Node server. Use the Worker API backed by Neon.',
+}
+
+export function resolveRequestLocale(req) {
+  const bodyLocale = req?.body?.locale
+  if (bodyLocale === 'en' || bodyLocale === 'es') return bodyLocale
+
+  const header = String(req?.headers?.['accept-language'] || '').trim().toLowerCase()
+  return header.startsWith('en') ? 'en' : 'es'
+}
+
+export function buildNotAvailableResponse(locale, feature) {
+  const normalizedLocale = locale === 'en' ? 'en' : 'es'
+  return {
+    status: 503,
+    body: {
+      ok: false,
+      code: OPERATIONAL_NOT_AVAILABLE_CODE,
+      feature,
+      error: operationalNotAvailableMessages[normalizedLocale],
+    },
+  }
+}
+
+export function sendNotAvailable(res, req, feature) {
+  const { status, body } = buildNotAvailableResponse(resolveRequestLocale(req), feature)
+  res.set('Cache-Control', 'no-store')
+  res.status(status).json(body)
+}
 
 async function getLatestLandingContentRecord() {
   const result = await db.execute({
@@ -367,34 +402,6 @@ function isBaseRevisionConflictError(error) {
     || (message.includes('UNIQUE constraint failed') && message.includes('site_content_versions.content_key') && message.includes('site_content_versions.base_revision'))
 }
 
-async function saveLead(lead) {
-  const result = await db.execute({
-    sql: `
-      INSERT INTO contact_leads (
-        locale,
-        full_name,
-        email,
-        phone,
-        message,
-        recipient_email,
-        email_status,
-        email_error
-      )
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL)
-    `,
-    args: [lead.locale, lead.fullName, lead.email, lead.phone, lead.message, lead.recipientEmail],
-  })
-
-  return Number(result.lastInsertRowid)
-}
-
-async function updateLeadEmailStatus(leadId, status, errorMessage) {
-  await db.execute({
-    sql: 'UPDATE contact_leads SET email_status = ?, email_error = ? WHERE id = ?',
-    args: [status, errorMessage, leadId],
-  })
-}
-
 async function saveTestimonialSubmission(testimonial) {
   const result = await db.execute({
     sql: `
@@ -555,39 +562,14 @@ app.post('/api/admin/content/versions/:revision/restore', requireAdmin, async (r
   }
 })
 
-app.post('/api/quote-requests', async (req, res) => {
-  try {
-    const input = validateLeadPayload(req.body)
-    const { content } = await getLandingContent()
-    const localeContent = content.locales?.[input.locale] || content.locales?.[content.defaultLocale] || content.locales?.es || defaultContent.locales.es
-    const recipientEmail = localeContent.contact?.email || defaultContent.locales.es.contact.email
-    const leadId = await saveLead({ ...input, recipientEmail })
-    const lead = {
-      id: leadId,
-      ...input,
-      recipientEmail,
-      createdAt: new Date().toISOString(),
-    }
+app.post('/api/quote-requests', (req, res) => {
+  sendNotAvailable(res, req, 'quote_requests')
+})
 
-    try {
-      await sendLeadEmail(lead)
-      await updateLeadEmailStatus(leadId, 'sent', null)
-      res.status(201).json({ ok: true, leadId, emailSent: true })
-    } catch (error) {
-      await updateLeadEmailStatus(leadId, 'failed', error.message || 'No se pudo enviar el correo.')
-      res.status(201).json({
-        ok: true,
-        leadId,
-        emailSent: false,
-        warning: input.locale === 'en'
-          ? 'Your request was saved, but the email notification could not be sent.'
-          : 'Tu solicitud fue guardada, pero no se pudo enviar la notificación por correo.',
-      })
-    }
-  } catch (error) {
-    console.error(error)
-    res.status(error.status || 500).json({ error: error.message || 'No se pudo enviar la solicitud.' })
-  }
+// El formulario vigente usa la API del Worker; se mantiene una respuesta explícita
+// para que el modo local no cree una cotización en Turso ni devuelva un HTML genérico.
+app.post('/api/public/quotes', (req, res) => {
+  sendNotAvailable(res, req, 'quote_requests')
 })
 
 app.post('/api/testimonials', async (req, res) => {
@@ -626,39 +608,8 @@ app.post('/api/testimonials', async (req, res) => {
   }
 })
 
-app.get('/api/admin/leads', requireAdmin, async (req, res) => {
-  try {
-    const page = clampPositiveInteger(req.query.page, 1)
-    const pageSize = clampPositiveInteger(req.query.pageSize, 10, 50)
-    const offset = (page - 1) * pageSize
-
-    const [countResult, leadsResult] = await Promise.all([
-      db.execute('SELECT COUNT(*) AS total FROM contact_leads'),
-      db.execute({
-        sql: `
-          SELECT id, locale, full_name, email, phone, recipient_email, email_status, created_at, message
-          FROM contact_leads
-          ORDER BY datetime(created_at) DESC, id DESC
-          LIMIT ? OFFSET ?
-        `,
-        args: [pageSize, offset],
-      }),
-    ])
-
-    const total = toNumber(countResult.rows[0]?.total)
-    res.json({
-      items: leadsResult.rows.map((row) => serializeLeadSummary(row)),
-      pagination: {
-        page,
-        pageSize,
-        totalItems: total,
-        totalPages: Math.max(1, Math.ceil(total / pageSize)),
-      },
-    })
-  } catch (error) {
-    console.error(error)
-    res.status(500).json({ error: 'No se pudieron cargar las solicitudes.' })
-  }
+app.get('/api/admin/leads', (req, res) => {
+  sendNotAvailable(res, req, 'contact_leads')
 })
 
 app.get('/api/admin/testimonials', requireAdmin, async (req, res) => {
@@ -696,34 +647,8 @@ app.get('/api/admin/testimonials', requireAdmin, async (req, res) => {
   }
 })
 
-app.get('/api/admin/leads/:id', requireAdmin, async (req, res) => {
-  try {
-    const leadId = Number(req.params.id)
-    if (!Number.isInteger(leadId) || leadId <= 0) {
-      res.status(400).json({ error: 'Solicitud inválida.' })
-      return
-    }
-
-    const result = await db.execute({
-      sql: `
-        SELECT id, locale, full_name, email, phone, message, recipient_email, email_status, email_error, created_at
-        FROM contact_leads
-        WHERE id = ?
-        LIMIT 1
-      `,
-      args: [leadId],
-    })
-
-    if (!result.rows.length) {
-      res.status(404).json({ error: 'Solicitud no encontrada.' })
-      return
-    }
-
-    res.json({ item: serializeLeadDetail(result.rows[0]) })
-  } catch (error) {
-    console.error(error)
-    res.status(500).json({ error: 'No se pudo cargar el detalle.' })
-  }
+app.get('/api/admin/leads/:id', (req, res) => {
+  sendNotAvailable(res, req, 'contact_leads')
 })
 
 app.get('/api/admin/testimonials/:id', requireAdmin, async (req, res) => {
@@ -830,21 +755,6 @@ function base64Url(value) {
   return Buffer.from(value).toString('base64url')
 }
 
-function validateLeadPayload(payload) {
-  const locale = payload?.locale === 'en' ? 'en' : 'es'
-  const fullName = normalizeText(payload?.fullName)
-  const email = normalizeText(payload?.email).toLowerCase()
-  const phone = normalizeText(payload?.phone)
-  const message = normalizeText(payload?.message)
-
-  if (!fullName) throw new HttpError(locale === 'en' ? 'Name is required.' : 'El nombre es obligatorio.', 400)
-  if (!isValidEmail(email)) throw new HttpError(locale === 'en' ? 'Enter a valid email.' : 'Ingresa un correo válido.', 400)
-  if (!phone) throw new HttpError(locale === 'en' ? 'Phone is required.' : 'El teléfono es obligatorio.', 400)
-  if (!message) throw new HttpError(locale === 'en' ? 'Message is required.' : 'El mensaje es obligatorio.', 400)
-
-  return { locale, fullName, email, phone, message }
-}
-
 function validateTestimonialPayload(payload) {
   const locale = payload?.locale === 'en' ? 'en' : 'es'
   const fullName = normalizeText(payload?.fullName)
@@ -860,36 +770,6 @@ function validateTestimonialPayload(payload) {
   if (!message) throw new HttpError(locale === 'en' ? 'Testimonial is required.' : 'El testimonio es obligatorio.', 400)
 
   return { locale, fullName, role, company, email, phone, message }
-}
-
-async function sendLeadEmail(lead) {
-  if (!process.env.RESEND_API_KEY) throw new Error('Falta RESEND_API_KEY.')
-  if (!process.env.RESEND_FROM_EMAIL) throw new Error('Falta RESEND_FROM_EMAIL.')
-
-  const subject = lead.locale === 'en'
-    ? `New quote request from ${lead.fullName}`
-    : `Nueva solicitud de cotización de ${lead.fullName}`
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: process.env.RESEND_FROM_EMAIL,
-      to: [lead.recipientEmail],
-      reply_to: lead.email,
-      subject,
-      text: formatLeadEmailText(lead),
-      html: formatLeadEmailHtml(lead),
-    }),
-  })
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => null)
-    throw new Error(error?.message || 'Resend no aceptó el envío.')
-  }
 }
 
 async function sendTestimonialEmail(testimonial) {
@@ -922,85 +802,6 @@ async function sendTestimonialEmail(testimonial) {
   }
 }
 
-function formatLeadEmailText(lead) {
-  const labels = lead.locale === 'en'
-    ? {
-        title: 'New quote request',
-        name: 'Name',
-        email: 'Email',
-        phone: 'Phone',
-        message: 'Message',
-        locale: 'Language',
-        createdAt: 'Created at',
-      }
-    : {
-        title: 'Nueva solicitud de cotización',
-        name: 'Nombre',
-        email: 'Correo',
-        phone: 'Teléfono',
-        message: 'Mensaje',
-        locale: 'Idioma',
-        createdAt: 'Fecha',
-      }
-
-  return [
-    labels.title,
-    `${labels.name}: ${lead.fullName}`,
-    `${labels.email}: ${lead.email}`,
-    `${labels.phone}: ${lead.phone}`,
-    `${labels.locale}: ${lead.locale.toUpperCase()}`,
-    `${labels.createdAt}: ${lead.createdAt}`,
-    '',
-    `${labels.message}:`,
-    lead.message,
-  ].join('\n')
-}
-
-function formatLeadEmailHtml(lead) {
-  const labels = lead.locale === 'en'
-    ? {
-        title: 'New quote request',
-        name: 'Name',
-        email: 'Email',
-        phone: 'Phone',
-        message: 'Message',
-        locale: 'Language',
-        createdAt: 'Created at',
-      }
-    : {
-        title: 'Nueva solicitud de cotización',
-        name: 'Nombre',
-        email: 'Correo',
-        phone: 'Teléfono',
-        message: 'Mensaje',
-        locale: 'Idioma',
-        createdAt: 'Fecha',
-      }
-
-  return `
-    <div style="margin:0;padding:32px 16px;background:#f4f7fb;font-family:Arial,sans-serif;color:#102544;">
-      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #dbe3ee;border-radius:18px;overflow:hidden;box-shadow:0 18px 48px rgba(16,37,68,0.08);">
-        <div style="padding:28px 32px;background:linear-gradient(135deg,#0a2a57,#123d79);color:#ffffff;">
-          <div style="font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;opacity:0.82;">Cortes Rodriguez Asesores</div>
-          <h1 style="margin:10px 0 0;font-size:28px;line-height:1.2;">${escapeHtml(labels.title)}</h1>
-        </div>
-        <div style="padding:28px 32px;">
-          <div style="display:grid;gap:14px;">
-            ${renderEmailRow(labels.name, lead.fullName)}
-            ${renderEmailRow(labels.email, lead.email)}
-            ${renderEmailRow(labels.phone, lead.phone)}
-            ${renderEmailRow(labels.locale, lead.locale.toUpperCase())}
-            ${renderEmailRow(labels.createdAt, lead.createdAt)}
-          </div>
-          <div style="margin-top:24px;padding:20px 22px;background:#f7f9fc;border:1px solid #e3eaf3;border-radius:14px;">
-            <div style="margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#5b6d85;">${escapeHtml(labels.message)}</div>
-            <p style="margin:0;font-size:15px;line-height:1.7;color:#102544;">${escapeHtml(lead.message).replace(/\n/g, '<br />')}</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  `
-}
 
 function formatTestimonialEmailText(testimonial) {
   const labels = testimonial.locale === 'en'
@@ -1103,35 +904,6 @@ function renderEmailRow(label, value) {
   `
 }
 
-function serializeLeadSummary(row) {
-  return {
-    id: toNumber(row.id),
-    locale: String(row.locale),
-    fullName: String(row.full_name),
-    email: String(row.email),
-    phone: String(row.phone),
-    recipientEmail: String(row.recipient_email),
-    emailStatus: String(row.email_status),
-    createdAt: String(row.created_at),
-    messagePreview: truncateText(String(row.message), 140),
-  }
-}
-
-function serializeLeadDetail(row) {
-  return {
-    id: toNumber(row.id),
-    locale: String(row.locale),
-    fullName: String(row.full_name),
-    email: String(row.email),
-    phone: String(row.phone),
-    message: String(row.message),
-    recipientEmail: String(row.recipient_email),
-    emailStatus: String(row.email_status),
-    emailError: row.email_error ? String(row.email_error) : '',
-    createdAt: String(row.created_at),
-  }
-}
-
 function serializeTestimonialSummary(row) {
   return {
     id: toNumber(row.id),
@@ -1221,20 +993,28 @@ class HttpError extends Error {
   }
 }
 
-if (isProduction) {
-  app.use(express.static(path.join(__dirname, 'dist')))
-  app.use((_req, res) => {
-    res.sendFile(path.join(__dirname, 'dist/index.html'))
-  })
-} else {
-  const vite = await createViteServer({
-    server: { middlewareMode: true },
-    appType: 'spa',
-  })
-  app.use(vite.middlewares)
-}
+const isEntryPoint = process.argv[1]
+  ? pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
+  : false
 
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Servidor listo en http://localhost:${port}`)
-  console.log(`Admin: http://localhost:${port}/admin`)
-})
+if (isEntryPoint) {
+  await ensureSchema()
+
+  if (isProduction) {
+    app.use(express.static(path.join(__dirname, 'dist')))
+    app.use((_req, res) => {
+      res.sendFile(path.join(__dirname, 'dist/index.html'))
+    })
+  } else {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    })
+    app.use(vite.middlewares)
+  }
+
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`Servidor listo en http://localhost:${port}`)
+    console.log(`Admin: http://localhost:${port}/admin`)
+  })
+}

@@ -38,7 +38,7 @@ import {
   UsersRound,
   X,
 } from 'lucide-vue-next'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { cloneDefaultContent } from './contentDefaults'
 import {
   ApiError,
@@ -46,8 +46,11 @@ import {
   fetchAdminLeads,
   fetchAdminTestimonialDetail,
   fetchAdminTestimonials,
+  fetchAttachmentRequirements,
   fetchContent,
   fetchContentVersions,
+  fetchPublicCatalog,
+  fetchQuoteAttributionToken,
   loginAdmin,
   reviewAdminTestimonial,
   restoreContentVersion,
@@ -104,8 +107,21 @@ const hasUnsavedChanges = ref(false)
 const leadModalOpen = ref(false)
 const testimonialModalOpen = ref(false)
 const leadForm = ref(createEmptyLeadForm(activeLocale.value))
-const leadFormStatus = ref('')
+const leadFormError = ref('')
 const leadFormSubmitting = ref(false)
+const quoteCatalog = ref([])
+const quoteCatalogLoading = ref(false)
+const quoteAttributionToken = ref('')
+const quoteSuccess = ref(null)
+const quoteIdempotencyKey = ref('')
+const quotePayloadSignature = ref('')
+const quoteTurnstileContainer = ref(null)
+const quoteTurnstileEnabled = ref(false)
+const quoteTurnstileToken = ref('')
+const quoteTurnstileError = ref('')
+const quoteTurnstileLoading = ref(false)
+const quoteAttachments = ref([])
+let quoteTurnstileWidgetId = null
 const testimonialForm = ref(createEmptyTestimonialForm(activeLocale.value))
 const testimonialFormStatus = ref('')
 const testimonialFormSubmitting = ref(false)
@@ -147,38 +163,211 @@ const adminTestimonialsPageSize = 10
 const quoteFormCopy = {
   es: {
     modalTitle: 'Solicita tu cotización',
-    modalText: 'Déjanos tus datos y te contactaremos para preparar una propuesta a la medida.',
+    modalText: 'Cuéntanos qué necesitas y te contactaremos con una propuesta a la medida.',
     fullNameLabel: 'Nombre completo',
     fullNamePlaceholder: 'Tu nombre o empresa',
     emailLabel: 'Correo electrónico',
     emailPlaceholder: 'nombre@empresa.com',
     phoneLabel: 'Teléfono',
     phonePlaceholder: '+57 300 123 4567',
-    messageLabel: 'Mensaje',
-    messagePlaceholder: 'Cuéntanos qué operación necesitas cotizar.',
-    submitLabel: 'Enviar solicitud',
-    submittingLabel: 'Enviando...',
+    legalEntityLabel: 'Constitución legal',
+    legalEntityPlaceholder: 'Selecciona una opción',
+    legalEntityNatural: 'Persona natural',
+    legalEntityJuridica: 'Persona jurídica',
+    serviceLabel: 'Servicio general',
+    servicePlaceholder: 'Selecciona un servicio',
+    consultationLabel: 'Tipo de consulta',
+    consultationPlaceholder: 'Selecciona una consulta',
+    consultationHint: 'Las opciones dependen del servicio seleccionado.',
+    productLabel: 'Tipo de producto',
+    productPlaceholder: 'Selecciona una opción',
+    questionLabel: '¿Qué necesitas consultar?',
+    questionPlaceholder: 'Describe tu operación o la pregunta que deseas resolver.',
+    questionHint: 'Mínimo 20 caracteres.',
+    turnstileLabel: 'Verificación de seguridad',
+    turnstileRequired: 'Completa la verificación de seguridad.',
+    turnstileLoadError: 'No se pudo cargar la verificación de seguridad. Recarga la página e inténtalo de nuevo.',
+    turnstileRetry: 'Reintentar verificación',
+    turnstileRetrying: 'Reintentando…',
+    submitLabel: 'Solicitar cotización',
+    submittingLabel: 'Enviando…',
     closeLabel: 'Cerrar',
-    success: 'Recibimos tu solicitud. Pronto te contactaremos.',
-    successWithWarning: 'Recibimos tu solicitud, pero hubo un problema al enviar la notificación por correo.',
+    validationFullName: 'Escribe un nombre de 2 a 120 caracteres.',
+    validationFullNameFormat: 'El nombre solo puede contener letras, espacios, puntos o guiones.',
+    validationLegalEntity: 'Selecciona la constitución legal.',
+    validationEmail: 'Ingresa un correo electrónico válido.',
+    validationPhone: 'El teléfono debe tener entre 7 y 15 dígitos.',
+    validationService: 'Selecciona un servicio general.',
+    validationConsultation: 'Selecciona un tipo de consulta.',
+    validationProduct: 'Selecciona el tipo de producto.',
+    validationQuestion: 'La consulta debe tener entre 20 y 3000 caracteres.',
+    attributionError: 'No pudimos preparar el formulario. Recarga la página e inténtalo de nuevo.',
+    duplicate: 'Ya registramos una cotización con estos datos. Revisa tu correo o contáctanos para continuar.',
+    requestFailed: 'No pudimos enviar tu cotización. Inténtalo de nuevo.',
+    successTitle: 'Cotización recibida',
+    successText: 'Recibimos tu cotización. Nuestro equipo la revisará y te contactará con la propuesta.',
+    successReference: 'Referencia',
+    successContinue: 'Continuar con la reserva',
+    successContinueHint: 'La reserva y el pago se completan en el siguiente paso.',
+    successClose: 'Cerrar',
   },
   en: {
     modalTitle: 'Request your quote',
-    modalText: 'Leave your details and we will contact you to prepare a tailored proposal.',
+    modalText: 'Tell us what you need and we will contact you with a tailored proposal.',
     fullNameLabel: 'Full name',
     fullNamePlaceholder: 'Your name or company',
     emailLabel: 'Email address',
     emailPlaceholder: 'name@company.com',
     phoneLabel: 'Phone',
     phonePlaceholder: '+1 555 123 4567',
-    messageLabel: 'Message',
-    messagePlaceholder: 'Tell us what kind of operation you need to quote.',
-    submitLabel: 'Send request',
-    submittingLabel: 'Sending...',
+    legalEntityLabel: 'Legal entity type',
+    legalEntityPlaceholder: 'Select an option',
+    legalEntityNatural: 'Individual',
+    legalEntityJuridica: 'Legal entity',
+    serviceLabel: 'General service',
+    servicePlaceholder: 'Select a service',
+    consultationLabel: 'Consultation type',
+    consultationPlaceholder: 'Select a consultation',
+    consultationHint: 'Options depend on the selected service.',
+    productLabel: 'Product type',
+    productPlaceholder: 'Select an option',
+    questionLabel: 'What would you like to ask?',
+    questionPlaceholder: 'Describe your operation or the question you need answered.',
+    questionHint: 'At least 20 characters.',
+    turnstileLabel: 'Security check',
+    turnstileRequired: 'Complete the security check.',
+    turnstileLoadError: 'The security check could not be loaded. Refresh the page and try again.',
+    turnstileRetry: 'Retry security check',
+    turnstileRetrying: 'Retrying…',
+    submitLabel: 'Request quote',
+    submittingLabel: 'Sending…',
     closeLabel: 'Close',
-    success: 'We received your request. We will contact you soon.',
-    successWithWarning: 'We received your request, but there was a problem sending the email notification.',
+    validationFullName: 'Enter a name between 2 and 120 characters.',
+    validationFullNameFormat: 'Name can only contain letters, spaces, periods, or hyphens.',
+    validationLegalEntity: 'Select the legal entity type.',
+    validationEmail: 'Enter a valid email address.',
+    validationPhone: 'Phone number must contain 7–15 digits.',
+    validationService: 'Select a general service.',
+    validationConsultation: 'Select a consultation type.',
+    validationProduct: 'Select the product type.',
+    validationQuestion: 'Your question must be 20–3,000 characters.',
+    attributionError: 'We could not prepare the form. Refresh the page and try again.',
+    duplicate: 'We already received a quote with these details. Check your email or contact us to continue.',
+    requestFailed: 'We could not send your quote request. Please try again.',
+    successTitle: 'Quote received',
+    successText: 'We received your quote request. Our team will review it and contact you with a proposal.',
+    successReference: 'Reference',
+    successContinue: 'Continue to booking',
+    successContinueHint: 'Booking and payment are completed in the next step.',
+    successClose: 'Close',
   },
+}
+
+// The quote endpoint only accepts these general services.
+const quoteServiceCodes = ['importacion', 'exportacion', 'agente_carga']
+const quoteProductOptions = [
+  { value: 'vehiculos', es: 'Vehículos', en: 'Vehicles' },
+  { value: 'mercancias', es: 'Mercancías', en: 'Goods' },
+]
+const quoteLegalEntityOptions = [
+  { value: 'natural', es: 'Persona natural', en: 'Individual' },
+  { value: 'juridica', es: 'Persona jurídica', en: 'Legal entity' },
+]
+
+// Used when the public catalog is unavailable (for example while the landing
+// request feature flag is off). Codes match the seeded operations catalog;
+// prices are never sent or shown from here, the server remains the authority.
+const quoteCatalogFallback = [
+  { serviceCode: 'importacion', consultationCode: 'consulta_basica' },
+  { serviceCode: 'importacion', consultationCode: 'datos_legales' },
+  { serviceCode: 'importacion', consultationCode: 'importacion_casa' },
+  { serviceCode: 'exportacion', consultationCode: 'consulta_basica' },
+  { serviceCode: 'exportacion', consultationCode: 'datos_legales' },
+  { serviceCode: 'agente_carga', consultationCode: 'consulta_basica' },
+]
+
+const quoteCatalogLabels = {
+  services: {
+    importacion: { es: 'Importación', en: 'Import' },
+    exportacion: { es: 'Exportación', en: 'Export' },
+    agente_carga: { es: 'Agente de carga', en: 'Freight forwarding' },
+    asesoria_personalizada: { es: 'Asesoría personalizada', en: 'Personalized advisory' },
+  },
+  consultations: {
+    consulta_basica: {
+      es: 'Consulta básica',
+      en: 'Basic consultation',
+      esDescription: 'Orientación inicial sobre una operación de comercio exterior.',
+      enDescription: 'Initial guidance on an international trade operation.',
+    },
+    datos_legales: {
+      es: 'Consulta de datos legales',
+      en: 'Legal data consultation',
+      esDescription: 'Revisión y orientación sobre requisitos y datos legales.',
+      enDescription: 'Review and guidance on legal requirements and information.',
+    },
+    importacion_casa: {
+      es: 'Importación de casa',
+      en: 'Household goods import',
+      esDescription: 'Orientación para importar bienes de uso doméstico.',
+      enDescription: 'Guidance on importing household goods.',
+    },
+  },
+}
+
+// La matriz documental se consulta al Worker (operations.request_attachment_requirements);
+// este componente no mantiene categorías ni obligatoriedad hardcodeadas.
+const quoteAttachmentRequirements = ref([])
+let quoteRequirementsRequestId = 0
+
+async function loadQuoteAttachmentRequirements(serviceType) {
+  const requestId = ++quoteRequirementsRequestId
+  quoteAttachmentRequirements.value = []
+  if (!serviceType) return
+  const requirements = await fetchAttachmentRequirements({ serviceType, stage: 'cotizacion' })
+  if (requestId !== quoteRequirementsRequestId) return
+  quoteAttachmentRequirements.value = requirements.map((requirement) => ({
+    category: requirement.category,
+    es: requirement.labelEs || requirement.category,
+    en: requirement.labelEn || requirement.labelEs || requirement.category,
+    required: Number(requirement.minFiles || 0) > 0,
+    minFiles: Number(requirement.minFiles || 0),
+    maxFiles: Number(requirement.maxFiles || 1),
+    maxSizeBytes: Number(requirement.maxSizeBytes || 10 * 1024 * 1024),
+    allowedMimeTypes: Array.isArray(requirement.allowedMimeTypes) ? requirement.allowedMimeTypes : [],
+    allowedExtensions: Array.isArray(requirement.allowedExtensions)
+      ? requirement.allowedExtensions.map((extension) => String(extension).toLowerCase())
+      : [],
+  }))
+}
+
+const quoteAttachmentProgress = computed(() => quoteAttachments.value.length ? Math.round(quoteAttachments.value.reduce((sum, item) => sum + item.progress, 0) / quoteAttachments.value.length) : 0)
+
+const quoteServerErrorTranslations = {
+  'El enlace de origen no es válido. Recarga el formulario e inténtalo de nuevo.': 'The source link is invalid. Reload the form and try again.',
+  'El enlace de origen es inválido o venció. Recarga el formulario e inténtalo de nuevo.': 'The source link is invalid or expired. Reload the form and try again.',
+  'La especialidad seleccionada no está disponible.': 'The selected specialty is unavailable.',
+  'Has realizado demasiados intentos. Espera antes de volver a intentarlo.': 'You have made too many attempts. Wait before trying again.',
+  'La base de datos operativa no está configurada.': 'The operations database is not configured.',
+  'El servicio de solicitudes no está disponible.': 'The request service is unavailable.',
+  'El nombre completo es obligatorio.': 'Full name is required.',
+  'El nombre debe tener entre 2 y 120 caracteres y solo puede contener letras, espacios, puntos o guiones.': 'Name must be 2–120 characters and contain only letters, spaces, periods, or hyphens.',
+  'Selecciona la constitución legal.': 'Select the legal entity type.',
+  'El correo electrónico es obligatorio.': 'Email is required.',
+  'Ingresa un correo electrónico válido.': 'Enter a valid email address.',
+  'El teléfono debe tener entre 7 y 15 dígitos y usar un formato válido.': 'Phone number must contain 7–15 digits in a valid format.',
+  'El WhatsApp debe tener entre 7 y 15 dígitos y usar un formato válido.': 'WhatsApp number must contain 7–15 digits in a valid format.',
+  'Selecciona el tipo de servicio.': 'Select the service type.',
+  'Selecciona el tipo de consulta.': 'Select the consultation type.',
+  'Selecciona el tipo de producto.': 'Select the product type.',
+  'Cuéntanos qué necesitas consultar.': 'Tell us what you need to ask about.',
+  'La consulta debe tener entre 20 y 3000 caracteres.': 'Your question must be 20–3,000 characters.',
+  'La clave de envío no es válida. Recarga el formulario e inténtalo de nuevo.': 'The submission key is invalid. Reload the form and try again.',
+  'No se pudo verificar el envío. Actualiza la verificación e inténtalo de nuevo.': 'Could not verify the submission. Refresh the security check and try again.',
+  'Este envío ya fue procesado con otra información. Recarga el formulario para iniciar uno nuevo.': 'This submission was already processed with different information. Reload the form to start a new one.',
+  'Este envío ya fue procesado con otra información.': 'This submission was already processed with different information.',
+  'Esta solicitud ya fue convertida.': 'This request was already converted.',
+  'No fue posible leer los datos enviados.': 'Could not read the submitted data.',
 }
 
 const testimonialFormCopy = {
@@ -230,9 +419,13 @@ function createEmptyLeadForm(locale = 'es') {
   return {
     locale,
     fullName: '',
+    legalEntityType: '',
     email: '',
     phone: '',
-    message: '',
+    serviceType: '',
+    consultationType: '',
+    productType: '',
+    question: '',
   }
 }
 
@@ -278,6 +471,16 @@ const steps = computed(() => site.value.steps || [])
 const socialLinks = computed(() => site.value.socialLinks || [])
 const footerLogoUrl = computed(() => site.value.footer?.logo || logoUrl)
 const leadCopy = computed(() => quoteFormCopy[activeLocale.value] || quoteFormCopy.es)
+const leadServiceOptions = computed(() => {
+  const seen = new Map()
+  for (const item of quoteCatalog.value) {
+    if (!item?.serviceCode || seen.has(item.serviceCode) || !quoteServiceCodes.includes(item.serviceCode)) continue
+    seen.set(item.serviceCode, item)
+  }
+  return [...seen.values()]
+})
+const leadConsultationOptions = computed(() => quoteCatalog.value.filter((item) => item.serviceCode === leadForm.value.serviceType))
+const selectedLeadConsultation = computed(() => leadConsultationOptions.value.find((item) => item.consultationCode === leadForm.value.consultationType) || null)
 const testimonialCopy = computed(() => testimonialFormCopy[activeLocale.value] || testimonialFormCopy.es)
 const testimonialIndex = ref(0)
 const teamIndex = ref(0)
@@ -601,13 +804,241 @@ function openLeadModal() {
   leadModalOpen.value = true
   menuOpen.value = false
   leadForm.value = createEmptyLeadForm(activeLocale.value)
-  leadFormStatus.value = ''
+  leadFormError.value = ''
+  quoteSuccess.value = null
+  quoteIdempotencyKey.value = ''
+  quotePayloadSignature.value = ''
+  quoteAttributionToken.value = ''
+  quoteTurnstileToken.value = ''
+  quoteTurnstileError.value = ''
+  quoteAttachments.value = []
+  loadQuoteAttachmentRequirements('')
+  loadQuoteCatalog()
+  resolveQuoteAttributionToken()
+  initializeQuoteTurnstile()
 }
 
 function closeLeadModal() {
   leadModalOpen.value = false
-  leadFormStatus.value = ''
+  leadFormError.value = ''
   leadFormSubmitting.value = false
+  removeQuoteTurnstile()
+}
+
+async function loadQuoteCatalog() {
+  if (quoteCatalogLoading.value) return
+  if (!quoteCatalog.value.length) quoteCatalog.value = quoteCatalogFallback
+  quoteCatalogLoading.value = true
+  try {
+    const items = await fetchPublicCatalog()
+    if (items.length) quoteCatalog.value = items
+  } catch {
+    quoteCatalog.value = quoteCatalogFallback
+  } finally {
+    quoteCatalogLoading.value = false
+  }
+}
+
+async function resolveQuoteAttributionToken() {
+  const query = new URLSearchParams(window.location.search)
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const directToken = query.get('originToken')
+    || query.get('attributionToken')
+    || hash.get('originToken')
+    || hash.get('attributionToken')
+    || ''
+  if (/^[A-Za-z0-9_-]{40,60}$/.test(directToken)) {
+    quoteAttributionToken.value = directToken
+    return
+  }
+
+  quoteAttributionToken.value = await fetchQuoteAttributionToken()
+}
+
+function removeQuoteTurnstile() {
+  if (quoteTurnstileWidgetId !== null && typeof window.turnstile?.remove === 'function') {
+    window.turnstile.remove(quoteTurnstileWidgetId)
+  }
+  quoteTurnstileWidgetId = null
+  quoteTurnstileToken.value = ''
+}
+
+async function loadQuoteTurnstileScript() {
+  if (typeof window.turnstile?.render === 'function') return
+  document.querySelector('script[src^="https://challenges.cloudflare.com/turnstile/v0/api.js"]')?.remove()
+  await new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    const timer = window.setTimeout(() => finish(new Error('timeout')), 15000)
+    const finish = (error) => {
+      window.clearTimeout(timer)
+      script.removeEventListener('load', onLoad)
+      script.removeEventListener('error', onError)
+      if (error) reject(error)
+      else resolve()
+    }
+    const onLoad = () => typeof window.turnstile?.render === 'function'
+      ? finish()
+      : finish(new Error('unavailable'))
+    const onError = () => finish(new Error('unavailable'))
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+    script.async = true
+    script.defer = true
+    script.addEventListener('load', onLoad, { once: true })
+    script.addEventListener('error', onError, { once: true })
+    document.head.appendChild(script)
+  })
+}
+
+async function initializeQuoteTurnstile() {
+  quoteTurnstileLoading.value = true
+  quoteTurnstileError.value = ''
+  quoteTurnstileEnabled.value = false
+  removeQuoteTurnstile()
+  try {
+    const response = await fetch('/api/public/turnstile-config', { cache: 'no-store' })
+    if (!response.ok) throw new Error('config')
+    const config = await response.json().catch(() => ({}))
+    if (!config.enabled) return
+    if (!config.siteKey) throw new Error('config')
+    quoteTurnstileEnabled.value = true
+    await loadQuoteTurnstileScript()
+    await nextTick()
+    if (!leadModalOpen.value || !quoteTurnstileContainer.value) throw new Error('container')
+    quoteTurnstileWidgetId = window.turnstile.render(quoteTurnstileContainer.value, {
+      sitekey: config.siteKey,
+      action: 'request_create',
+      theme: 'light',
+      callback: (token) => {
+        quoteTurnstileToken.value = token
+        quoteTurnstileError.value = ''
+      },
+      'expired-callback': () => { quoteTurnstileToken.value = '' },
+      'error-callback': () => {
+        quoteTurnstileToken.value = ''
+        quoteTurnstileError.value = leadCopy.value.turnstileRequired
+        return true
+      },
+    })
+  } catch {
+    quoteTurnstileEnabled.value = true
+    quoteTurnstileError.value = leadCopy.value.turnstileLoadError
+  } finally {
+    quoteTurnstileLoading.value = false
+  }
+}
+
+async function retryQuoteTurnstile() {
+  await initializeQuoteTurnstile()
+}
+
+function changeLeadService() {
+  leadForm.value.consultationType = ''
+  quoteAttachments.value = []
+  loadQuoteAttachmentRequirements(leadForm.value.serviceType)
+}
+
+function attachmentCategoryRequirement(category) {
+  return quoteAttachmentRequirements.value.find((requirement) => requirement.category === category)
+}
+
+function attachmentAccept(requirement) {
+  const types = requirement?.allowedMimeTypes?.length
+    ? requirement.allowedMimeTypes
+    : ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
+  const extensions = (requirement?.allowedExtensions || []).map((extension) => `.${extension}`)
+  return [...types, ...extensions].join(',')
+}
+
+function selectQuoteAttachment(event, category) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  const requirement = attachmentCategoryRequirement(category)
+  const allowedTypes = requirement?.allowedMimeTypes?.length ? requirement.allowedMimeTypes : ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
+  const allowedExtensions = requirement?.allowedExtensions || []
+  const extension = String(file.name).toLowerCase().match(/\.([a-z0-9]{1,10})$/)?.[1] || ''
+  const maxSizeBytes = requirement?.maxSizeBytes || 10 * 1024 * 1024
+  if (!allowedTypes.includes(file.type) || (allowedExtensions.length && !allowedExtensions.includes(extension)) || file.size > maxSizeBytes) {
+    leadFormError.value = activeLocale.value === 'en'
+      ? 'The file does not match the type or size allowed for this category.'
+      : 'El archivo no cumple el tipo o tamaño permitido para esta categoría.'
+    return
+  }
+  quoteAttachments.value = [...quoteAttachments.value.filter((item) => item.category !== category), { file, category, progress: 100 }]
+  leadFormError.value = ''
+}
+
+function removeQuoteAttachment(category) {
+  quoteAttachments.value = quoteAttachments.value.filter((item) => item.category !== category)
+}
+
+function quoteServiceName(item) {
+  const label = quoteCatalogLabels.services[item?.serviceCode]
+  return label ? label[activeLocale.value] : item?.serviceName || item?.serviceCode || ''
+}
+
+function quoteConsultationName(item) {
+  const label = quoteCatalogLabels.consultations[item?.consultationCode]
+  return label ? label[activeLocale.value] : item?.consultationName || item?.consultationCode || ''
+}
+
+function quoteConsultationDescription(item) {
+  if (!item) return ''
+  const label = quoteCatalogLabels.consultations[item.consultationCode]
+  if (label) return activeLocale.value === 'en' ? label.enDescription : label.esDescription
+  return item.consultationDescription || ''
+}
+
+function quoteProductLabel(option) {
+  return activeLocale.value === 'en' ? option.en : option.es
+}
+
+function normalizeQuotePhone(value) {
+  return String(value || '').replace(/[\s().-]/g, '')
+}
+
+function validateLeadForm() {
+  const copy = leadCopy.value
+  const fullName = String(leadForm.value.fullName || '').trim()
+  const email = String(leadForm.value.email || '').trim()
+  const phone = normalizeQuotePhone(leadForm.value.phone)
+  const question = String(leadForm.value.question || '').trim()
+
+  if (fullName.length < 2 || fullName.length > 120) return copy.validationFullName
+  if (!/^[\p{L}\p{M}][\p{L}\p{M}\s.'’-]*$/u.test(fullName)) return copy.validationFullNameFormat
+  if (!quoteLegalEntityOptions.some((option) => option.value === leadForm.value.legalEntityType)) return copy.validationLegalEntity
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return copy.validationEmail
+  if (phone && !/^\+?\d{7,15}$/.test(phone)) return copy.validationPhone
+  if (!quoteServiceCodes.includes(leadForm.value.serviceType)) return copy.validationService
+  if (!leadConsultationOptions.value.some((item) => item.consultationCode === leadForm.value.consultationType)) return copy.validationConsultation
+  if (!quoteProductOptions.some((option) => option.value === leadForm.value.productType)) return copy.validationProduct
+  if (question.length < 20 || question.length > 3000) return copy.validationQuestion
+  const missing = quoteAttachmentRequirements.value.find((item) => item.required && !quoteAttachments.value.some((file) => file.category === item.category))
+  if (missing) return activeLocale.value === 'en' ? `Attach the required file: ${missing.en}.` : `Adjunta el archivo obligatorio: ${missing.es}.`
+  return ''
+}
+
+function localizedQuoteError(message) {
+  if (activeLocale.value !== 'en') return message
+  return quoteServerErrorTranslations[message] || leadCopy.value.requestFailed
+}
+
+function isDuplicateQuoteError(error) {
+  return error instanceof ApiError && (
+    error.payload?.duplicate === true
+    || ['duplicate', 'duplicate_quote', 'quote_exists', 'quote_converted'].includes(error.payload?.code)
+    || error.message === 'Esta solicitud ya fue convertida.'
+  )
+}
+
+function safeQuoteContinuationUrl(value) {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) return ''
+  try {
+    const url = new URL(value, window.location.origin)
+    return url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : ''
+  } catch {
+    return ''
+  }
 }
 
 function openTestimonialModal() {
@@ -727,18 +1158,75 @@ function sortLeadsNewestFirst(items) {
 }
 
 async function submitLead() {
-  leadFormSubmitting.value = true
-  leadFormStatus.value = ''
+  leadFormError.value = ''
+  const validationError = validateLeadForm()
+  if (validationError) {
+    leadFormError.value = validationError
+    return
+  }
 
+  if (quoteTurnstileEnabled.value && !quoteTurnstileToken.value) {
+    leadFormError.value = quoteTurnstileError.value || leadCopy.value.turnstileRequired
+    return
+  }
+
+  leadFormSubmitting.value = true
   try {
-    const response = await submitQuoteRequest({
-      ...leadForm.value,
+    if (!/^[A-Za-z0-9_-]{40,60}$/.test(quoteAttributionToken.value)) {
+      quoteAttributionToken.value = await fetchQuoteAttributionToken()
+    }
+    if (!/^[A-Za-z0-9_-]{40,60}$/.test(quoteAttributionToken.value)) {
+      leadFormError.value = leadCopy.value.attributionError
+      return
+    }
+
+    const payload = {
+      fullName: String(leadForm.value.fullName).trim(),
+      legalEntityType: leadForm.value.legalEntityType,
+      email: String(leadForm.value.email).trim().toLowerCase(),
+      phone: normalizeQuotePhone(leadForm.value.phone),
+      serviceType: leadForm.value.serviceType,
+      consultationType: leadForm.value.consultationType,
+      productType: leadForm.value.productType,
+      question: String(leadForm.value.question).trim(),
       locale: activeLocale.value,
-    })
+      attributionToken: quoteAttributionToken.value,
+      attachments: quoteAttachments.value,
+    }
+
+    // The Turnstile token is single-use, so it is excluded from the
+    // idempotency signature to keep retries deduplicated server-side.
+    const signature = JSON.stringify({ ...payload, attachments: quoteAttachments.value.map(({ category, file }) => [category, file.name, file.size, file.lastModified]) })
+    if (!quoteIdempotencyKey.value || quotePayloadSignature.value !== signature) {
+      quoteIdempotencyKey.value = globalThis.crypto?.randomUUID?.() || `quote-${Date.now()}`
+      quotePayloadSignature.value = signature
+    }
+    payload.idempotencyKey = quoteIdempotencyKey.value
+    if (quoteTurnstileToken.value) payload.turnstileToken = quoteTurnstileToken.value
+
+    const response = await submitQuoteRequest(payload)
+    const quoteToken = typeof response.quoteToken === 'string' && /^[A-Za-z0-9_-]{40,60}$/.test(response.quoteToken)
+      ? response.quoteToken
+      : ''
+    const continuationUrl = safeQuoteContinuationUrl(
+      response.quoteUrl || response.continuationUrl || response.quotePath || response.continuationPath,
+    ) || (quoteToken ? `/solicitud#quoteToken=${encodeURIComponent(quoteToken)}` : '')
+    quoteSuccess.value = {
+      reference: response.reference || response.quoteReference || '',
+      continuationUrl,
+    }
     leadForm.value = createEmptyLeadForm(activeLocale.value)
-    leadFormStatus.value = response.emailSent ? leadCopy.value.success : leadCopy.value.successWithWarning
+    removeQuoteTurnstile()
   } catch (error) {
-    leadFormStatus.value = error.message
+    leadFormError.value = isDuplicateQuoteError(error)
+      ? leadCopy.value.duplicate
+      : error instanceof ApiError
+        ? localizedQuoteError(error.message)
+        : leadCopy.value.requestFailed
+    if (quoteTurnstileEnabled.value && typeof window.turnstile?.reset === 'function' && quoteTurnstileWidgetId !== null) {
+      window.turnstile.reset(quoteTurnstileWidgetId)
+      quoteTurnstileToken.value = ''
+    }
   } finally {
     leadFormSubmitting.value = false
   }
@@ -1284,6 +1772,7 @@ onBeforeUnmount(() => {
   if (heroCarouselTimer) window.clearInterval(heroCarouselTimer)
   if (carouselTimer) window.clearInterval(carouselTimer)
   if (adminToastTimer) window.clearTimeout(adminToastTimer)
+  removeQuoteTurnstile()
 })
 
 watch(draft, () => {
@@ -2269,34 +2758,108 @@ watch(site, (newSite) => {
       </main>
 
       <div v-if="leadModalOpen" class="lead-modal-backdrop" @click.self="closeLeadModal">
-        <div class="lead-modal" role="dialog" aria-modal="true" :aria-label="leadCopy.modalTitle">
+        <div class="lead-modal quote-modal" role="dialog" aria-modal="true" :aria-label="leadCopy.modalTitle">
           <button type="button" class="lead-modal-close" :aria-label="leadCopy.closeLabel" @click="closeLeadModal">
             <X :size="20" />
           </button>
-          <h2>{{ leadCopy.modalTitle }}</h2>
-          <p>{{ leadCopy.modalText }}</p>
-          <form class="lead-form" @submit.prevent="submitLead">
-            <label>
-              {{ leadCopy.fullNameLabel }}
-              <input v-model="leadForm.fullName" :placeholder="leadCopy.fullNamePlaceholder" />
-            </label>
-            <label>
-              {{ leadCopy.emailLabel }}
-              <input v-model="leadForm.email" type="email" :placeholder="leadCopy.emailPlaceholder" />
-            </label>
-            <label>
-              {{ leadCopy.phoneLabel }}
-              <input v-model="leadForm.phone" :placeholder="leadCopy.phonePlaceholder" />
-            </label>
-            <label>
-              {{ leadCopy.messageLabel }}
-              <textarea v-model="leadForm.message" rows="5" :placeholder="leadCopy.messagePlaceholder"></textarea>
-            </label>
-            <button class="admin-save lead-submit-button" type="submit" :disabled="leadFormSubmitting">
-              {{ leadFormSubmitting ? leadCopy.submittingLabel : leadCopy.submitLabel }}
-            </button>
-            <span class="lead-form-status">{{ leadFormStatus }}</span>
-          </form>
+          <template v-if="quoteSuccess">
+            <div class="quote-success" role="status" aria-live="polite">
+              <CheckCircle2 :size="38" />
+              <h2>{{ leadCopy.successTitle }}</h2>
+              <p>{{ leadCopy.successText }}</p>
+              <p v-if="quoteSuccess.reference" class="quote-success-reference">
+                {{ leadCopy.successReference }} <strong>{{ quoteSuccess.reference }}</strong>
+              </p>
+              <template v-if="quoteSuccess.continuationUrl">
+                <p class="lead-form-help">{{ leadCopy.successContinueHint }}</p>
+                <a class="quote-success-continue" :href="quoteSuccess.continuationUrl">{{ leadCopy.successContinue }} <ArrowRight :size="17" /></a>
+              </template>
+              <button type="button" class="quote-success-close" @click="closeLeadModal">{{ leadCopy.successClose }}</button>
+            </div>
+          </template>
+          <template v-else>
+            <h2>{{ leadCopy.modalTitle }}</h2>
+            <p>{{ leadCopy.modalText }}</p>
+            <form class="lead-form" @submit.prevent="submitLead">
+              <div class="lead-form-row">
+                <label>
+                  {{ leadCopy.fullNameLabel }}
+                  <input v-model="leadForm.fullName" :placeholder="leadCopy.fullNamePlaceholder" autocomplete="name" maxlength="120" required />
+                </label>
+                <label>
+                  {{ leadCopy.emailLabel }}
+                  <input v-model="leadForm.email" type="email" :placeholder="leadCopy.emailPlaceholder" autocomplete="email" maxlength="254" required />
+                </label>
+              </div>
+              <div class="lead-form-row">
+                <label>
+                  {{ leadCopy.legalEntityLabel }}
+                  <select v-model="leadForm.legalEntityType" required>
+                    <option value="" disabled>{{ leadCopy.legalEntityPlaceholder }}</option>
+                    <option v-for="option in quoteLegalEntityOptions" :key="option.value" :value="option.value">{{ quoteProductLabel(option) }}</option>
+                  </select>
+                </label>
+                <label>
+                  {{ leadCopy.phoneLabel }}
+                  <input v-model="leadForm.phone" type="tel" inputmode="tel" :placeholder="leadCopy.phonePlaceholder" autocomplete="tel" maxlength="20" />
+                </label>
+              </div>
+              <div class="lead-form-row">
+                <label>
+                  {{ leadCopy.serviceLabel }}
+                  <select v-model="leadForm.serviceType" required @change="changeLeadService">
+                    <option value="" disabled>{{ leadCopy.servicePlaceholder }}</option>
+                    <option v-for="item in leadServiceOptions" :key="item.serviceCode" :value="item.serviceCode">{{ quoteServiceName(item) }}</option>
+                  </select>
+                </label>
+                <label>
+                  {{ leadCopy.consultationLabel }}
+                  <select v-model="leadForm.consultationType" required :disabled="!leadForm.serviceType">
+                    <option value="" disabled>{{ leadCopy.consultationPlaceholder }}</option>
+                    <option v-for="item in leadConsultationOptions" :key="item.consultationCode" :value="item.consultationCode">{{ quoteConsultationName(item) }}</option>
+                  </select>
+                  <small class="lead-form-help">{{ leadCopy.consultationHint }}</small>
+                </label>
+              </div>
+              <small v-if="selectedLeadConsultation" class="lead-form-help">{{ quoteConsultationDescription(selectedLeadConsultation) }}</small>
+              <label>
+                {{ leadCopy.productLabel }}
+                <select v-model="leadForm.productType" required>
+                  <option value="" disabled>{{ leadCopy.productPlaceholder }}</option>
+                  <option v-for="option in quoteProductOptions" :key="option.value" :value="option.value">{{ quoteProductLabel(option) }}</option>
+                </select>
+              </label>
+              <label class="lead-form-full">
+                {{ leadCopy.questionLabel }}
+                <textarea v-model="leadForm.question" rows="5" minlength="20" maxlength="3000" :placeholder="leadCopy.questionPlaceholder" required></textarea>
+                <small class="lead-form-help">{{ leadCopy.questionHint }}</small>
+              </label>
+              <fieldset v-if="leadForm.serviceType" class="lead-form-full quote-attachments-fieldset">
+                <legend>{{ activeLocale === 'en' ? 'Documents and supporting files' : 'Documentos y archivos de soporte' }} <small>· {{ quoteAttachmentProgress }}%</small></legend>
+                <div v-for="requirement in quoteAttachmentRequirements" :key="requirement.category" class="quote-attachment-row">
+                  <div><strong>{{ activeLocale === 'en' ? requirement.en : requirement.es }}</strong><small>{{ requirement.required ? (activeLocale === 'en' ? 'Required' : 'Obligatorio') : (activeLocale === 'en' ? 'Optional' : 'Opcional') }}</small></div>
+                  <template v-if="quoteAttachments.find((item) => item.category === requirement.category)">
+                    <span class="quote-attachment-name">{{ quoteAttachments.find((item) => item.category === requirement.category).file.name }}</span>
+                    <button type="button" class="quote-attachment-remove" @click="removeQuoteAttachment(requirement.category)">{{ activeLocale === 'en' ? 'Remove' : 'Eliminar' }}</button>
+                  </template>
+                  <label v-else class="quote-attachment-upload"><input type="file" :accept="attachmentAccept(requirement)" @change="selectQuoteAttachment($event, requirement.category)" />{{ activeLocale === 'en' ? 'Add file' : 'Agregar archivo' }}</label>
+                </div>
+                <small class="lead-form-help">{{ activeLocale === 'en' ? 'PDF, PNG, JPG or WEBP · max. 10 MB per file. You can replace a file before sending.' : 'PDF, PNG, JPG o WEBP · máximo 10 MB por archivo. Puedes reemplazarlo antes de enviar.' }}</small>
+              </fieldset>
+              <div v-if="quoteTurnstileEnabled" class="lead-form-full">
+                <span class="lead-form-turnstile-label">{{ leadCopy.turnstileLabel }}</span>
+                <div ref="quoteTurnstileContainer" class="quote-turnstile-container"></div>
+                <small v-if="quoteTurnstileError" class="lead-form-help lead-form-error" role="alert">{{ quoteTurnstileError }}</small>
+                <button v-if="quoteTurnstileError" type="button" class="quote-turnstile-retry" :disabled="quoteTurnstileLoading" @click="retryQuoteTurnstile">
+                  {{ quoteTurnstileLoading ? leadCopy.turnstileRetrying : leadCopy.turnstileRetry }}
+                </button>
+              </div>
+              <button class="admin-save lead-submit-button" type="submit" :disabled="leadFormSubmitting || quoteTurnstileLoading">
+                {{ leadFormSubmitting ? leadCopy.submittingLabel : leadCopy.submitLabel }}
+              </button>
+              <span v-if="leadFormError" class="lead-form-status lead-form-error" role="alert">{{ leadFormError }}</span>
+            </form>
+          </template>
         </div>
       </div>
 
@@ -2371,3 +2934,141 @@ watch(site, (newSite) => {
     </template>
   </div>
 </template>
+
+<style scoped>
+.quote-modal {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+
+.lead-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.lead-form select {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  background: var(--white);
+  border: 1px solid #cfd8e5;
+  border-radius: 8px;
+}
+
+.lead-form select:disabled {
+  color: var(--muted);
+  background: #f4f7fb;
+  cursor: not-allowed;
+}
+
+.lead-form select:focus,
+.lead-form input:focus,
+.lead-form textarea:focus {
+  outline: 2px solid rgba(3, 25, 56, 0.18);
+  outline-offset: 1px;
+}
+
+.lead-form-full {
+  display: grid;
+}
+
+.lead-form-help {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.lead-form-error {
+  display: block;
+  padding: 10px 12px;
+  color: #7a1116;
+  background: #fff0f1;
+  border-radius: 8px;
+}
+
+.lead-form-turnstile-label {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.quote-turnstile-container {
+  min-height: 65px;
+}
+
+.quote-turnstile-retry {
+  justify-self: start;
+  padding: 8px 12px;
+  color: var(--navy);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  background: var(--white);
+  border: 1px solid #cfd8e5;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.quote-turnstile-retry:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.quote-success {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  color: var(--navy);
+}
+
+.quote-success h2 {
+  margin: 0;
+}
+
+.quote-success p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.quote-success-reference strong {
+  color: var(--navy);
+  letter-spacing: 0.04em;
+}
+
+.quote-success-continue {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 18px;
+  color: var(--white);
+  font-weight: 800;
+  text-decoration: none;
+  background: var(--navy);
+  border-radius: 8px;
+}
+
+.quote-success-close {
+  padding: 0;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 700;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+@media (max-width: 560px) {
+  .lead-form-row {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

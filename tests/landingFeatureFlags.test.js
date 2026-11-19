@@ -82,6 +82,11 @@ test('only the new request routes are gated; landing quote and client feedback r
   assert.equal(isLandingRequestApi('/api/quote-requests'), false)
 })
 
+test('quote creation and conversion routes are gated with the public request flow', () => {
+  assert.equal(isLandingRequestApi('/api/public/quotes'), true)
+  assert.equal(isLandingRequestApi('/api/public/quotes/convert'), true)
+})
+
 test('request page falls back to the existing landing URL while the flag is off', async () => {
   const response = await worker.fetch(new Request('https://example.test/solicitud'), mockEnv())
   assert.equal(response.status, 302)

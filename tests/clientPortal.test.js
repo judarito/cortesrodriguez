@@ -15,7 +15,7 @@ function queryResult(rows, columns, types = []) {
   }), { headers: { 'content-type': 'application/json' } })
 }
 
-function mockDatabase({ requestExists = true } = {}) {
+function mockDatabase({ requestExists = true, downloadAttachment = null } = {}) {
   const queries = []
   return {
     queries,
@@ -33,6 +33,9 @@ function mockDatabase({ requestExists = true } = {}) {
         }], ['id', 'reference', 'question', 'service_type', 'general_service_name', 'consultation_type_name', 'specialty_name', 'status', 'created_at', 'payment_required', 'service_amount_cents', 'service_currency'], [2950, 25, 25, 25, 25, 25, 25, 25, 1184, 16, 23, 25])
       }
       if (query.includes('FROM operations.request_payments')) return queryResult([], ['status', 'init_point', 'usd_amount_cents', 'cop_amount_cents', 'trm_cop_per_usd', 'trm_effective_date', 'created_at'])
+      if (query.includes('SELECT attachment.storage_key')) {
+        return queryResult(downloadAttachment ? [downloadAttachment] : [], ['storage_key', 'mime_type', 'original_name', 'size_bytes'])
+      }
       if (query.includes('FROM operations.request_attachments')) return queryResult([], ['id', 'original_name', 'mime_type', 'created_at'])
       if (query.includes('FROM operations.expert_responses')) return queryResult([], ['body', 'admin_note', 'updated_at'])
       throw new Error(`Unexpected SQL: ${query}`)
@@ -85,6 +88,74 @@ test('client cannot read a request registered to another email', async () => {
     assert.equal(result.status, 404)
     assert.equal(db.queries.some((query) => query.includes('FROM operations.request_attachments')), false)
     assert.equal(db.queries.some((query) => query.includes('FROM operations.expert_responses')), false)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('client downloads an own validated PDF as an attachment without exposing storage keys', async () => {
+  const db = mockDatabase({
+    downloadAttachment: {
+      storage_key: `requests/${requestId}/${attachmentId}-factura.pdf`,
+      mime_type: 'application/pdf', original_name: 'factura.pdf', size_bytes: 1024,
+    },
+  })
+  const requested = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = db.fetch
+  try {
+    const result = await handleClientPortal(authenticatedRequest(`/api/client/requests/${reference}/attachments/${attachmentId}`), {
+      ...env,
+      GALLERY_IMAGES: { get: async (key) => { requested.push(key); return { body: new Blob(['%PDF-1.4']) } } },
+    })
+    assert.equal(result.status, 200)
+    assert.equal(result.headers.get('content-type'), 'application/pdf')
+    assert.match(result.headers.get('content-disposition'), /^attachment; filename="factura\.pdf"/)
+    assert.equal(result.headers.get('content-length'), '1024')
+    assert.equal(result.headers.get('x-content-type-options'), 'nosniff')
+    assert.equal(result.headers.get('content-security-policy'), "default-src 'none'; sandbox")
+    for (const value of result.headers.values()) assert.equal(value.includes('requests/'), false)
+    assert.deepEqual(requested, [`requests/${requestId}/${attachmentId}-factura.pdf`])
+    const query = db.queries.find((item) => item.includes('SELECT attachment.storage_key'))
+    assert.match(query, /lower\(trim\(request\.email\)\) =/)
+    assert.match(query, /attachment\.status = 'validated'/)
+    assert.match(query, /attachment\.storage_key LIKE/)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('client images keep inline disposition for viewing', async () => {
+  const db = mockDatabase({
+    downloadAttachment: {
+      storage_key: `requests/${requestId}/${attachmentId}-foto.png`,
+      mime_type: 'image/png', original_name: 'foto.png', size_bytes: 64,
+    },
+  })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = db.fetch
+  try {
+    const result = await handleClientPortal(authenticatedRequest(`/api/client/requests/${reference}/attachments/${attachmentId}`), {
+      ...env, GALLERY_IMAGES: { get: async () => ({ body: new Blob(['png']) }) },
+    })
+    assert.equal(result.status, 200)
+    assert.equal(result.headers.get('content-type'), 'image/png')
+    assert.match(result.headers.get('content-disposition'), /^inline; filename="foto\.png"/)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('client attachment download is not found for another owner or an unsupported type', async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    for (const downloadAttachment of [null, {
+      storage_key: `requests/${requestId}/${attachmentId}-svg.svg`,
+      mime_type: 'image/svg+xml', original_name: 'dibujo.svg', size_bytes: 64,
+    }]) {
+      const db = mockDatabase({ downloadAttachment })
+      globalThis.fetch = db.fetch
+      let reads = 0
+      const result = await handleClientPortal(authenticatedRequest(`/api/client/requests/${reference}/attachments/${attachmentId}`), {
+        ...env, GALLERY_IMAGES: { get: async () => { reads += 1; return { body: new Blob(['x']) } } },
+      })
+      assert.equal(result.status, 404)
+      assert.equal(reads, 0)
+    }
   } finally { globalThis.fetch = originalFetch }
 })
 

@@ -43,6 +43,8 @@ const requests = ref([])
 const requestDetail = ref(null)
 const requestDetailTab = ref('overview')
 const requestDetailNotice = ref('')
+const reservationLinkLoading = ref(false)
+const reservationLink = ref('')
 const similarReview = ref(null)
 const similarResponseId = ref('')
 const similarAnswer = ref('')
@@ -132,7 +134,7 @@ function labelValue(value) {
   const labels = {
     natural: 'Persona natural', juridica: 'Persona jurídica',
     importacion: 'Importación', exportacion: 'Exportación', agente_carga: 'Agente de carga',
-    vehiculos: 'Vehículos', mercancias: 'Mercancías',
+    vehiculos: 'Vehículos', mercancias: 'Mercancías', cotizacion: 'Cotización',
     pending: 'Pendiente', in_review: 'En revisión', in_progress: 'En gestión', closed: 'Cerrada', cancelled: 'Cancelada',
     draft: 'Borrador', pending_admin_review: 'Pendiente de revisión', rejected: 'Devuelta al experto', approved: 'Aprobada', sent: 'Enviada al cliente',
   }
@@ -181,7 +183,67 @@ function notificationClass(status) {
   return 'status-amber'
 }
 
+const attachmentCategories = {
+  identity: 'Identidad', operation: 'Operación', payment: 'Pago', other: 'Otros',
+}
+
+function attachmentCategory(attachment) {
+  return tx(attachmentCategories[attachment?.category] || attachment?.categoryLabel || attachment?.category || 'Otros')
+}
+
+function attachmentStatus(attachment) {
+  return tx({ validated: 'Validado', pending: 'Pendiente', rejected: 'Rechazado', deleted: 'Eliminado' }[attachment?.status] || 'Sin estado')
+}
+
+function attachmentStatusClass(attachment) {
+  return { validated: 'status-green', pending: 'status-amber', rejected: 'status-red', deleted: 'status-red' }[attachment?.status] || 'status-amber'
+}
+
+function attachmentDownloadUrl(attachment) {
+  const requestId = requestDetail.value?.request?.id
+  if (!requestId || !attachment?.id) return ''
+  return `/api/app/requests/${encodeURIComponent(requestId)}/attachments/${encodeURIComponent(attachment.id)}`
+}
+
+const canReadAttachments = computed(() => Boolean(user.value?.permissions?.includes('attachments.read') && (isAdmin.value || isExpert.value)))
+const visibleAttachments = computed(() => {
+  if (!canReadAttachments.value) return []
+  return (requestDetail.value?.attachments || []).filter((attachment) => attachment?.status !== 'deleted')
+})
+const attachmentGroups = computed(() => {
+  const groups = new Map()
+  visibleAttachments.value.forEach((attachment) => {
+    const category = attachmentCategory(attachment)
+    if (!groups.has(category)) groups.set(category, [])
+    groups.get(category).push(attachment)
+  })
+  return [...groups].map(([category, items]) => ({ category, items }))
+})
+const attachmentGaps = computed(() => canReadAttachments.value ? (requestDetail.value?.gaps || requestDetail.value?.attachmentGaps || []) : [])
+
+function isDownloadableAttachment(attachment) {
+  const mimeType = String(attachment?.mimeType || attachment?.mime_type || '').toLowerCase()
+  return canReadAttachments.value && attachment?.status === 'validated' && (mimeType === 'application/pdf' || mimeType.startsWith('image/'))
+}
+
+async function downloadAttachment(attachment) {
+  if (!isDownloadableAttachment(attachment)) return
+  requestDetailError.value = ''
+  try {
+    const response = await appFetch(attachmentDownloadUrl(attachment), { headers: { Authorization: `Bearer ${token.value}` } })
+    if (!response.ok) throw new Error('No se pudo descargar el documento.')
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = attachment.originalName || attachment.name || 'documento'
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (downloadError) { requestDetailError.value = downloadError.message }
+}
+
 function statusClass(status) {
+  if (status === 'cotizacion') return 'status-violet'
   if (status === 'closed' || status === 'approved') return 'status-green'
   if (status === 'in_progress') return 'status-blue'
   if (['cancelled', 'rejected', 'refunded', 'charged_back'].includes(status)) return 'status-red'
@@ -304,6 +366,7 @@ async function openRequestDetail(item, { refresh = false } = {}) {
     requestDetail.value = null
     requestDetailTab.value = 'overview'
     requestDetailNotice.value = ''
+    reservationLink.value = ''
     similarReview.value = null
     similarResponseId.value = ''
     similarAnswer.value = ''
@@ -342,6 +405,24 @@ async function openRequestDetail(item, { refresh = false } = {}) {
   } finally {
     requestDetailLoading.value = false
   }
+}
+
+async function issueReservationLink() {
+  if (!isAdmin.value || !requestDetail.value?.request?.id || reservationLinkLoading.value) return
+  reservationLinkLoading.value = true
+  requestDetailError.value = ''
+  requestDetailNotice.value = ''
+  try {
+    const id = requestDetail.value.request.id
+    const response = await appFetch(`/api/app/requests/${id}/reservation-link`, { method: 'POST', headers: { Authorization: `Bearer ${token.value}` } })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || 'No se pudo generar el enlace de reserva.')
+    reservationLink.value = data.reservationUrl || ''
+    await navigator.clipboard?.writeText(reservationLink.value)
+    requestDetailNotice.value = 'Enlace generado y copiado. Compártelo con el cliente; vence en 2 horas.'
+  } catch (error) {
+    requestDetailError.value = error.message
+  } finally { reservationLinkLoading.value = false }
 }
 
 async function resolveSimilarRequest(action) {
@@ -387,6 +468,10 @@ async function addRequestInternalComment() {
 
 async function transitionRequest(action) {
   if (!requestDetail.value || requestTransitionSaving.value) return
+  if (requestDetail.value.request.status === 'cotizacion') {
+    requestActivityNotice.value = 'Las cotizaciones no pueden cambiarse desde esta acción; deben convertirse desde su enlace de reserva.'
+    return
+  }
   const actionNames = { cancel: 'cancelar', close: 'cerrar', reopen: 'reabrir' }
   const reason = window.prompt(`Indica el motivo para ${actionNames[action]} esta solicitud (mínimo 5 caracteres):`)
   if (reason === null) return
@@ -458,7 +543,7 @@ async function reviewRequestResponse(expertResponse, action) {
 }
 
 async function verifyRequestPayment() {
-  if (!isAdmin.value || !requestDetail.value) return
+  if (!isAdmin.value || !requestDetail.value || requestDetail.value.request.status === 'cotizacion') return
   const requestId = requestDetail.value.request.id
   paymentVerifying.value = true
   paymentVerificationResult.value = null
@@ -484,7 +569,7 @@ async function verifyRequestPayment() {
 }
 
 async function assignRequestExpert() {
-  if (!requestDetail.value || !assignmentExpertId.value) return
+  if (!requestDetail.value || !assignmentExpertId.value || requestDetail.value.request.status === 'cotizacion') return
   assignmentSaving.value = true
   requestDetailError.value = ''
   const requestId = requestDetail.value.request.id
@@ -810,6 +895,10 @@ onMounted(restoreSession)
           <p class="eyebrow">Detalle de la solicitud</p>
           <h2>{{ requestDetail.request.reference }}</h2>
           <span :class="['status-pill', statusClass(requestDetail.request.status)]"><i></i>{{ labelValue(requestDetail.request.status) }}</span>
+          <div v-if="isAdmin && requestDetail.request.status === 'cotizacion'" class="request-detail-actions">
+            <button type="button" class="primary-button compact" :disabled="reservationLinkLoading" @click="issueReservationLink">{{ reservationLinkLoading ? 'Generando…' : 'Generar enlace de reserva' }}</button>
+            <a v-if="reservationLink" class="secondary-button compact" :href="reservationLink" target="_blank" rel="noopener">Abrir enlace</a>
+          </div>
           <p v-if="requestDetailError" class="request-error" role="alert">{{ requestDetailError }}</p>
           <nav class="request-detail-tabs" aria-label="Secciones del detalle">
             <button type="button" :aria-pressed="requestDetailTab === 'overview'" @click="requestDetailTab = 'overview'">{{ tx('Resumen') }}</button>
@@ -818,6 +907,7 @@ onMounted(restoreSession)
             <button type="button" :aria-pressed="requestDetailTab === 'responses'" @click="requestDetailTab = 'responses'">{{ tx('Respuestas') }}</button>
             <button type="button" :aria-pressed="requestDetailTab === 'activity'" @click="requestDetailTab = 'activity'">{{ tx('Actividad') }}</button>
             <button type="button" :aria-pressed="requestDetailTab === 'history'" @click="requestDetailTab = 'history'">{{ tx('Historial') }}</button>
+            <button v-if="visibleAttachments.length" type="button" :aria-pressed="requestDetailTab === 'attachments'" @click="requestDetailTab = 'attachments'">{{ tx('Documentos') }} <span class="attachment-count">{{ visibleAttachments.length }}</span></button>
           </nav>
           <p v-if="requestDetailNotice" class="security-notice" role="status">{{ requestDetailNotice }}</p>
           <section v-if="requestDetailTab === 'overview'" class="detail-section"><h3>{{ tx('Pregunta del cliente') }}</h3><p class="request-question-text">{{ requestDetail.request.question || tx('No se registró una pregunta para esta solicitud.') }}</p></section>
@@ -837,6 +927,7 @@ onMounted(restoreSession)
           <section v-show="requestDetailTab === 'activity'" class="detail-section"><h3>Notas internas</h3><form class="request-comment-form" @submit.prevent="addRequestInternalComment"><label for="request-internal-comment">Solo visible para el equipo operativo</label><textarea id="request-internal-comment" v-model="requestInternalComment" rows="3" maxlength="5000" placeholder="Escribe una nota interna…"></textarea><button class="secondary-button compact" type="submit" :disabled="requestCommentSaving || !requestInternalComment.trim()">{{ requestCommentSaving ? 'Guardando…' : 'Agregar nota' }}</button></form></section>
           <section v-show="requestDetailTab === 'activity'" class="detail-section"><h3>Actividad de la solicitud</h3><div v-if="requestActivityError" class="request-error" role="alert">{{ requestActivityError }}</div><ol class="request-activity-timeline"><li v-for="activity in requestDetail.activity || []" :key="activity.id" :class="{ 'activity-comment': activity.kind === 'internal_comment' }"><span class="activity-dot"></span><div><strong>{{ tx(activity.summary) }}</strong><p v-if="activity.body">{{ tx(activity.body) }}</p><small>{{ activity.actorName }} · {{ formatDate(activity.occurredAt) }}</small></div></li><li v-if="!(requestDetail.activity || []).length" class="activity-empty">No hay actividad registrada.</li></ol></section>
           <section v-show="requestDetailTab === 'history'" class="detail-section"><h3>Historial del cliente</h3><div class="request-history"><div v-for="historyItem in requestDetail.history" :key="historyItem.id" class="request-history-item"><div><strong>{{ historyItem.reference }}</strong><span>{{ labelValue(historyItem.serviceType) }} · {{ labelValue(historyItem.productType) }}</span></div><span :class="['status-pill', statusClass(historyItem.status)]"><i></i>{{ labelValue(historyItem.status) }}</span></div></div></section>
+          <section v-if="requestDetailTab === 'attachments' && (visibleAttachments.length || attachmentGaps.length)" class="detail-section attachments-section"><div class="panel-heading"><div><h3>{{ tx('Documentos adjuntos') }}</h3><p>{{ tx('Agrupados por categoría y estado. El permiso y la titularidad se validan en el servidor.') }}</p></div><span class="attachment-count">{{ visibleAttachments.length }}</span></div><div v-if="attachmentGaps.length" class="attachment-gaps"><h4>{{ tx('Documentos faltantes') }}</h4><ul><li v-for="gap in attachmentGaps" :key="gap.category || gap.code"><strong>{{ tx(gap.label || gap.labelEs || gap.label_es || gap.category) }}</strong><span>{{ tx('Faltan') }}: {{ Math.max(Number(gap.minFiles || gap.required || 1) - Number(gap.validatedCount || gap.validated_count || 0), 0) }}</span></li></ul></div><div v-for="group in attachmentGroups" :key="group.category" class="attachment-group"><h4>{{ group.category }}</h4><article v-for="attachment in group.items" :key="attachment.id" class="attachment-card"><div class="attachment-copy"><strong>{{ attachment.originalName || attachment.name || 'Documento sin nombre' }}</strong><span>{{ attachment.mimeType || attachment.mime_type || 'MIME no informado' }} · {{ attachment.sizeBytes ? `${Math.ceil(attachment.sizeBytes / 1024)} KB` : 'Tamaño no informado' }}</span></div><span :class="['status-pill', attachmentStatusClass(attachment)]"><i></i>{{ attachmentStatus(attachment) }}</span><button v-if="isDownloadableAttachment(attachment)" type="button" class="secondary-button compact" @click="downloadAttachment(attachment)">{{ tx('Descargar') }}</button><span v-else class="attachment-unavailable">{{ tx('No disponible') }}</span></article></div></section>
         </template>
       </section>
     </aside>
@@ -922,8 +1013,11 @@ onMounted(restoreSession)
 @media(max-width:720px){.operations-sidebar{padding:12px 14px 10px}.sidebar-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sidebar-brand{margin:0}.mobile-menu-toggle{display:inline-flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid rgba(255,255,255,.2);border-radius:7px;color:#d7e8f1;background:rgba(255,255,255,.06);font-size:11px;font-weight:800;cursor:pointer}.mobile-menu-toggle span:first-child{font-size:16px;line-height:1}.operations-sidebar nav{display:none;grid-template-columns:1fr;gap:3px;margin-top:12px}.operations-sidebar nav.open{display:grid}.operations-menu-item{min-height:39px;font-size:12px}.sidebar-profile{margin-top:12px;padding:10px 5px 0}}
 </style>
 
+
 <style scoped>
 .detail-empty{padding:14px;border:1px dashed #dce5ed;border-radius:8px;color:#98a2b3;font-size:10px}.request-response-item{display:grid;gap:10px;padding:14px;border:1px solid #e5eaf0;border-radius:8px;background:#fbfcfe}.request-response-item+.request-response-item{margin-top:10px}.request-response-heading{display:flex;align-items:start;justify-content:space-between;gap:10px}.request-response-heading>div{display:grid;gap:4px}.request-response-heading strong{color:#344b60;font-size:11px}.request-response-heading span:not(.status-pill){color:#7d8999;font-size:10px}.request-response-body{margin:0;padding:12px;border-radius:7px;color:#344b60;background:#fff;font-size:11px;line-height:1.6;white-space:pre-wrap}.request-response-pending{margin:0;color:#98a2b3;font-size:10px}.request-response-note{margin:0;padding-top:10px;border-top:1px solid #e5eaf0;color:#526174;font-size:10px;line-height:1.5}.request-response-note strong{color:#344b60}.assignment-controls{display:flex;align-items:end;gap:10px;max-width:520px}.assignment-controls label{display:grid;flex:1;gap:6px;color:#526174;font-size:10px;font-weight:700}.assignment-controls select{min-height:38px;padding:0 10px;border:1px solid #d8e0ea;border-radius:6px;color:#344b60;background:#fff;font-size:11px}.assignment-current{margin:0 0 12px;color:#526174;font-size:11px}.assignment-history{display:grid;gap:8px;margin:14px 0 0;padding:0;list-style:none}.assignment-history li{display:grid;gap:3px;padding:9px 11px;border:1px solid #edf1f5;border-radius:7px}.assignment-history strong{color:#344b60;font-size:10px}.assignment-history span{color:#98a2b3;font-size:9px}@media(max-width:520px){.assignment-controls{align-items:stretch;flex-direction:column}}
+.attachments-section .panel-heading{margin-bottom:16px}.attachments-section .panel-heading h3{margin-bottom:4px}.attachment-count{display:inline-grid;place-items:center;min-width:20px;padding:3px 6px;border-radius:8px;color:#397aa2;background:#eaf5fa;font-size:9px;font-weight:800}.attachment-group+.attachment-group{margin-top:18px}.attachment-group h4{margin:0 0 8px;color:#526174;font-size:10px;text-transform:uppercase;letter-spacing:.06em}.attachment-card{display:flex;align-items:center;gap:10px;padding:11px 0;border-top:1px solid #edf1f5}.attachment-copy{display:grid;gap:4px;min-width:0;flex:1}.attachment-copy strong{overflow:hidden;color:#344b60;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.attachment-copy span{color:#98a2b3;font-size:10px}.attachment-card .secondary-button{flex:0 0 auto}.attachment-unavailable{color:#98a2b3;font-size:10px;white-space:nowrap}
+.attachment-gaps{padding:10px 12px;border:1px solid #f0dfb9;border-radius:7px;background:#fffaf0}.attachment-gaps ul{display:grid;gap:6px;margin:8px 0 0;padding:0;list-style:none}.attachment-gaps li{display:flex;justify-content:space-between;gap:12px;color:#6c5732;font-size:10px}
 .payment-diagnosis,.payment-delivery-status{margin:12px 0 0;padding:11px 12px;border:1px solid #dce7ef;border-radius:7px;color:#526174;background:#f7fafc;font-size:10px;line-height:1.5}.payment-diagnosis.is-error{border-color:#f3c6c6;color:#a33a3a;background:#fff6f6}.payment-delivery-status{color:#397aa2}
 .status-orange{color:#9a5c12;background:#fff0dc}.status-orange i{background:#dd8c2f}
 .brand-logo{display:block;width:44px;height:44px;flex:0 0 44px;border:1px solid rgba(255,255,255,.26);border-radius:10px;background:#fff;object-fit:contain}.brand-logo-login{width:58px;height:58px;padding:3px;border-color:#e4e9ef;border-radius:12px}
@@ -957,4 +1051,68 @@ onMounted(restoreSession)
 @media(max-width:520px){.client-history-item{flex-direction:column;align-items:stretch}.client-history-actions{justify-items:start}}
 .detail-response-review{display:grid;gap:12px;padding-top:10px;border-top:1px solid #e5eaf0}.detail-response-review label{display:grid;gap:6px;color:#526174;font-size:10px;font-weight:700}.detail-response-review textarea{width:100%;padding:10px;border:1px solid #d8e0ea;border-radius:7px;resize:vertical;color:#344b60;background:#fff;font:inherit;font-size:11px}.detail-response-actions{display:flex;justify-content:flex-end;align-items:center;gap:9px}.detail-response-actions .primary-button{min-height:36px;padding:0 13px}.detail-response-actions .danger-link{min-height:36px;padding:0 12px;border:1px solid #f0c5c5;border-radius:7px;color:#b54747;background:#fff;font-size:11px;font-weight:700;cursor:pointer}.detail-response-actions button:disabled{opacity:.55;cursor:not-allowed}
 @media(max-width:720px){.request-detail-panel{width:100%;max-width:none;padding:36px 20px}}
+</style>
+<style>
+/* Keep operational text readable across admin, agent, reviewer, and expert roles. */
+.operations-shell { font-size: 14px; }
+.operations-shell .operations-menu-item { font-size: 14px; }
+.operations-shell .breadcrumb { font-size: 13px; }
+.operations-shell .sidebar-label { font-size: 11px; }
+.operations-shell .sidebar-brand small,
+.operations-shell .sidebar-profile span,
+.operations-shell .sidebar-profile strong { font-size: 12px; }
+.operations-shell .search-box input { font-size: 13px; }
+.operations-shell .module-heading .eyebrow { font-size: 12px; }
+.operations-shell .module-heading h1 { font-size: clamp(30px, 2.5vw, 36px); }
+.operations-shell .module-heading p:last-child { font-size: 15px; }
+.operations-shell .list-view-header h2 { font-size: 16px; }
+.operations-shell .list-view-header p { font-size: 12px; }
+.operations-shell .list-view-summary { font-size: 13px; }
+.operations-shell .list-view-summary strong { font-size: 26px; }
+.operations-shell .list-view-table th { font-size: 11px; }
+.operations-shell .list-view-table td { font-size: 12px; }
+.operations-shell .list-view-table td::before { font-size: 11px; }
+.operations-shell .list-view-pagination,
+.operations-shell .list-view-pagination button { font-size: 12px; }
+.operations-shell .status-pill { font-size: 11px; }
+.operations-shell .primary-button,
+.operations-shell .secondary-button,
+.operations-shell .list-view-header-actions button,
+.operations-shell .list-view-table button { font-size: 12px; }
+.operations-shell .security-view label,
+.operations-shell .catalog-view .catalog-form-grid label,
+.operations-shell .catalog-view .link-form label,
+.operations-shell .agent-request-form label,
+.operations-shell .advanced-filters label,
+.operations-shell .assignment-controls label,
+.operations-shell .detail-response-review label { font-size: 12px; }
+.operations-shell .security-view input,
+.operations-shell .security-view select,
+.operations-shell .security-view textarea,
+.operations-shell .catalog-view .catalog-form-grid input,
+.operations-shell .catalog-view .catalog-form-grid select,
+.operations-shell .catalog-view .catalog-form-grid textarea,
+.operations-shell .catalog-view .link-form input,
+.operations-shell .catalog-view .link-form select,
+.operations-shell .agent-request-form input,
+.operations-shell .agent-request-form select,
+.operations-shell .advanced-filters input,
+.operations-shell .advanced-filters select,
+.operations-shell .assignment-controls select,
+.operations-shell .detail-response-review textarea { font-size: 13px; }
+.operations-shell .request-response-body { font-size: 13px; }
+.operations-shell .request-response-heading strong,
+.operations-shell .assignment-current,
+.operations-shell .assignment-history strong { font-size: 12px; }
+.operations-shell .request-response-heading span:not(.status-pill),
+.operations-shell .request-response-pending,
+.operations-shell .request-response-note,
+.operations-shell .assignment-history span,
+.operations-shell .payment-diagnosis,
+.operations-shell .payment-delivery-status { font-size: 11px; }
+@media (max-width: 720px) {
+  .operations-shell .operations-menu-item { font-size: 14px; }
+  .operations-shell .list-view-table td { font-size: 13px; }
+  .operations-shell .list-view-table td::before { font-size: 12px; }
+}
 </style>

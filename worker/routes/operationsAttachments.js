@@ -1,4 +1,9 @@
 import { requireOperationsAuth } from './operationsAuth.js'
+import {
+  attachmentDownloadHeaders,
+  canonicalAttachmentType,
+  storedObjectMatchesType,
+} from '../lib/attachmentDownload.js'
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -18,10 +23,10 @@ export async function handleOperationsAttachments(request, env) {
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   const rows = await sql`
-    SELECT a.storage_key, a.mime_type, a.original_name
+    SELECT a.storage_key, a.mime_type, a.original_name, a.size_bytes
     FROM operations.request_attachments a
     JOIN operations.requests r ON r.id = a.request_id
-    WHERE a.id = ${match[2]}::uuid AND r.id = ${match[1]}::uuid AND a.status = 'available'
+    WHERE a.id = ${match[2]}::uuid AND r.id = ${match[1]}::uuid AND a.status = 'validated'
       AND a.storage_key LIKE ${`requests/${match[1]}/%`}
       AND (
         ${isAdmin} OR (
@@ -39,19 +44,22 @@ export async function handleOperationsAttachments(request, env) {
       )
     LIMIT 1
   `
-  if (!rows[0] || !/^image\/(jpeg|png|webp)$/.test(String(rows[0].mime_type))) {
-    return response({ error: 'Adjunto no encontrado.' }, 404)
-  }
+  const mimeType = canonicalAttachmentType(rows[0]?.mime_type)
+  if (!mimeType) return response({ error: 'Adjunto no encontrado.' }, 404)
   const object = await env.GALLERY_IMAGES.get(String(rows[0].storage_key))
   if (!object) return response({ error: 'Adjunto no encontrado.' }, 404)
+  // Defensa en profundidad: el objeto debe conservar el tipo con el que se
+  // validó al subirlo; si no coincide, no se sirve.
+  if (!storedObjectMatchesType(object, mimeType)) return response({ error: 'Adjunto no encontrado.' }, 404)
 
   return new Response(object.body, {
-    headers: {
-      'content-type': String(rows[0].mime_type),
-      'cache-control': 'private, no-store, max-age=0',
-      'x-content-type-options': 'nosniff',
-      'content-disposition': 'attachment',
-    },
+    headers: attachmentDownloadHeaders({
+      mimeType,
+      name: rows[0].original_name,
+      size: rows[0].size_bytes,
+      // El panel operativo siempre descarga; nunca renderiza el adjunto inline.
+      disposition: 'attachment',
+    }),
   })
 }
 

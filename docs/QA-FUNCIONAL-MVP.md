@@ -7,6 +7,30 @@
 **Entorno:** Dev  
 **Objetivo:** registrar la ejecución de los recorridos funcionales del [plan priorizado](./PLAN-PRIORIZADO-OPERACIONES.md) y dejar evidencia reproducible.
 
+## Decisiones de arquitectura bajo prueba
+
+- **Runtime operativo:** el Worker es el runtime canónico para cotizaciones, reservas,
+  pagos, asignación, notificaciones y datos operativos. Node local solo sirve la
+  aplicación/rutas editoriales para desarrollo; si no implementa una ruta operativa,
+  debe responder explícitamente `not_available` y no ofrecer un flujo alternativo.
+- **Fuente única:** Neon es la única fuente de verdad para cotizaciones y su ciclo de
+  vida. Turso se limita a contenido editorial.
+- **Fuente prohibida:** `contact_leads` no puede crear, leer, actualizar ni servir como
+  fallback de cotizaciones operativas. Cualquier evidencia que muestre su uso operativo
+  es un fallo de compatibilidad y de integridad de datos.
+
+### Casos documentales de compatibilidad
+
+| ID | Caso | Esperado | Resultado | Evidencia | Defecto |
+|---|---|---|---|---|---|
+| ARCH-01 | Crear cotización desde Worker | Se persiste una única solicitud en Neon con estado `cotizacion` | | | |
+| ARCH-02 | Consultar cotización desde Node local | Node no crea ni lee una fuente alternativa; responde `not_available` si la ruta no está soportada | | | |
+| ARCH-03 | Buscar cotización en `contact_leads` | La fuente está prohibida; no hay lectura, escritura ni fallback operativo | | | |
+| ARCH-04 | Revisar persistencia editorial | Turso contiene solo contenido editorial y ninguna cotización operativa | | | |
+
+Estos casos son criterio de bloqueo: no se puede aprobar el flujo cotización → reserva
+si cualquiera falla, aunque el recorrido de interfaz pase.
+
 > No usar datos personales reales, tarjetas reales ni secretos en las evidencias.
 
 ---
@@ -206,6 +230,64 @@
 | DOC-05 | Tamaño excedido | Rechazo | | |
 | DOC-06 | Borrado lógico | Deja de listarse | | |
 | DOC-07 | Auditoría | Registra actor y acción | | |
+| DOC-08 | Múltiples adjuntos | Panel agrupa por categoría (`Identidad`, `Operación`, `Pago`, `Otros`) y muestra estado individual | | |
+| DOC-09 | MIME/tamaño | Rechaza MIME no permitido y tamaño fuera de política; conserva el motivo visible | | |
+| DOC-10 | Duplicado | Reintento del mismo archivo/clave no duplica el registro ni la descarga | | |
+| DOC-11 | Faltante | Metadato o objeto inexistente muestra “No disponible”/404 sin filtrar rutas internas | | |
+| DOC-12 | Servicio incompatible | El adjunto queda en estado incompatible y no ofrece descarga | | |
+| DOC-13 | Conversión | El estado `converting`/`pending` no ofrece descarga hasta quedar `available` | | |
+| DOC-14 | Idempotencia | Repetir la consulta o recargar el detalle mantiene una sola lista y no genera mutaciones | | |
+
+**Panel operativo de adjuntos:** el detalle muestra únicamente adjuntos no eliminados cuando la sesión tiene `attachments.read` y rol admin/experto. Cada descarga vuelve a validar permisos, titularidad, asignación, pago y MIME en la API; la interfaz no sustituye esas comprobaciones. Los estados `pending`, `converting`, `incompatible`, `rejected` y `deleted` no deben habilitar descarga.
+
+### 7.1.1 Cotización → reserva — contrato simulado de adjuntos
+
+La suite E2E `tests/e2e/quote-booking-payment.spec.js` cubre el recorrido de navegador
+con fixtures seguros: sube dos adjuntos en `cotizacion`, abre el enlace con el token,
+convierte la misma solicitud a `pending`/reserva y prepara una redirección de checkout
+simulada. El test no ejecuta Mercado Pago ni afirma aprobación de pago; solo verifica que
+la URL de proveedor sea la permitida y deja claro el límite de la evidencia.
+
+También cubre token inválido y adjunto no permitido, verificando que no se produzca una
+conversión ni se marque una preferencia de pago. Para una validación real todavía se
+requieren Neon Dev, Worker Dev y un pago sandbox autorizado.
+
+La suite `tests/publicQuoteAttachments.test.js` cubre el recorrido HTTP simulado sin almacenamiento ni pagos reales. La matriz mínima de aceptación es:
+
+| ID | Caso | Esperado |
+|---|---|---|
+| QUOTE-ATT-01 | Varios archivos en categorías permitidas | Cada archivo conserva categoría, MIME, tamaño y etapa; se guarda bajo la misma solicitud |
+| QUOTE-ATT-02 | Categoría de otro servicio o no configurada | `400`; no se inserta ni se sube ningún archivo |
+| QUOTE-ATT-03 | MIME declarado que no coincide con el contenido | `400`; no se guarda el archivo |
+| QUOTE-ATT-04 | Duplicado existente o repetido dentro del mismo envío | `409`; el lote no deja una inserción parcial |
+| QUOTE-ATT-05 | Límite de tamaño/cantidad | `400`; se informa la política aplicable |
+| QUOTE-ATT-06 | Documento obligatorio faltante en reserva | `400` con categorías faltantes; se revierten solo los objetos de ese intento |
+| QUOTE-ATT-07 | Conversión con adjuntos previos | La solicitud cambia a `pending`, se conserva el adjunto de `cotizacion` y se agregan los de `reserva` sin duplicarlo |
+| QUOTE-ATT-08 | Listado público por `quoteToken` | Solo devuelve adjuntos `validated` de la solicitud cuyo hash corresponde al token; nunca devuelve `storage_key` |
+| QUOTE-ATT-09 | Descarga pública por `quoteToken` + ID | Sirve únicamente el adjunto validado de la misma solicitud, verifica MIME/objeto y no lee almacenamiento si el token no es propietario |
+| QUOTE-ATT-08 | Reintento después de convertir | La misma solicitud responde idempotentemente y no acepta cambios de adjuntos |
+
+Los fixtures cubren `importacion`, `exportacion` y `agente_carga`. La matriz concreta de categorías debe mantenerse alineada con `request_attachment_requirements`; estos tests no sustituyen una ejecución contra Neon Dev ni un pago sandbox.
+
+#### Matriz inicial de adjuntos (`051_request_attachment_matrix.sql`)
+
+La matriz vive exclusivamente en `operations.request_attachment_requirements`. El
+navegador la consume desde `GET /api/public/attachment-requirements?serviceType=…&stage=…`
+y no mantiene categorías ni obligatoriedad hardcodeadas.
+
+| Servicio | Disponibles desde `cotizacion` | Se habilitan en `reserva` |
+|---|---|---|
+| `importacion` / `exportacion` | `documento_general`, `factura_comercial` (opcionales) | `packing_list`, `documento_transporte`, `certificado_origen` (opcionales) |
+| `agente_carga` | `documento_general`, `instrucciones_embarque` (opcionales) | `packing_list`, `documento_transporte` (opcionales) |
+
+**Decisión conservadora:** `min_files = 0` en todas las filas para no bloquear la
+creación ni la conversión mientras operaciones no confirme la matriz de negocio.
+La categoría marcada en cada etapa solo se ofrece desde esa etapa. Para volver
+obligatoria una categoría, operaciones actualiza `min_files` en la tabla: la
+completitud de la etapa y la conversión a reserva empezarán a exigirla sin
+cambios de código. También puede ajustar `stage`, `max_files`, tamaños, MIME,
+extensiones, `active`, `sort_order` y etiquetas. La migración es idempotente y
+respeta las filas ya personalizadas.
 
 ### 7.2 Comentarios, timeline y estados — F-P1-02
 

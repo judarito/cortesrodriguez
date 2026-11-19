@@ -24,7 +24,14 @@ function pgResult(rows, columns) {
   }), { headers: { 'content-type': 'application/json' } })
 }
 
-function mockDb({ permissions = ['attachments.read'], roles = ['expert'], attachment = true } = {}) {
+function mockDb({
+  permissions = ['attachments.read'],
+  roles = ['expert'],
+  attachment = true,
+  mimeType = 'image/png',
+  originalName = 'document.bin',
+  sizeBytes = 12,
+} = {}) {
   const queries = []
   return {
     queries,
@@ -34,7 +41,14 @@ function mockDb({ permissions = ['attachments.read'], roles = ['expert'], attach
       if (query.includes('FROM operations.sessions s')) return pgResult([{ id: userId, email: 'expert@example.test', full_name: 'Experto' }], ['id', 'email', 'full_name'])
       if (query.includes('FROM operations.user_roles ur JOIN operations.roles')) return pgResult(roles.map((name) => ({ name })), ['name'])
       if (query.includes('JOIN operations.role_permissions rp')) return pgResult(permissions.map((code) => ({ code })), ['code'])
-      if (query.includes('FROM operations.request_attachments a')) return pgResult(attachment ? [{ storage_key: `requests/${requestId}/${attachmentId}.png`, mime_type: 'image/png', original_name: 'document.png' }] : [], ['storage_key', 'mime_type', 'original_name'])
+      if (query.includes('FROM operations.request_attachments a')) {
+        return pgResult(attachment ? [{
+          storage_key: `requests/${requestId}/${attachmentId}.bin`,
+          mime_type: mimeType,
+          original_name: originalName,
+          size_bytes: sizeBytes,
+        }] : [], ['storage_key', 'mime_type', 'original_name', 'size_bytes'])
+      }
       throw new Error(`Unexpected SQL: ${query}`)
     },
   }
@@ -54,9 +68,12 @@ test('private request attachment download requires an active expert assignment a
       GALLERY_IMAGES: { get: async (key) => { requestedKeys.push(key); return { body: new Blob(['image']) } } },
     })
     assert.equal(result.status, 200)
+    assert.equal(result.headers.get('content-type'), 'image/png')
     assert.equal(result.headers.get('cache-control'), 'private, no-store, max-age=0')
     assert.equal(result.headers.get('x-content-type-options'), 'nosniff')
-    assert.deepEqual(requestedKeys, [`requests/${requestId}/${attachmentId}.png`])
+    assert.match(result.headers.get('content-disposition'), /^attachment; filename="document\.bin"/)
+    assert.equal(result.headers.get('content-length'), '12')
+    assert.deepEqual(requestedKeys, [`requests/${requestId}/${attachmentId}.bin`])
     const query = db.queries.find((item) => item.includes('FROM operations.request_attachments a'))
     assert.match(query, /r\.assigned_expert_id =/)
     assert.match(query, /r\.payment_required = FALSE OR EXISTS/)
@@ -84,4 +101,69 @@ test('public image endpoint refuses request-storage keys without reading R2', as
   const result = await getImage(request, { GALLERY_IMAGES: { get: async () => { reads += 1; return null } } })
   assert.equal(result.status, 404)
   assert.equal(reads, 0)
+})
+
+test('private attachment download serves validated PDFs with a sanitized attachment filename', async () => {
+  const db = mockDb({ mimeType: 'application/pdf', originalName: 'factura "cliente"\r\nX-Injected: 1.pdf', sizeBytes: 2048 })
+  const requestedKeys = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = db.fetch
+  try {
+    const request = new Request(`https://app.example.test/api/app/requests/${requestId}/attachments/${attachmentId}`, { headers: { authorization: `Bearer ${token()}` } })
+    const result = await handleOperationsAttachments(request, {
+      NEON_DATABASE_URL: 'postgres://user:pass@ep-test.neon.tech/db', OPERATIONS_JWT_SECRET: secret,
+      GALLERY_IMAGES: { get: async (key) => { requestedKeys.push(key); return { body: new Blob(['%PDF-1.4']) } } },
+    })
+    assert.equal(result.status, 200)
+    assert.equal(result.headers.get('content-type'), 'application/pdf')
+    assert.equal(result.headers.get('content-length'), '2048')
+    assert.match(result.headers.get('content-disposition'), /^attachment; filename="factura _cliente_X-Injected: 1\.pdf"/)
+    assert.equal(result.headers.get('x-injected'), null)
+    assert.equal(result.headers.get('content-disposition').includes('\r'), false)
+    assert.equal(result.headers.get('content-disposition').includes('\n'), false)
+    assert.equal(result.headers.get('content-security-policy'), "default-src 'none'; sandbox")
+    for (const value of result.headers.values()) {
+      assert.equal(value.includes('requests/'), false)
+      assert.equal(value.includes('storage_key'), false)
+    }
+    assert.deepEqual(requestedKeys, [`requests/${requestId}/${attachmentId}.bin`])
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('private attachment download rejects unsupported MIME types without reading R2', async () => {
+  const db = mockDb({ mimeType: 'text/html' })
+  let reads = 0
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = db.fetch
+  try {
+    const request = new Request(`https://app.example.test/api/app/requests/${requestId}/attachments/${attachmentId}`, { headers: { authorization: `Bearer ${token()}` } })
+    const result = await handleOperationsAttachments(request, { NEON_DATABASE_URL: 'postgres://user:pass@ep-test.neon.tech/db', OPERATIONS_JWT_SECRET: secret, GALLERY_IMAGES: { get: async () => { reads += 1; return { body: new Blob(['<script>']) } } } })
+    assert.equal(result.status, 404)
+    assert.equal(reads, 0)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('private attachment download refuses a stored object whose type no longer matches', async () => {
+  const db = mockDb({ mimeType: 'application/pdf' })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = db.fetch
+  try {
+    const request = new Request(`https://app.example.test/api/app/requests/${requestId}/attachments/${attachmentId}`, { headers: { authorization: `Bearer ${token()}` } })
+    const result = await handleOperationsAttachments(request, {
+      NEON_DATABASE_URL: 'postgres://user:pass@ep-test.neon.tech/db', OPERATIONS_JWT_SECRET: secret,
+      GALLERY_IMAGES: { get: async () => ({ body: new Blob(['<script>']), httpMetadata: { contentType: 'text/html' } }) },
+    })
+    assert.equal(result.status, 404)
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('private attachment download returns not found when metadata is missing', async () => {
+  const db = mockDb({ attachment: false })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = db.fetch
+  try {
+    const request = new Request(`https://app.example.test/api/app/requests/${requestId}/attachments/${attachmentId}`, { headers: { authorization: `Bearer ${token()}` } })
+    const result = await handleOperationsAttachments(request, { NEON_DATABASE_URL: 'postgres://user:pass@ep-test.neon.tech/db', OPERATIONS_JWT_SECRET: secret, GALLERY_IMAGES: { get: async () => ({ body: new Blob(['image']) }) } })
+    assert.equal(result.status, 404)
+  } finally { globalThis.fetch = originalFetch }
 })

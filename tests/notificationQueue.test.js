@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deliverNotification, sendRequestNotification } from '../worker/routes/operationsEmail.js'
+import { deliverNotification, enqueueNotification, sendRequestNotification } from '../worker/routes/operationsEmail.js'
 
 function createEmailEffectStore() {
   const rows = new Map()
@@ -225,6 +225,146 @@ test('retries a failed Resend delivery and succeeds idempotently without changin
     assert.equal(accepted.find((row) => row.recipient_email === 'admin@example.test').status, 'accepted')
     assert.equal(accepted.find((row) => row.recipient_email === 'client@example.test').status, 'accepted')
     assert.deepEqual(requestStatuses, ['pending_retry', 'accepted'])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('quote_created is enqueued as an admin-only durable event with a stable idempotency key', async () => {
+  const outboxId = '6b1f6f0e-7f0e-4e8f-8f0e-123456789abc'
+  const requestId = '90199877-a6f9-46fc-8f87-6117846d8eef'
+  const inserts = []
+  const sql = async (parts, ...values) => {
+    const query = parts.join(' ')
+    if (query.includes('INSERT INTO operations.notification_outbox')) {
+      inserts.push({ query, values })
+      return inserts.length === 1 ? [{ id: outboxId, status: 'pending' }] : []
+    }
+    if (query.includes('UPDATE operations.requests')) return []
+    return []
+  }
+
+  const result = await enqueueNotification(sql, requestId, 'quote_created', {
+    idempotencyKey: `quote_created/${requestId}`,
+    adminOnly: true,
+  })
+
+  assert.equal(result.queued, true)
+  assert.equal(result.status, 'pending')
+  assert.equal(inserts.length, 1)
+  assert.match(inserts[0].query, /ON CONFLICT \(idempotency_key\) DO NOTHING/)
+  assert.deepEqual(inserts[0].values.slice(0, 4), [requestId, 'quote_created', `quote_created/${requestId}`, true])
+
+  const duplicate = await enqueueNotification(sql, requestId, 'quote_created', {
+    idempotencyKey: `quote_created/${requestId}`,
+    adminOnly: true,
+  })
+  assert.equal(duplicate.queued, false)
+  assert.equal(duplicate.reason, 'duplicate_event')
+  assert.equal(inserts.length, 2)
+  assert.deepEqual(inserts[1].values.slice(0, 4), inserts[0].values.slice(0, 4))
+})
+
+test('quote_created is delivered as an internal admin-only notification and email exactly once', async () => {
+  const outboxId = '7a2a8d75-3f73-4fd0-8d9f-2563b3761ddd'
+  const requestId = '90199877-a6f9-46fc-8f87-6117846d8eef'
+  const event = {
+    id: outboxId,
+    request_id: requestId,
+    event_code: 'quote_created',
+    idempotency_key: `quote_created/${requestId}`,
+    admin_only: true,
+    actor_id: null,
+    event_payload: {},
+    attempts: 0,
+  }
+  let outboxStatus = 'queued'
+  let outboxStatuses = []
+  let notificationStatus = null
+  const appNotificationInserts = []
+  const sentTo = []
+  const effects = createEmailEffectStore()
+  const sql = async (parts, ...values) => {
+    const query = parts.join(' ')
+    const effectResult = effects.query(query, values)
+    if (effectResult !== null) return effectResult
+    if (query.includes('UPDATE operations.notification_outbox') && query.includes('RETURNING id, request_id')) {
+      if (!['queued', 'dispatching'].includes(outboxStatus)) return []
+      outboxStatus = 'processing'
+      event.attempts += 1
+      return [{ ...event, lease_token: 'lease-outbox-quote' }]
+    }
+    if (query.includes('SELECT r.id, r.reference')) return [{
+      id: requestId,
+      reference: 'CRA-COT-0001',
+      email: 'client@example.test',
+      service_name: 'Importación',
+      service_type: 'importacion',
+      product_type: 'mercancias',
+      status: 'cotizacion',
+      source: 'landingpage',
+      payment_required: false,
+      source_channel: 'direct_web',
+      client_name: 'Cliente de prueba',
+      agent_email: null,
+      expert_email: null,
+      created_by: null,
+      agent_id: null,
+      assigned_expert_id: null,
+    }]
+    if (query.includes('SELECT id, audiences')) return []
+    if (query.includes('SELECT DISTINCT u.email')) return [{ email: 'admin@example.test' }]
+    if (query.includes('SELECT DISTINCT ON (u.id)')) return [{ id: 'admin-test', role_name: 'admin' }]
+    if (query.includes('UPDATE operations.app_notifications')) return []
+    if (query.includes('INSERT INTO operations.app_notifications')) {
+      appNotificationInserts.push(values)
+      return [{ id: 'notification-quote', user_id: 'admin-test' }]
+    }
+    if (query.includes('app_notifications_generated_at')) return []
+    if (query.includes('INSERT INTO operations.notification_messages')) return []
+    if (query.includes('UPDATE operations.requests') && query.includes('notification_status')) {
+      notificationStatus = query.includes("notification_status = 'accepted'") ? 'accepted' : values[0]
+      return []
+    }
+    if (query.includes('UPDATE operations.notification_outbox') && query.includes('SET status =')) {
+      outboxStatus = query.includes("SET status = 'sent'") ? 'sent' : values[0]
+      outboxStatuses.push(outboxStatus)
+      return []
+    }
+    throw new Error(`Unexpected SQL in test: ${query}`)
+  }
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body)
+    sentTo.push(body.to)
+    return new Response(JSON.stringify({ id: 'resend-quote-1' }), { status: 200 })
+  }
+
+  try {
+    await deliverNotification(sql, { RESEND_API_KEY: 'test-only', RESEND_FROM_EMAIL: 'test@example.test' }, outboxId)
+
+    assert.equal(outboxStatus, 'sent')
+    assert.deepEqual(outboxStatuses, ['sent'])
+    assert.equal(notificationStatus, 'accepted')
+    assert.deepEqual(sentTo, [['admin@example.test']], 'quote emails stay internal to authorized admins')
+    assert.equal(sentTo.flat().some((recipient) => ['client@example.test', 'expert@example.test', 'agent@example.test'].includes(recipient)), false)
+    assert.equal(appNotificationInserts.length, 1)
+    const [userId, notificationRequestId, resendEmailId, idempotencyKey, eventCode, audienceRole] = appNotificationInserts[0]
+    assert.equal(userId, 'admin-test')
+    assert.equal(notificationRequestId, requestId)
+    assert.equal(resendEmailId, null, 'the internal notification is created before the email is accepted')
+    assert.equal(idempotencyKey, `event/${outboxId}/admin/admin-test`)
+    assert.equal(eventCode, 'quote_created')
+    assert.equal(audienceRole, 'admin')
+    assert.deepEqual([...effects.rows.values()].map((row) => row.recipient_email), ['admin@example.test'])
+    assert.equal([...effects.rows.values()][0].status, 'accepted')
+
+    // A duplicate delivery finds the event already sent and produces no new effects.
+    outboxStatus = 'sent'
+    await deliverNotification(sql, { RESEND_API_KEY: 'test-only', RESEND_FROM_EMAIL: 'test@example.test' }, outboxId)
+    assert.equal(appNotificationInserts.length, 1)
+    assert.equal(sentTo.length, 1)
   } finally {
     globalThis.fetch = originalFetch
   }

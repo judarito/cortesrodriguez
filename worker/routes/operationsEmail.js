@@ -1,7 +1,7 @@
 import { requireOperationsAuth } from './operationsAuth.js'
 import { createEmailAppNotifications, createEmailFailureAlerts, publishRequestStateUpdate } from './appNotifications.js'
 
-const adminEmailEvents = new Set(['payment_approved', 'expert_assigned', 'assignment_failed', 'similar_question_review', 'expert_response_submitted'])
+const adminEmailEvents = new Set(['quote_created', 'payment_approved', 'expert_assigned', 'assignment_failed', 'similar_question_review', 'expert_response_submitted'])
 
 export async function handleOperationsEmail(request, env) {
   const url = new URL(request.url)
@@ -15,7 +15,7 @@ export async function handleOperationsEmail(request, env) {
 
   const body = await request.json().catch(() => ({}))
   const eventCode = typeof body.eventCode === 'string' ? body.eventCode.trim() : 'request_created'
-  if (!['payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_assigned', 'assignment_failed', 'similar_question_review'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
+  if (!['quote_created', 'payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_assigned', 'assignment_failed', 'similar_question_review'].includes(eventCode)) return response({ error: 'Evento inválido.' }, 400)
 
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
@@ -83,6 +83,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
       (service_type <> 'all') DESC
   `
   const defaultAudiences = {
+    quote_created: ['admin'],
     request_created: ['admin', 'expert', 'agent', 'client'],
     payment_approved: ['admin', 'expert', 'agent', 'client'],
     payment_rejected: ['admin'],
@@ -110,7 +111,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   const ruleAudiences = rules.flatMap((rule) => Array.isArray(rule.audiences) ? rule.audiences : [])
   const audiences = paymentPolicy.adminOnly
     ? ['admin']
-    : [...new Set([...(defaultAudiences[eventCode] || ['configured']), ...ruleAudiences, ...(['assignment_failed', 'similar_question_review'].includes(eventCode) ? ['admin'] : [])])]
+    : [...new Set([...(defaultAudiences[eventCode] || ['configured']), ...ruleAudiences, ...(['quote_created', 'assignment_failed', 'similar_question_review'].includes(eventCode) ? ['admin'] : [])])]
   const dynamic = []
   if (!paymentPolicy.adminOnly && shouldNotifyClient(eventCode, audiences)) dynamic.push(request.email)
   if (!paymentPolicy.adminOnly && (audiences.includes('agent') || audiences.includes('all_involved')) && sourceChannel === 'agent_link') dynamic.push(request.agent_email)
@@ -151,7 +152,7 @@ export async function sendRequestNotification(sql, env, requestId, eventCode, ac
   if (!deliveries.length) return { sent: false, reason: 'email_not_required' }
   if (!(env.RESEND_OPERATIONS_API_KEY || env.RESEND_API_KEY) || !env.RESEND_FROM_EMAIL) throw new Error('mail_configuration_missing')
 
-  const eventLabel = { payment_approved: 'Pago recibido', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida', expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', similar_question_review: 'Pregunta similar pendiente de validación', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
+  const eventLabel = { quote_created: 'Nueva cotización recibida', payment_approved: 'Pago recibido', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida', expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', similar_question_review: 'Pregunta similar pendiente de validación', status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación' }[eventCode]
   const clientLocale = request.preferred_locale === 'en' ? 'en' : 'es'
   const clientEventLabel = localizedNotificationLabel(eventCode, clientLocale)
   const logoUrl = new URL('/email-logo.png', clientPortalUrl(env)).toString()
@@ -349,6 +350,7 @@ async function updateAppNotificationEmail(sql, { outboxId, requestId, recipient,
 }
 
 const notificationEventCodes = new Set([
+  'quote_created',
   'payment_approved', 'payment_rejected', 'request_created', 'status_changed', 'expert_assigned',
   'assignment_failed', 'similar_question_review', 'expert_response_submitted', 'expert_response_approved',
   'feedback_received', 'feedback_low',
@@ -721,6 +723,7 @@ export function notificationDescription(eventCode, locale = 'es') {
     const descriptions = {
       payment_approved: 'We received and confirmed your payment. Our team is reviewing your case and will contact you with a response soon.',
       payment_rejected: 'The payment for this request was not approved. Please review the payment in the client portal.',
+      quote_created: 'A new quote request was received.',
       request_created: 'Your request was received and registered.',
       expert_assigned: 'An expert has been assigned to your request.',
       assignment_failed: 'Your request is being reviewed by our operations team.',
@@ -734,6 +737,7 @@ export function notificationDescription(eventCode, locale = 'es') {
   const descriptions = {
     payment_approved: 'Recibimos y confirmamos el pago de tu solicitud. Nuestro equipo está revisando tu caso y pronto te contactaremos con la respuesta correspondiente.',
     payment_rejected: 'El pago asociado a esta solicitud no fue aprobado. Revisa el caso en el panel.',
+    quote_created: 'Se recibió una nueva solicitud de cotización.',
     request_created: 'Se recibió una nueva solicitud y quedó registrada en la plataforma.',
     expert_assigned: 'La solicitud fue asignada o reasignada a un experto.',
     assignment_failed: 'No hay expertos activos asociados a este tipo de consulta. La solicitud quedó en la cola administrativa y requiere asignación manual.',
@@ -750,12 +754,12 @@ export function notificationDescription(eventCode, locale = 'es') {
 function localizedNotificationLabel(eventCode, locale) {
   const labels = {
     en: {
-      payment_approved: 'Payment received', payment_rejected: 'Payment not approved', request_created: 'Request received',
+      quote_created: 'New quote request', payment_approved: 'Payment received', payment_rejected: 'Payment not approved', request_created: 'Request received',
       expert_assigned: 'Expert assigned', assignment_failed: 'Request under review', similar_question_review: 'Request under review',
       status_changed: 'Request updated', expert_response_submitted: 'Response under review', feedback_received: 'Feedback received', feedback_low: 'Feedback follow-up',
     },
     es: {
-      payment_approved: 'Pago recibido', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida',
+      quote_created: 'Nueva cotización', payment_approved: 'Pago recibido', payment_rejected: 'Pago rechazado', request_created: 'Nueva solicitud recibida',
       expert_assigned: 'Solicitud asignada a experto', assignment_failed: 'Solicitud sin experto asignado', similar_question_review: 'Pregunta similar pendiente de validación',
       status_changed: 'Solicitud actualizada', expert_response_submitted: 'Respuesta de experto pendiente de revisión', feedback_received: 'Feedback recibido', feedback_low: 'Feedback con baja calificación',
     },

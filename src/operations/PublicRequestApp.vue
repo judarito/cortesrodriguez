@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getInitialLocale, localeTag, persistLocale } from '../lib/locale.js'
+import { fetchAttachmentRequirements } from '../lib/contentApi.js'
 import LanguageToggle from '../shared/components/LanguageToggle.vue'
 import MercadoPagoPaymentBrick from './components/MercadoPagoPaymentBrick.vue'
 import logoUrl from '../assets/logo-cortes-rodriguez.png'
@@ -30,6 +31,7 @@ function localizedError(message) {
     'La clave de envío no es válida. Recarga el formulario e inténtalo de nuevo.': 'The submission key is invalid. Reload the form and try again.',
     'No se pudo verificar el envío. Actualiza la verificación e inténtalo de nuevo.': 'Could not verify the submission. Refresh the security check and try again.',
     'El enlace de origen es inválido o venció. Recarga el formulario e inténtalo de nuevo.': 'The source link is invalid or expired. Reload the form and try again.',
+    'La cotización no es válida.': 'The quote is invalid.', 'La cotización no pudo convertirse.': 'The quote could not be converted.',
     'La especialidad seleccionada no está disponible.': 'The selected specialty is unavailable.',
     'Cada adjunto debe ser una imagen de máximo 10 MB.': 'Each attachment must be an image no larger than 10 MB.',
     'El total de las imágenes no puede superar 25 MB.': 'The combined image size cannot exceed 25 MB.',
@@ -61,9 +63,36 @@ function localizedError(message) {
   return locale.value === 'en' ? (known[message] || 'We could not complete this request. Please try again.') : message
 }
 const agentToken = ref('')
+const quoteToken = ref('')
 const agentContext = ref(null)
 const catalog = ref([])
 const attachments = ref([])
+const validatedQuoteAttachments = ref([])
+// Matriz documental servida por el Worker (operations.request_attachment_requirements).
+// El navegador no hardcodea categorías ni obligatoriedad.
+const attachmentRequirements = ref([])
+let attachmentRequirementsRequestId = 0
+
+async function loadAttachmentRequirements(serviceType) {
+  const requestId = ++attachmentRequirementsRequestId
+  attachmentRequirements.value = []
+  if (!serviceType) return
+  const requirements = await fetchAttachmentRequirements({ serviceType, stage: 'cotizacion' })
+  if (requestId !== attachmentRequirementsRequestId) return
+  attachmentRequirements.value = requirements.map((requirement) => ({
+    category: requirement.category,
+    es: requirement.labelEs || requirement.category,
+    en: requirement.labelEn || requirement.labelEs || requirement.category,
+    required: Number(requirement.minFiles || 0) > 0,
+    minFiles: Number(requirement.minFiles || 0),
+    maxFiles: Number(requirement.maxFiles || 1),
+    maxSizeBytes: Number(requirement.maxSizeBytes || 10 * 1024 * 1024),
+    allowedMimeTypes: Array.isArray(requirement.allowedMimeTypes) ? requirement.allowedMimeTypes : [],
+    allowedExtensions: Array.isArray(requirement.allowedExtensions)
+      ? requirement.allowedExtensions.map((extension) => String(extension).toLowerCase())
+      : [],
+  }))
+}
 const turnstileContainer = ref(null)
 const turnstileEnabled = ref(false)
 const turnstileConfigLoading = ref(true)
@@ -100,6 +129,8 @@ const requestPayloadSignature = ref('')
 const serviceOptions = computed(() => [...new Map(catalog.value.map((item) => [item.serviceCode, item])).values()])
 const consultationOptions = computed(() => catalog.value.filter((item) => item.serviceCode === form.value.serviceType))
 const selectedConsultation = computed(() => consultationOptions.value.find((item) => item.consultationCode === form.value.consultationType) || null)
+const requiredAttachments = computed(() => attachmentRequirements.value)
+const attachmentProgress = computed(() => attachments.value.length ? Math.round(attachments.value.reduce((total, item) => total + (item.progress || 100), 0) / attachments.value.length) : 0)
 const consultationName = (item) => locale.value === 'en' ? ({ consulta_basica: 'Basic consultation', datos_legales: 'Legal data consultation', importacion_casa: 'Household goods import' }[item.consultationCode] || item.consultationName) : item.consultationName
 const consultationDescription = (item) => locale.value === 'en' ? ({ consulta_basica: 'Initial guidance on an international trade operation.', datos_legales: 'Review and guidance on legal requirements and information.', importacion_casa: 'Guidance on importing household goods.' }[item.consultationCode] || item.consultationDescription) : item.consultationDescription
 const serviceName = (item) => locale.value === 'en' ? ({ asesoria_personalizada: 'Personalized advisory', importacion: 'Import', exportacion: 'Export', agente_carga: 'Freight forwarding' }[item.serviceCode] || item.serviceName) : item.serviceName
@@ -119,6 +150,45 @@ onMounted(async () => {
     // Checkout Pro remains the safe default when feature configuration is unavailable.
   }
   const query = new URLSearchParams(window.location.search)
+  const hashParams = new URLSearchParams(window.location.hash.slice(1))
+  const incomingQuoteToken = hashParams.get('quoteToken') || query.get('quoteToken') || ''
+  if (incomingQuoteToken) {
+    if (!/^[A-Za-z0-9_-]{40,60}$/.test(incomingQuoteToken)) {
+      error.value = tr('La cotización no es válida.', 'The quote is invalid.')
+      originLoading.value = false
+      return
+    }
+    quoteToken.value = incomingQuoteToken
+    try {
+      const quoteResponse = await fetch('/api/public/quotes/convert', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ quoteToken: incomingQuoteToken }),
+      })
+      const quoteData = await quoteResponse.json().catch(() => ({}))
+      if (!quoteResponse.ok) throw new Error(quoteData.error || tr('La cotización no pudo convertirse.', 'The quote could not be converted.'))
+      reference.value = quoteData.reference || ''
+      try {
+        const attachmentsResponse = await fetch(`/api/public/quotes/attachments?token=${encodeURIComponent(incomingQuoteToken)}`, { cache: 'no-store' })
+        if (attachmentsResponse.ok) {
+          const attachmentData = await attachmentsResponse.json().catch(() => ({}))
+          validatedQuoteAttachments.value = Array.isArray(attachmentData.attachments) ? attachmentData.attachments.filter((item) => item?.status === 'validated') : []
+        }
+      } catch {
+        // La reserva sigue disponible aunque el inventario de adjuntos no cargue.
+      }
+      paymentRequired.value = Boolean(quoteData.paymentRequired)
+      originValid.value = true
+      originLoading.value = false
+      window.history.replaceState(window.history.state, '', '/solicitud')
+      if (paymentRequired.value) await requestPaymentPreference()
+      return
+    } catch (quoteError) {
+      error.value = localizedError(quoteError.message || tr('La cotización no pudo convertirse.', 'The quote could not be converted.'))
+      originLoading.value = false
+      return
+    }
+  }
   const paymentStatus = query.get('payment')
   if (paymentStatus === 'success') {
     paymentNotice.value = tr('Verificando el pago con Mercado Pago…', 'Verifying your payment with Mercado Pago…')
@@ -276,10 +346,29 @@ function resetTurnstile() {
 
 function changeService() {
   form.value.consultationType = ''
+  attachments.value = []
+  loadAttachmentRequirements(form.value.serviceType)
 }
 
-function selectAttachments(event) {
+function selectAttachments(event, category = 'general') {
   const selected = Array.from(event.target.files || [])
+  event.target.value = ''
+  const file = selected[0]
+  if (!file) return
+  if (category !== 'general') {
+    const requirement = attachmentRequirements.value.find((item) => item.category === category)
+    const allowedTypes = requirement?.allowedMimeTypes?.length ? requirement.allowedMimeTypes : ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
+    const allowedExtensions = requirement?.allowedExtensions || []
+    const extension = String(file.name).toLowerCase().match(/\.([a-z0-9]{1,10})$/)?.[1] || ''
+    const maxSizeBytes = requirement?.maxSizeBytes || 10 * 1024 * 1024
+    if (!allowedTypes.includes(file.type) || (allowedExtensions.length && !allowedExtensions.includes(extension)) || file.size > maxSizeBytes) {
+      error.value = tr('El archivo no cumple el tipo o tamaño permitido para esta categoría.', 'The file does not match the type or size allowed for this category.')
+      return
+    }
+    attachments.value = [...attachments.value.filter((item) => item.category !== category), { file, category, progress: 100 }]
+    error.value = ''
+    return
+  }
   if (selected.length > 5) {
     error.value = tr('Puedes adjuntar máximo 5 imágenes.', 'You can attach up to 5 images.')
     attachments.value = []
@@ -298,6 +387,18 @@ function normalizePhone(value) {
   return String(value || '').replace(/[\s().-]/g, '')
 }
 
+function removeAttachment(category) {
+  attachments.value = attachments.value.filter((item) => item.category !== category)
+}
+
+function attachmentAccept(requirement) {
+  const types = requirement?.allowedMimeTypes?.length
+    ? requirement.allowedMimeTypes
+    : ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
+  const extensions = (requirement?.allowedExtensions || []).map((extension) => `.${extension}`)
+  return [...types, ...extensions].join(',')
+}
+
 function validateForm() {
   const fullName = form.value.fullName.trim()
   const email = form.value.email.trim().toLowerCase()
@@ -310,6 +411,8 @@ function validateForm() {
   if (phone && !/^\+?\d{7,15}$/.test(phone)) return 'El teléfono debe tener entre 7 y 15 dígitos.'
   if (whatsapp && !/^\+?\d{7,15}$/.test(whatsapp)) return 'El WhatsApp debe tener entre 7 y 15 dígitos.'
   if (question.length < 20 || question.length > 3000) return 'La consulta debe tener entre 20 y 3000 caracteres.'
+  const missing = requiredAttachments.value.find((item) => item.required && !attachments.value.some((file) => file.category === item.category))
+  if (missing) return `Adjunta el archivo obligatorio: ${missing.es}.`
   return ''
 }
 
@@ -325,8 +428,8 @@ async function submitRequest() {
     if (agentToken.value) payload.append('attributionToken', agentToken.value)
     if (turnstileToken.value) payload.append('turnstileToken', turnstileToken.value)
     payload.append('locale', locale.value)
-    attachments.value.forEach((file) => payload.append('attachments', file))
-    const payloadSignature = JSON.stringify({ ...form.value, locale: locale.value, agentToken: agentToken.value, attachments: attachments.value.map((file) => [file.name, file.size, file.type, file.lastModified]) })
+    attachments.value.forEach(({ file, category }) => { payload.append('attachments', file); payload.append('attachmentCategory', category) })
+    const payloadSignature = JSON.stringify({ ...form.value, locale: locale.value, agentToken: agentToken.value, attachments: attachments.value.map(({ file, category }) => [category, file.name, file.size, file.type, file.lastModified]) })
     if (!requestIdempotencyKey.value || requestPayloadSignature.value !== payloadSignature) {
       requestIdempotencyKey.value = crypto.randomUUID()
       requestPayloadSignature.value = payloadSignature
@@ -487,9 +590,10 @@ function goToLanding() {
         <div v-else-if="originLoading" class="request-origin-error" role="status"><p>{{ tr('Preparando el formulario…', 'Preparing your form…') }}</p></div>
         <div v-else-if="!originValid && !submitted" class="request-origin-error" role="alert"><p>{{ error || tr('Abre el formulario desde el botón de solicitudes de la página principal.', 'Open this form using the request button on the home page.') }}</p><a href="/">{{ tr('Volver a la página principal', 'Back to home page') }}</a></div>
         <form v-else-if="!submitted" @submit.prevent="submitRequest">
+          <section v-if="validatedQuoteAttachments.length" class="validated-attachments"><strong>{{ tr('Adjuntos ya validados', 'Already validated attachments') }}</strong><a v-for="file in validatedQuoteAttachments" :key="file.id" :href="`/api/public/quotes/attachments/${encodeURIComponent(file.id)}?token=${encodeURIComponent(quoteToken)}`" target="_blank" rel="noreferrer">{{ file.originalName }} <span>({{ file.category }})</span></a><small>{{ tr('Estos archivos pertenecen a esta cotización y no se exponen claves de almacenamiento.', 'These files belong to this quote; storage keys are never exposed.') }}</small></section>
           <fieldset><legend>{{ tr('Datos del cliente', 'Customer details') }}</legend><div class="field full-field"><label for="fullName">{{ tr('Nombre completo', 'Full name') }} <b>*</b></label><input id="fullName" v-model="form.fullName" type="text" minlength="2" maxlength="120" autocomplete="name" :placeholder="tr('Ej. Juan Pablo Gómez', 'e.g. Juan Pablo Gomez')" required /></div><div class="field"><label for="legalEntityType">{{ tr('Constitución legal', 'Legal entity type') }} <b>*</b></label><select id="legalEntityType" v-model="form.legalEntityType" required><option value="" disabled>{{ tr('Selecciona una opción', 'Select an option') }}</option><option value="natural">{{ tr('Persona natural', 'Individual') }}</option><option value="juridica">{{ tr('Persona jurídica', 'Legal entity') }}</option></select></div></fieldset>
           <fieldset><legend>{{ tr('Medios de contacto', 'Contact details') }} <span>{{ tr('Correo obligatorio; teléfono y WhatsApp opcionales', 'Email required; phone and WhatsApp optional') }}</span></legend><div class="field"><label for="email">{{ tr('Correo electrónico', 'Email address') }} <b>*</b></label><input id="email" v-model="form.email" type="email" maxlength="254" autocomplete="email" placeholder="name@company.com" required /></div><div class="field"><label for="phone">{{ tr('Teléfono', 'Phone') }}</label><input id="phone" v-model="form.phone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" pattern="[+0-9 ()-]{7,20}" placeholder="+57 300 000 0000" /></div><div class="field"><label for="whatsapp">WhatsApp</label><input id="whatsapp" v-model="form.whatsapp" type="tel" inputmode="tel" maxlength="20" autocomplete="tel" pattern="[+0-9 ()-]{7,20}" placeholder="+57 300 000 0000" /></div></fieldset>
-          <fieldset><legend>{{ tr('Detalles de la operación', 'Operation details') }}</legend><div class="field"><label for="serviceType">{{ tr('Servicio general', 'General service') }} <b>*</b></label><select id="serviceType" v-model="form.serviceType" required @change="changeService"><option value="" disabled>{{ tr('Selecciona un servicio', 'Select a service') }}</option><option v-for="item in serviceOptions" :key="item.serviceCode" :value="item.serviceCode">{{ serviceName(item) }}</option></select></div><div class="field"><label for="consultationType">{{ tr('Tipo de consulta', 'Consultation type') }} <b>*</b></label><select id="consultationType" v-model="form.consultationType" required :disabled="!form.serviceType"><option value="" disabled>{{ tr('Selecciona una consulta', 'Select a consultation') }}</option><option v-for="item in consultationOptions" :key="item.consultationCode" :value="item.consultationCode">{{ consultationName(item) }} · {{ formatPrice(item) }}</option></select><small v-if="selectedConsultation" class="field-help">{{ consultationDescription(selectedConsultation) }}</small></div><div class="field full-field"><label>{{ tr('Valor de la asesoría', 'Consultation fee') }}</label><div class="static-field"><span>{{ selectedConsultation ? consultationName(selectedConsultation) : tr('Selecciona un tipo de consulta', 'Select a consultation type') }}</span><strong>{{ servicePrice }}</strong></div></div><div class="field"><label for="productType">{{ tr('Tipo de producto', 'Product type') }} <b>*</b></label><select id="productType" v-model="form.productType" required><option value="" disabled>{{ tr('Selecciona una opción', 'Select an option') }}</option><option value="vehiculos">{{ tr('Vehículos', 'Vehicles') }}</option><option value="mercancias">{{ tr('Mercancías', 'Goods') }}</option></select></div><div class="field full-field"><label for="question">{{ tr('¿Qué necesitas consultar?', 'What would you like to ask?') }} <b>*</b></label><textarea id="question" v-model="form.question" rows="5" minlength="20" maxlength="3000" :placeholder="tr('Describe tu operación o la pregunta que deseas resolver.', 'Describe your operation or the question you need answered.')" required></textarea><small class="field-help">{{ tr('Mínimo 20 caracteres.', 'At least 20 characters.') }}</small></div><div class="field full-field"><label for="attachments">{{ tr('Imágenes de apoyo', 'Supporting images') }}</label><input id="attachments" type="file" accept="image/png,image/jpeg,image/webp" multiple @change="selectAttachments" /><small class="field-help">{{ tr('Puedes adjuntar hasta 5 imágenes, máximo 10 MB cada una.', 'Attach up to 5 images, maximum 10 MB each.') }}</small><small v-if="attachments.length" class="field-help">{{ tr(`${attachments.length} imagen(es) seleccionada(s).`, `${attachments.length} image(s) selected.`) }}</small></div><div v-if="turnstileEnabled" class="field full-field"><label>{{ tr('Verificación de seguridad', 'Security check') }} <b>*</b></label><div ref="turnstileContainer" class="turnstile-container"></div><small v-if="turnstileError" class="field-help request-error" role="alert">{{ turnstileError }}</small></div></fieldset>
+          <fieldset><legend>{{ tr('Detalles de la operación', 'Operation details') }}</legend><div class="field"><label for="serviceType">{{ tr('Servicio general', 'General service') }} <b>*</b></label><select id="serviceType" v-model="form.serviceType" required @change="changeService"><option value="" disabled>{{ tr('Selecciona un servicio', 'Select a service') }}</option><option v-for="item in serviceOptions" :key="item.serviceCode" :value="item.serviceCode">{{ serviceName(item) }}</option></select></div><div class="field"><label for="consultationType">{{ tr('Tipo de consulta', 'Consultation type') }} <b>*</b></label><select id="consultationType" v-model="form.consultationType" required :disabled="!form.serviceType"><option value="" disabled>{{ tr('Selecciona una consulta', 'Select a consultation') }}</option><option v-for="item in consultationOptions" :key="item.consultationCode" :value="item.consultationCode">{{ consultationName(item) }} · {{ formatPrice(item) }}</option></select><small v-if="selectedConsultation" class="field-help">{{ consultationDescription(selectedConsultation) }}</small></div><div class="field full-field"><label>{{ tr('Valor de la asesoría', 'Consultation fee') }}</label><div class="static-field"><span>{{ selectedConsultation ? consultationName(selectedConsultation) : tr('Selecciona un tipo de consulta', 'Select a consultation type') }}</span><strong>{{ servicePrice }}</strong></div></div><div class="field"><label for="productType">{{ tr('Tipo de producto', 'Product type') }} <b>*</b></label><select id="productType" v-model="form.productType" required><option value="" disabled>{{ tr('Selecciona una opción', 'Select an option') }}</option><option value="vehiculos">{{ tr('Vehículos', 'Vehicles') }}</option><option value="mercancias">{{ tr('Mercancías', 'Goods') }}</option></select></div><div class="field full-field"><label for="question">{{ tr('¿Qué necesitas consultar?', 'What would you like to ask?') }} <b>*</b></label><textarea id="question" v-model="form.question" rows="5" minlength="20" maxlength="3000" :placeholder="tr('Describe tu operación o la pregunta que deseas resolver.', 'Describe your operation or the question you need answered.')" required></textarea><small class="field-help">{{ tr('Mínimo 20 caracteres.', 'At least 20 characters.') }}</small></div><div v-if="attachmentRequirements.length" class="field full-field"><label>{{ tr('Documentos de soporte', 'Supporting documents') }}</label><div v-for="requirement in attachmentRequirements" :key="requirement.category" class="attachment-requirement"><div><strong>{{ locale === 'en' ? requirement.en : requirement.es }}</strong><small>{{ requirement.required ? tr('Obligatorio', 'Required') : tr('Opcional', 'Optional') }}</small></div><template v-if="attachments.find((item) => item.category === requirement.category)"><span class="attachment-requirement-name">{{ attachments.find((item) => item.category === requirement.category).file.name }}</span><button type="button" class="attachment-requirement-remove" @click="removeAttachment(requirement.category)">{{ tr('Eliminar', 'Remove') }}</button></template><label v-else class="attachment-requirement-upload"><input type="file" :accept="attachmentAccept(requirement)" @change="selectAttachments($event, requirement.category)" />{{ tr('Agregar archivo', 'Add file') }}</label></div><small class="field-help">{{ tr('PDF, PNG, JPG o WEBP · máximo 10 MB por archivo.', 'PDF, PNG, JPG or WEBP · max. 10 MB per file.') }}</small></div><div v-if="turnstileEnabled" class="field full-field"><label>{{ tr('Verificación de seguridad', 'Security check') }} <b>*</b></label><div ref="turnstileContainer" class="turnstile-container"></div><small v-if="turnstileError" class="field-help request-error" role="alert">{{ turnstileError }}</small></div></fieldset>
           <button v-if="turnstileEnabled && turnstileError" type="button" class="retry-turnstile" :disabled="turnstileConfigLoading" @click="retryTurnstile">{{ turnstileConfigLoading ? tr('Reintentando…', 'Retrying…') : tr('Reintentar verificación', 'Retry security check') }}</button><p v-if="error" class="request-error" role="alert">{{ error }}</p><div class="form-actions"><button type="button" class="back-button" @click="goToLanding">{{ tr('Volver a la página principal', 'Back to home page') }}</button><button type="submit" class="submit-request" :disabled="loading || turnstileConfigLoading || (turnstileEnabled && !turnstileToken)">{{ loading ? tr('Registrando solicitud…', 'Submitting request…') : tr('Enviar solicitud', 'Submit request') }} <span>→</span></button></div>
         </form>
       </section>
@@ -502,7 +606,14 @@ function goToLanding() {
 <style scoped>
 :global(*){box-sizing:border-box}:global(body){margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#071c3f;background:#f5f8fc}:global(button),:global(input),:global(select){font:inherit}.request-page{min-height:100vh;background:linear-gradient(135deg,#f5f8fc,#fff 55%,#fdf5f5)}.request-header{height:82px;display:flex;align-items:center;justify-content:space-between;padding:0 clamp(22px,6vw,92px);border-bottom:1px solid #dfe6ef;background:rgba(255,255,255,.92)}.request-brand{display:flex;align-items:center;gap:11px;padding:0;border:0;color:#062653;background:transparent;text-align:left;cursor:pointer}.request-brand>span{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;color:#fff;background:#062653;font-size:11px;font-weight:900}.request-brand strong{font-size:13px;line-height:1.05}.request-brand small{color:#586780;font-size:9px;font-weight:500}.header-note{display:flex;align-items:center;gap:8px;color:#586780;font-size:11px;font-weight:700}.header-dot{width:7px;height:7px;border-radius:50%;background:#53ad88;box-shadow:0 0 0 4px #e1f4eb}.request-layout{display:grid;grid-template-columns:minmax(280px,.75fr) minmax(620px,1.25fr);gap:clamp(35px,6vw,105px);max-width:1280px;margin:0 auto;padding:65px clamp(22px,6vw,92px) 42px}.request-intro{display:flex;flex-direction:column;justify-content:center;padding-bottom:25px}.request-kicker,.form-step{margin:0 0 13px;color:#ed1c24;font-size:11px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.request-intro h1{max-width:420px;margin:0 0 20px;color:#062653;font-size:clamp(36px,4.5vw,61px);line-height:1.04;letter-spacing:-.06em}.request-intro>p:not(.request-kicker){max-width:390px;margin:0;color:#586780;font-size:15px;line-height:1.7}.intro-points{display:grid;gap:17px;margin-top:48px}.intro-points>div{display:flex;gap:13px;align-items:start}.intro-points span{display:grid;place-items:center;width:29px;height:29px;border:1px solid #dfe6ef;border-radius:9px;color:#0c3c78;font-size:9px;font-weight:900}.intro-points p{margin:0;color:#586780;font-size:11px;line-height:1.45}.intro-points strong{color:#062653;font-size:12px}.intro-footer{margin-top:60px;color:#586780;font-size:11px}.intro-footer a{display:block;margin-top:7px;color:#0c3c78;font-weight:800;text-decoration:none}.request-card{padding:35px 38px 29px;border:1px solid #dfe6ef;border-radius:15px;background:rgba(255,255,255,.97);box-shadow:0 18px 48px rgba(6,38,83,.12)}.form-heading{display:flex;justify-content:space-between;gap:20px;margin-bottom:29px}.form-step{margin-bottom:9px;color:#ed1c24;font-size:10px}.form-step span{margin:0 5px;color:#586780}.form-heading h2{margin:0 0 7px;color:#062653;font-size:24px;letter-spacing:-.04em}.form-heading>div>p:last-child{margin:0;color:#586780;font-size:11px}.form-heading b,label b{color:#ed1c24}.form-badge{display:grid;place-items:center;width:36px;height:36px;border-radius:11px;color:#ed1c24;background:#fff0f1;font-size:20px}form{display:grid;gap:25px}fieldset{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 14px;margin:0;padding:0;border:0}legend{grid-column:1/-1;display:flex;align-items:center;gap:9px;width:100%;padding:0 0 12px;border-bottom:1px solid #dfe6ef;color:#062653;font-size:12px;font-weight:800}legend span{color:#586780;font-size:10px;font-weight:500}.field{display:grid;gap:7px;padding-top:8px}.full-field{grid-column:1/-1}.field label{color:#586780;font-size:10px;font-weight:800}.field input,.field select,.static-field{width:100%;min-height:43px;padding:0 12px;border:1px solid #dfe6ef;border-radius:7px;outline:0;color:#071c3f;background:#fff;font-size:12px;transition:border .2s,box-shadow .2s}.static-field{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#0c3c78;background:#f5f8fc;font-weight:700}.field input::placeholder{color:#98a2b3}.field input:focus,.field select:focus{border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.1)}.request-error{margin:0;padding:10px 12px;border-radius:7px;color:#7a1116;background:#fff0f1;font-size:11px}.form-actions{display:flex;align-items:center;justify-content:space-between;gap:15px;padding-top:5px}.back-button{padding:0;border:0;color:#586780;background:transparent;font-size:11px;cursor:pointer}.submit-request{display:inline-flex;align-items:center;justify-content:center;gap:17px;min-height:44px;padding:0 17px;border:0;border-radius:7px;color:#fff;background:#ed1c24;font-size:11px;font-weight:800;cursor:pointer;box-shadow:0 7px 14px rgba(237,28,36,.16)}.submit-request:hover{background:#c9141b}.submit-request:disabled{opacity:.6;cursor:wait}.submit-request span{font-size:17px;font-weight:400}.request-footer{padding:0 20px 27px;text-align:center;color:#586780;font-size:10px}.request-footer span{margin:0 5px}.success-backdrop{position:fixed;inset:0;display:grid;place-items:center;padding:20px;background:rgba(3,25,56,.7);backdrop-filter:blur(5px)}.success-modal{width:min(445px,100%);padding:42px 38px 35px;border-radius:17px;background:#fff;text-align:center;box-shadow:0 25px 70px rgba(6,38,83,.25)}.success-icon{display:grid;place-items:center;width:57px;height:57px;margin:0 auto 22px;border-radius:50%;color:#fff;background:#ed1c24;font-size:28px;font-weight:500;box-shadow:0 0 0 8px #fff0f1}.success-modal h2{margin:0 0 12px;color:#062653;font-size:27px;letter-spacing:-.05em}.success-modal>p:not(.request-kicker){margin:0;color:#586780;font-size:13px;line-height:1.65}.success-reference{margin:22px 0 25px;padding:11px;border-radius:7px;color:#586780;background:#f5f8fc;font-size:10px}.success-reference strong{display:block;margin-top:4px;color:#0c3c78;font-size:12px;letter-spacing:.06em}@media(max-width:980px){.request-layout{grid-template-columns:1fr;max-width:740px}.request-intro{display:block}.request-intro h1{font-size:45px}.intro-points{grid-template-columns:repeat(3,1fr);margin-top:30px}.intro-footer{margin-top:25px}}@media(max-width:620px){.request-header{height:70px}.header-note{display:none}.request-layout{padding-top:36px}.request-intro h1{font-size:39px}.intro-points{grid-template-columns:1fr}.request-card{padding:25px 18px}.form-heading h2{font-size:21px}fieldset{grid-template-columns:1fr}.full-field{grid-column:auto}.form-actions{display:grid;justify-content:stretch}.submit-request,.back-button{width:100%}}
 .field textarea{width:100%;padding:11px 12px;border:1px solid #dfe6ef;border-radius:7px;outline:0;resize:vertical;color:#071c3f;background:#fff;font-size:12px;line-height:1.5}.field textarea:focus{border-color:#ed1c24;box-shadow:0 0 0 3px rgba(237,28,36,.1)}.field-help{color:#98a2b3;font-size:10px;line-height:1.4}.agent-context{margin:9px 0 0!important;color:#39836d!important;font-size:10px!important;font-weight:700}
+.validated-attachments{display:grid;gap:7px;padding:12px 14px;border:1px solid #dfe6ef;border-radius:8px;background:#f7fafc;color:#315875;font-size:11px}.validated-attachments a{color:#0c3c78;font-weight:700;text-decoration:none;overflow-wrap:anywhere}.validated-attachments a:hover{text-decoration:underline}.validated-attachments a span{color:#718197;font-weight:500}.validated-attachments small{color:#8392a3;font-size:10px;line-height:1.4}
 .turnstile-container{min-height:65px}
+.attachment-requirement{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid #dfe6ef;border-radius:7px;background:#fff}
+.attachment-requirement>div{display:grid;gap:2px}.attachment-requirement strong{color:#062653;font-size:11px}.attachment-requirement small{color:#98a2b3;font-size:10px}
+.attachment-requirement-upload{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid #dfe6ef;border-radius:7px;color:#0c3c78;background:#f7fafc;font-size:10px;font-weight:800;cursor:pointer}
+.attachment-requirement-upload input{max-width:190px;font-size:10px}
+.attachment-requirement-name{color:#315875;font-size:10px;overflow-wrap:anywhere}
+.attachment-requirement-remove{padding:0;border:0;color:#b3261e;background:transparent;font-size:10px;font-weight:800;cursor:pointer}
 .retry-turnstile{justify-self:start;padding:8px 12px;border:1px solid #dfe6ef;border-radius:7px;color:#0c3c78;background:#fff;font-size:11px;font-weight:700;cursor:pointer}.retry-turnstile:disabled{opacity:.6;cursor:wait}
 .payment-notice{margin:0 0 18px;padding:11px 13px;border:1px solid #cfe6db;border-radius:7px;color:#28694f;background:#edf9f3;font-size:11px;font-weight:700}
 .request-origin-error{display:grid;gap:12px;padding:18px;border:1px solid #f0c9cc;border-radius:8px;color:#8d2e36;background:#fff5f5;font-size:13px;line-height:1.5}.request-origin-error p{margin:0}.request-origin-error a{color:#164f70;font-weight:700;text-decoration:none}

@@ -40,7 +40,7 @@ export async function handleOperationsExpert(request, env) {
           COALESCE(latest.status, 'none') AS response_status,
           latest.body AS response_body
         FROM operations.requests r
-        LEFT JOIN operations.request_attachments a ON a.request_id = r.id AND a.status = 'available'
+        LEFT JOIN operations.request_attachments a ON a.request_id = r.id AND a.status = 'validated'
         LEFT JOIN LATERAL (
           SELECT er.status, er.body
           FROM operations.expert_responses er

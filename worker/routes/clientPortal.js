@@ -4,6 +4,11 @@ import {
   processClientBricksPayment,
   recoverClientBricksPayment,
 } from './publicRequests.js'
+import {
+  attachmentDownloadHeaders,
+  canonicalAttachmentType,
+  storedObjectMatchesType,
+} from '../lib/attachmentDownload.js'
 
 const encoder = new TextEncoder()
 const SESSION_SECONDS = 60 * 60 * 24 * 14
@@ -151,7 +156,7 @@ async function requestDetail(sql, email, reference) {
     sql`SELECT id, status, checkout_mode, provider_submission_started_at, init_point, usd_amount_cents, cop_amount_cents, trm_cop_per_usd, trm_effective_date, created_at
       FROM operations.request_payments WHERE request_id = ${request.id} ORDER BY created_at DESC LIMIT 20`,
     sql`SELECT id, original_name, mime_type, created_at FROM operations.request_attachments
-      WHERE request_id = ${request.id} AND status = 'available' AND storage_key LIKE ${`requests/${request.id}/%`}
+      WHERE request_id = ${request.id} AND status = 'validated' AND storage_key LIKE ${`requests/${request.id}/%`}
       ORDER BY created_at DESC`,
     sql`SELECT body, admin_note, updated_at FROM operations.expert_responses
       WHERE request_id = ${request.id} AND status IN ('approved', 'sent') ORDER BY updated_at DESC LIMIT 1`,
@@ -200,21 +205,24 @@ async function clientAttachment(sql, email, reference, attachmentId, env) {
   if (!requestReferencePattern.test(reference) || !uuidPattern.test(attachmentId)) return response({ error: 'Adjunto no encontrado.' }, 404)
   if (!env.GALLERY_IMAGES) return response({ error: 'El archivo no está disponible temporalmente.' }, 503)
   const rows = await sql`
-    SELECT attachment.storage_key, attachment.mime_type
+    SELECT attachment.storage_key, attachment.mime_type, attachment.original_name, attachment.size_bytes
     FROM operations.request_attachments attachment
     JOIN operations.requests request ON request.id = attachment.request_id
     WHERE request.reference = ${reference} AND lower(trim(request.email)) = ${email}
-      AND attachment.id = ${attachmentId}::uuid AND attachment.status = 'available'
+      AND attachment.id = ${attachmentId}::uuid AND attachment.status = 'validated'
       AND attachment.storage_key LIKE ('requests/' || request.id::text || '/%')
     LIMIT 1
   `
-  if (!rows[0] || !/^image\/(jpeg|png|webp)$/.test(String(rows[0].mime_type))) return response({ error: 'Adjunto no encontrado.' }, 404)
+  const mimeType = canonicalAttachmentType(rows[0]?.mime_type)
+  if (!mimeType) return response({ error: 'Adjunto no encontrado.' }, 404)
   const object = await env.GALLERY_IMAGES.get(String(rows[0].storage_key))
   if (!object) return response({ error: 'Adjunto no encontrado.' }, 404)
-  return new Response(object.body, { headers: {
-    'content-type': String(rows[0].mime_type), 'cache-control': 'private, no-store, max-age=0',
-    'x-content-type-options': 'nosniff', 'content-disposition': 'inline',
-  } })
+  if (!storedObjectMatchesType(object, mimeType)) return response({ error: 'Adjunto no encontrado.' }, 404)
+  return new Response(object.body, { headers: attachmentDownloadHeaders({
+    mimeType,
+    name: rows[0].original_name,
+    size: rows[0].size_bytes,
+  }) })
 }
 
 function decodeSegment(value) {

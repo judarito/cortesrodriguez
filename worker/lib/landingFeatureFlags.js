@@ -40,6 +40,11 @@ export function isLandingRequestPage(pathname) {
 
 export function isLandingRequestApi(pathname) {
   return pathname === '/api/public/catalog'
+    || pathname === '/api/public/attachment-requirements'
+    || pathname === '/api/public/quotes'
+    || pathname === '/api/public/quote'
+    || pathname === '/api/public/quotes/convert'
+    || pathname === '/api/public/quote/convert'
     || pathname === '/api/public/service'
     || pathname === '/api/public/turnstile-config'
     || pathname === '/api/public/request-attribution-token'

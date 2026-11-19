@@ -375,6 +375,7 @@ export function roleRecipientIds(eventCode, request, adminOnly = false) {
 
 export function notificationCopy(eventCode, reference) {
   const config = {
+    quote_created: { admin: ['Nueva cotización', `${reference}: recibida y pendiente de revisión.`] },
     request_created: { admin: ['Nueva solicitud', `${reference}: recibida y pendiente de gestión.`], agent: ['Tu cliente envió una solicitud', `${reference}: ya está registrada desde tu enlace.`], expert: ['Nueva consulta asignada', `${reference}: tienes una pregunta disponible para responder.`] },
     payment_approved: { admin: ['Pago confirmado', `${reference}: Mercado Pago confirmó el pago.`], agent: ['Pago confirmado', `${reference}: el pago de la solicitud de tu cliente fue recibido.`], expert: ['Caso habilitado', `${reference}: el pago fue confirmado y puedes continuar con la consulta.`] },
     expert_assigned: { admin: ['Experto asignado', `${reference}: la asignación quedó registrada.`], agent: ['Solicitud en gestión', `${reference}: se asignó un experto al caso de tu cliente.`], expert: ['Tienes una solicitud asignada', `${reference}: revisa la pregunta disponible en tu bandeja.`] },

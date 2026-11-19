@@ -2,6 +2,24 @@ import { enqueueNotification } from './operationsEmail.js'
 import { rankSimilarQuestions } from '../lib/questionSimilarity.js'
 import { normalizeClientEmail } from '../lib/clientIdentity.js'
 import { isPaymentCheckoutBricksEnabled } from '../lib/landingFeatureFlags.js'
+import {
+  attachmentPayload,
+  discardStoredAttachments,
+  enforcePublicRateLimit,
+  inspectImage,
+  listRequestAttachments,
+  loadAttachmentRequirements,
+  loadAttachmentSnapshot,
+  requirementPayload,
+  requestAttachmentGaps,
+  requestAttachmentsComplete,
+  sha256,
+  sha256Hex,
+  storeRequestAttachments,
+  verifyAttachmentFiles,
+} from './publicAttachments.js'
+
+export { inspectImage, sha256 }
 
 export async function handlePublicRequests(request, env) {
   const url = new URL(request.url)
@@ -64,6 +82,8 @@ export async function handlePublicRequests(request, env) {
   }
   if (url.pathname === '/api/public/payments/verify' && request.method === 'POST') return verifyReturnedPayment(request, env)
   if (url.pathname === '/api/public/payments/webhook' && request.method === 'POST') return handlePaymentWebhook(request, env)
+  if ((url.pathname === '/api/public/quotes' || url.pathname === '/api/public/quote') && request.method === 'POST') return createPublicQuote(request, env)
+  if ((url.pathname === '/api/public/quotes/convert' || url.pathname === '/api/public/quote/convert') && request.method === 'POST') return convertPublicQuote(request, env)
   if (url.pathname !== '/api/public/requests' || request.method !== 'POST') return null
 
   if (!env.NEON_DATABASE_URL) {
@@ -162,6 +182,7 @@ export async function handlePublicRequests(request, env) {
     : null
   if (parsed.files.length > 5) return response({ error: 'Puedes adjuntar máximo 5 imágenes.' }, 400)
   const verifiedFiles = []
+  const seenChecksums = new Set()
   let totalAttachmentBytes = 0
   for (const file of parsed.files) {
     if (file.size > MAX_ATTACHMENT_BYTES) return response({ error: 'Cada adjunto debe ser una imagen de máximo 10 MB.' }, 400)
@@ -170,7 +191,10 @@ export async function handlePublicRequests(request, env) {
     const bytes = new Uint8Array(await file.arrayBuffer())
     const image = inspectImage(bytes)
     if (!image || (file.type && file.type !== image.type)) return response({ error: 'Uno de los adjuntos no es una imagen válida o supera las dimensiones permitidas.' }, 400)
-    verifiedFiles.push({ file, bytes, type: image.type })
+    const checksum = await sha256Hex(bytes)
+    if (seenChecksums.has(checksum)) return response({ error: 'No adjuntes la misma imagen dos veces.' }, 409)
+    seenChecksums.add(checksum)
+    verifiedFiles.push({ file, bytes, type: image.type, checksum, metadata: { width: image.width, height: image.height } })
   }
   const clientId = crypto.randomUUID()
   const requestId = crypto.randomUUID()
@@ -220,13 +244,19 @@ export async function handlePublicRequests(request, env) {
 
   if (parsed.files.length) {
     if (!env.GALLERY_IMAGES) return response({ error: 'El almacenamiento de imágenes no está configurado.' }, 503)
-    for (const { file, bytes, type } of verifiedFiles) {
+    for (const { file, bytes, type, checksum, metadata } of verifiedFiles) {
       const attachmentId = crypto.randomUUID()
       const storageKey = `requests/${requestId}/${attachmentId}-${safeName(file.name)}`
       await env.GALLERY_IMAGES.put(storageKey, bytes, { httpMetadata: { contentType: type } })
       await sql`
-        INSERT INTO operations.request_attachments (id, request_id, storage_key, original_name, mime_type, size_bytes)
-        VALUES (${attachmentId}, ${requestId}, ${storageKey}, ${safeOriginalName(file.name)}, ${type}, ${file.size})
+        INSERT INTO operations.request_attachments (
+          id, request_id, storage_key, original_name, mime_type, size_bytes, status,
+          category, stage, uploaded_by_kind, checksum_sha256, metadata, validated_at
+        ) VALUES (
+          ${attachmentId}, ${requestId}, ${storageKey}, ${safeOriginalName(file.name)}, ${type}, ${file.size},
+          'validated', 'documento_general', 'cotizacion', 'client', ${checksum},
+          ${JSON.stringify(metadata)}::jsonb, NOW()
+        )
       `
     }
   }
@@ -264,55 +294,257 @@ export async function handlePublicRequests(request, env) {
   return response({ ok: true, reference, status: 'pending', paymentRequired: Boolean(service.payment_required) }, 201)
 }
 
-async function enforcePublicRateLimit(request, env, action, limit, windowSeconds) {
-  const ip = request.headers.get('CF-Connecting-IP')?.trim()
-  if (!ip || ip.length > 64 || !env.PUBLIC_RATE_LIMIT_SECRET) {
-    return response({ error: 'El servicio de solicitudes no está disponible.' }, 503)
+async function createPublicQuote(request, env) {
+  if (!env.NEON_DATABASE_URL) return response({ error: 'La base de datos operativa no está configurada.' }, 500)
+  const limited = await enforcePublicRateLimit(request, env, 'quote', 5, 3600)
+  if (limited) return limited
+  const parsed = await parseInput(request)
+  let input
+  try { input = validate(parsed.fields) } catch (error) { return response({ error: error.message }, error.status || 400) }
+  const attributionToken = text(parsed.fields.attributionToken || parsed.fields.agentToken)
+  if (!/^[A-Za-z0-9_-]{40,60}$/.test(attributionToken)) return response({ error: 'El enlace de origen no es válido. Recarga el formulario e inténtalo de nuevo.' }, 400)
+  const idempotencyKey = text(parsed.fields.idempotencyKey)
+  if (!isUuid(idempotencyKey)) return response({ error: 'La clave de envío no es válida. Recarga el formulario e inténtalo de nuevo.' }, 400)
+  if (env.TURNSTILE_SECRET_KEY) {
+    const token = text(parsed.fields.turnstileToken)
+    if (!token || token.length > 2048 || !await verifyTurnstile(token, request, env.TURNSTILE_SECRET_KEY)) return response({ error: 'No se pudo verificar el envío. Actualiza la verificación e inténtalo de nuevo.' }, 400)
   }
-  const keyHash = await sha256(`${env.PUBLIC_RATE_LIMIT_SECRET}:${ip}`)
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
-  const rows = await sql`
-    WITH expired_rate_rows AS (
-      SELECT ctid
-      FROM operations.public_request_rate_limits
-      WHERE window_started_at < NOW() - INTERVAL '2 hours'
-      ORDER BY window_started_at
-      LIMIT 100
-    ), cleanup AS (
-      DELETE FROM operations.public_request_rate_limits limits
-      USING expired_rate_rows
-      WHERE limits.ctid = expired_rate_rows.ctid
-    ), expired_token_rows AS (
-      SELECT id
-      FROM operations.public_request_attribution_tokens
-      WHERE attribution_type = 'direct_web' AND (expires_at <= NOW() OR revoked_at IS NOT NULL)
-      ORDER BY expires_at, id
-      LIMIT 100
-    ), cleanup_tokens AS (
-      DELETE FROM operations.public_request_attribution_tokens tokens
-      USING expired_token_rows
-      WHERE tokens.id = expired_token_rows.id
-    ), updated AS (
-      INSERT INTO operations.public_request_rate_limits (ip_hash, action, window_started_at, request_count)
-      VALUES (${keyHash}, ${action}, date_trunc('minute', NOW()), 1)
-      ON CONFLICT (ip_hash, action) DO UPDATE SET
-        request_count = CASE
-          WHEN operations.public_request_rate_limits.window_started_at <= NOW() - (${windowSeconds} * INTERVAL '1 second') THEN 1
-          ELSE operations.public_request_rate_limits.request_count + 1
-        END,
-        window_started_at = CASE
-          WHEN operations.public_request_rate_limits.window_started_at <= NOW() - (${windowSeconds} * INTERVAL '1 second') THEN date_trunc('minute', NOW())
-          ELSE operations.public_request_rate_limits.window_started_at
-        END,
-        updated_at = NOW()
-      RETURNING request_count
-    ) SELECT request_count FROM updated
-  `
-  if (Number(rows[0]?.request_count) > limit) {
-    return response({ error: 'Has realizado demasiados intentos. Espera antes de volver a intentarlo.' }, 429, { 'retry-after': String(windowSeconds) })
+  const attribution = await resolveAttribution(sql, attributionToken)
+  if (!attribution) return response({ error: 'El enlace de origen es inválido o venció. Recarga el formulario e inténtalo de nuevo.' }, 400)
+  const service = await resolvePublicService(sql, input)
+  if (!service) return response({ error: 'La especialidad seleccionada no está disponible.' }, 503)
+  let verifiedAttachments
+  let requirements
+  try {
+    requirements = await loadAttachmentRequirements(sql, input.serviceType, 'cotizacion')
+    verifiedAttachments = await verifyAttachmentFiles({
+      files: parsed.files,
+      categories: parsed.attachmentCategories,
+      requirements,
+      snapshot: { counts: new Map(), checksums: new Set(), total: 0 },
+    })
+    if (parsed.files.length && !env.GALLERY_IMAGES) return response({ error: 'El almacenamiento de archivos no está configurado.' }, 503)
+  } catch (error) {
+    return response({ error: error.message }, error.status || 400)
   }
-  return null
+  const keyHash = await sha256(idempotencyKey)
+  const token = createOpaqueToken()
+  const quoteTokenHash = await sha256(token)
+  const clientId = crypto.randomUUID()
+  const requestId = crypto.randomUUID()
+  const reference = `CRA-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`
+  const payloadHash = await sha256(JSON.stringify({
+    input,
+    service: service.consultation_type_id,
+    attachments: verifiedAttachments.map((attachment) => attachment.checksum),
+  }))
+  const rows = await sql`
+    WITH new_client AS (
+      INSERT INTO operations.clients (id, full_name, email_normalized)
+      VALUES (${clientId}, ${input.fullName}, ${normalizeClientEmail(input.email)})
+      ON CONFLICT (email_normalized) DO UPDATE SET email_normalized = EXCLUDED.email_normalized
+      RETURNING id
+    )
+    INSERT INTO operations.requests (
+      id, client_id, reference, source, legal_entity_type, email, phone, whatsapp,
+      service_name, service_amount_cents, service_currency, service_type, freight_agent, product_type, status,
+      source_channel, agent_id, agent_link_id, question, general_service_code, general_service_name,
+      consultation_type_id, consultation_type_code, consultation_type_name, consultation_type_description,
+      payment_required, public_idempotency_key_hash, public_payload_hash, preferred_locale,
+      quote_token_hash, quote_expires_at
+    )
+    SELECT ${requestId}, new_client.id, ${reference}, ${attribution.source}, ${input.legalEntityType}, ${input.email}, ${input.phone || null}, ${input.whatsapp || null},
+      ${service.service_name}, ${service.amount_cents}, ${service.currency}, ${input.serviceType}, ${input.freightAgent || null}, ${input.productType}, 'cotizacion',
+      ${attribution.sourceChannel}, ${attribution.agentId}, ${attribution.agentLinkId}, ${input.question}, ${input.serviceType}, ${service.service_name},
+      ${service.consultation_type_id}, ${input.consultationType}, ${service.consultation_name}, ${service.consultation_description},
+      ${service.payment_required}, ${keyHash}, ${payloadHash}, ${parsed.fields.locale === 'en' ? 'en' : 'es'}, ${quoteTokenHash}, NOW() + INTERVAL '2 hours'
+    FROM new_client
+    ON CONFLICT (public_idempotency_key_hash) WHERE public_idempotency_key_hash IS NOT NULL DO NOTHING
+    RETURNING id, reference, quote_expires_at
+  `
+  if (!rows[0]) {
+    await sql`DELETE FROM operations.clients WHERE id = ${clientId} AND NOT EXISTS (SELECT 1 FROM operations.requests WHERE client_id = ${clientId})`
+    const existing = await sql`SELECT reference, status, public_payload_hash, quote_expires_at FROM operations.requests WHERE public_idempotency_key_hash = ${keyHash} LIMIT 1`
+    if (!existing[0] || String(existing[0].public_payload_hash) !== payloadHash) return response({ error: 'Este envío ya fue procesado con otra información.' }, 409)
+    if (String(existing[0].status) !== 'cotizacion') return response({ error: 'Esta solicitud ya fue convertida.' }, 409)
+    return response({ ok: true, reference: String(existing[0].reference), status: 'cotizacion', expiresAt: String(existing[0].quote_expires_at) }, 200)
+  }
+
+  // Los archivos se cargan a R2 y se registran sobre el request_id recién
+  // creado; nunca se acepta un identificador de solicitud enviado por el
+  // navegador. La cotización ya existe si algo falla aquí, por lo que el cliente
+  // puede reintentar con la misma clave y completar los adjuntos por el
+  // endpoint de archivos.
+  const storedAttachments = await storeRequestAttachments({
+    sql,
+    env,
+    requestId,
+    attachments: verifiedAttachments,
+    stage: 'cotizacion',
+    uploadedByKind: 'client',
+  })
+  const attachments = storedAttachments.map((attachment) => attachmentPayload({
+    id: attachment.attachmentId,
+    original_name: attachment.file.name,
+    mime_type: attachment.mimeType,
+    size_bytes: attachment.size,
+    category: attachment.category,
+    stage: 'cotizacion',
+    status: 'validated',
+    created_at: null,
+  }))
+  return response({
+    ok: true,
+    reference,
+    status: 'cotizacion',
+    quoteToken: token,
+    expiresAt: String(rows[0].quote_expires_at),
+    attachments,
+    requirements: requirements.map(requirementPayload),
+  }, 201)
+}
+
+async function convertPublicQuote(request, env) {
+  if (!env.NEON_DATABASE_URL) return response({ error: 'La base de datos operativa no está configurada.' }, 500)
+  const contentLength = Number(request.headers.get('content-length') || 0)
+  if (contentLength > MAX_REQUEST_BODY_BYTES) return response({ error: 'La solicitud supera el tamaño máximo permitido.' }, 413)
+  let parsed
+  try {
+    parsed = await parseInput(request)
+  } catch (error) {
+    return response({ error: error.message }, error.status || 400)
+  }
+  const body = parsed.fields
+  const token = text(body?.quoteToken || body?.token)
+  if (!/^[A-Za-z0-9_-]{40,60}$/.test(token)) return response({ error: 'La cotización no es válida.' }, 400)
+  const limited = await enforcePublicRateLimit(request, env, 'quote_convert', 10, 3600)
+  if (limited) return limited
+  const { neon } = await import('@neondatabase/serverless')
+  const sql = neon(env.NEON_DATABASE_URL)
+  const tokenHash = await sha256(token)
+  let contact
+  try {
+    contact = { email: text(body?.email).toLowerCase(), phone: normalizePhone(body?.phone, 'El teléfono'), whatsapp: normalizePhone(body?.whatsapp, 'El WhatsApp') }
+  } catch (error) {
+    return response({ error: error.message }, error.status || 400)
+  }
+  if (contact.email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(contact.email)) return response({ error: 'Ingresa un correo electrónico válido.' }, 400)
+
+  // La solicitud se resuelve por el hash del token opaco; cualquier
+  // request_id enviado por el navegador se ignora.
+  const quoteRows = await sql`
+    SELECT id, reference, status, service_type, product_type, payment_required,
+      service_amount_cents, service_currency,
+      (quote_expires_at IS NOT NULL AND quote_expires_at > NOW()) AS quote_active
+    FROM operations.requests
+    WHERE quote_token_hash = ${tokenHash}
+    LIMIT 1
+  `
+  const quote = quoteRows[0]
+  if (!quote) return response({ error: 'La cotización no existe.' }, 404)
+  if (String(quote.status) !== 'cotizacion') {
+    if (['pending', 'in_progress'].includes(String(quote.status))) {
+      return response({ ok: true, reference: String(quote.reference), status: String(quote.status), paymentRequired: Boolean(quote.payment_required), amountCents: Number(quote.service_amount_cents), currency: String(quote.service_currency), converted: true }, 200)
+    }
+    return response({ error: 'La cotización venció o ya no puede convertirse.' }, 409)
+  }
+  if (!Boolean(quote.quote_active)) return response({ error: 'La cotización venció o ya no puede convertirse.' }, 409)
+
+  const requestId = String(quote.id)
+  const serviceRows = await sql`SELECT 1 AS active FROM operations.services WHERE code = ${String(quote.service_type)} AND active = TRUE LIMIT 1`
+  if (!serviceRows[0]) return response({ error: 'El servicio de esta solicitud ya no está disponible.' }, 409)
+
+  let storedAttachments = []
+  try {
+    if (parsed.files.length) {
+      const requirements = await loadAttachmentRequirements(sql, String(quote.service_type), 'reserva')
+      const snapshot = await loadAttachmentSnapshot(sql, requestId)
+      const verified = await verifyAttachmentFiles({
+        files: parsed.files,
+        categories: parsed.attachmentCategories,
+        requirements,
+        snapshot,
+      })
+      storedAttachments = await storeRequestAttachments({
+        sql,
+        env,
+        requestId,
+        attachments: verified,
+        stage: 'reserva',
+        uploadedByKind: 'client',
+      })
+    }
+  } catch (error) {
+    return response({ error: error.message }, error.status || 400)
+  }
+
+  const revertNewAttachments = () => discardStoredAttachments({
+    sql,
+    env,
+    requestId,
+    attachmentIds: storedAttachments.map((attachment) => attachment.attachmentId),
+    storageKeys: storedAttachments.map((attachment) => attachment.storageKey),
+  })
+
+  // La conversión exige la matriz documental configurada para la etapa de
+  // reserva; pending/rejected/deleted no cuentan como completos.
+  const complete = await requestAttachmentsComplete(sql, requestId, 'reserva')
+  if (!complete) {
+    const gaps = await requestAttachmentGaps(sql, requestId, 'reserva')
+    await revertNewAttachments()
+    return response({
+      error: 'Faltan documentos obligatorios para confirmar la reserva.',
+      missing: gaps.map((gap) => ({ category: gap.category, labelEs: gap.labelEs, labelEn: gap.labelEn, minFiles: gap.minFiles, validatedCount: gap.validatedCount })),
+    }, 400)
+  }
+
+  const updated = await sql`
+    UPDATE operations.requests
+       SET status = 'pending', quote_converted_at = COALESCE(quote_converted_at, NOW()),
+         email = COALESCE(NULLIF(${contact.email}, ''), email),
+         phone = COALESCE(NULLIF(${contact.phone}, ''), phone),
+         whatsapp = COALESCE(NULLIF(${contact.whatsapp}, ''), whatsapp),
+         updated_at = NOW()
+     WHERE id = ${requestId}::uuid AND status = 'cotizacion' AND quote_expires_at > NOW()
+    RETURNING reference, payment_required, service_amount_cents, service_currency
+  `
+  if (!updated[0]) {
+    // Otra conversión ganó la carrera (o el token venció mientras se subían los
+    // archivos): se revierten solo los adjuntos creados por esta petición.
+    await revertNewAttachments()
+    const existing = await sql`SELECT reference, status, payment_required, service_amount_cents, service_currency FROM operations.requests WHERE quote_token_hash = ${tokenHash} LIMIT 1`
+    if (!existing[0]) return response({ error: 'La cotización no existe.' }, 404)
+    if (String(existing[0].status) === 'pending' || String(existing[0].status) === 'in_progress') {
+      return response({ ok: true, reference: String(existing[0].reference), status: String(existing[0].status), paymentRequired: Boolean(existing[0].payment_required), amountCents: Number(existing[0].service_amount_cents), currency: String(existing[0].service_currency), converted: true }, 200)
+    }
+    return response({ error: 'La cotización venció o ya no puede convertirse.' }, 409)
+  }
+
+  const attachments = await listRequestAttachments(sql, requestId)
+  return response({
+    ok: true,
+    reference: String(updated[0].reference),
+    status: 'pending',
+    paymentRequired: Boolean(updated[0].payment_required),
+    amountCents: Number(updated[0].service_amount_cents),
+    currency: String(updated[0].service_currency),
+    converted: true,
+    stored: storedAttachments.length,
+    attachments: attachments.map(attachmentPayload),
+  }, 200)
+}
+
+async function resolveAttribution(sql, token) {
+  const rows = await sql`SELECT t.attribution_type, t.agent_link_id, l.agent_id FROM operations.public_request_attribution_tokens t LEFT JOIN operations.agent_links l ON l.id = t.agent_link_id LEFT JOIN operations.users u ON u.id = l.agent_id WHERE t.token_hash = ${await sha256(token)} AND t.revoked_at IS NULL AND t.expires_at > NOW() AND ((t.attribution_type = 'direct_web' AND t.agent_link_id IS NULL) OR (t.attribution_type = 'agent_link' AND l.active = TRUE AND l.revoked_at IS NULL AND (l.expires_at IS NULL OR l.expires_at > NOW()) AND u.active = TRUE)) LIMIT 1`
+  if (!rows[0]) return null
+  return { sourceChannel: String(rows[0].attribution_type), source: String(rows[0].attribution_type) === 'agent_link' ? 'agent' : 'landingpage', agentId: rows[0].agent_id || null, agentLinkId: rows[0].agent_link_id || null }
+}
+
+async function resolvePublicService(sql, input) {
+  const rows = await sql`SELECT s.name AS service_name, sct.amount_cents, sct.currency, sct.payment_required, c.id AS consultation_type_id, c.name AS consultation_name, c.description AS consultation_description FROM operations.service_consultation_types sct JOIN operations.services s ON s.id = sct.service_id JOIN operations.consultation_types c ON c.id = sct.consultation_type_id WHERE s.code = ${input.serviceType} AND c.code = ${input.consultationType} AND s.active = TRUE AND c.active = TRUE AND sct.active = TRUE LIMIT 1`
+  return rows[0] || null
 }
 
 // Reconcile prior attempts before preparing another checkout. Pending results
@@ -1536,7 +1768,7 @@ export function validate(payload) {
   return { fullName, legalEntityType, email, phone, whatsapp, serviceType, consultationType, freightAgent: null, productType, question, agentToken }
 }
 
-function createOpaqueToken() {
+export function createOpaqueToken() {
   const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)
   return base64Url(bytes)
@@ -1550,7 +1782,9 @@ function base64Url(bytes) {
 
 async function parseInput(request) {
   const contentType = request.headers.get('content-type') || ''
-  if (!contentType.includes('multipart/form-data')) return { fields: await request.json().catch(() => ({})), files: [] }
+  if (!contentType.includes('multipart/form-data')) {
+    return { fields: await request.json().catch(() => ({})), files: [], attachmentCategories: [] }
+  }
   let formData
   try {
     formData = await request.formData()
@@ -1559,7 +1793,10 @@ async function parseInput(request) {
   }
   const fields = Object.fromEntries([...formData.entries()].filter(([, value]) => typeof value === 'string'))
   const files = formData.getAll('attachments').filter((value) => value && typeof value.arrayBuffer === 'function')
-  return { fields, files }
+  const attachmentCategories = formData.getAll('attachmentCategory')
+    .filter((value) => typeof value === 'string')
+    .map((value) => value.trim())
+  return { fields, files, attachmentCategories }
 }
 
 async function verifyTurnstile(token, request, secret) {
@@ -1601,74 +1838,6 @@ function normalizePhone(value, label) {
   const normalized = raw.replace(/[\s().-]/g, '')
   if (!/^\+?\d{7,15}$/.test(normalized)) throw new RequestError(`${label} debe tener entre 7 y 15 dígitos y usar un formato válido.`)
   return normalized
-}
-
-export function inspectImage(bytes) {
-  const maxDimension = 12000
-  const maxPixels = 40_000_000
-  const validDimensions = (width, height) => Number.isInteger(width) && Number.isInteger(height)
-    && width > 0 && height > 0 && width <= maxDimension && height <= maxDimension && width * height <= maxPixels
-  const ascii = (start, end) => String.fromCharCode(...bytes.slice(start, end))
-  const isPng = bytes.length >= 45 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((value, index) => bytes[index] === value)
-  if (isPng) {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-    const width = view.getUint32(16)
-    const height = view.getUint32(20)
-    const validHeader = view.getUint32(8) === 13 && ascii(12, 16) === 'IHDR'
-    const validEnd = ascii(bytes.length - 8, bytes.length - 4) === 'IEND'
-    return validHeader && validEnd && validDimensions(width, height) ? { type: 'image/png', width, height } : null
-  }
-  const isJpeg = bytes.length >= 16 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
-  if (isJpeg) {
-    if (bytes[bytes.length - 2] !== 0xff || bytes[bytes.length - 1] !== 0xd9) return null
-    const frameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf])
-    let offset = 2
-    while (offset < bytes.length - 2) {
-      if (bytes[offset] !== 0xff) return null
-      while (bytes[offset] === 0xff) offset += 1
-      const marker = bytes[offset++]
-      if (marker === 0xd9) break
-      if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue
-      if (offset + 2 > bytes.length) return null
-      const segmentLength = (bytes[offset] << 8) | bytes[offset + 1]
-      if (segmentLength < 2 || offset + segmentLength > bytes.length) return null
-      if (frameMarkers.has(marker)) {
-        if (segmentLength < 7) return null
-        const height = (bytes[offset + 3] << 8) | bytes[offset + 4]
-        const width = (bytes[offset + 5] << 8) | bytes[offset + 6]
-        return validDimensions(width, height) ? { type: 'image/jpeg', width, height } : null
-      }
-      offset += segmentLength
-    }
-    return null
-  }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const webpChunkSize = bytes.length >= 20 ? view.getUint32(16, true) : 0
-  const isWebp = bytes.length >= 30 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP'
-    && view.getUint32(4, true) === bytes.length - 8 && webpChunkSize <= bytes.length - 20
-  if (isWebp) {
-    let width = 0
-    let height = 0
-    if (ascii(12, 16) === 'VP8X' && webpChunkSize >= 10) {
-      width = 1 + bytes[24] + (bytes[25] << 8) + (bytes[26] << 16)
-      height = 1 + bytes[27] + (bytes[28] << 8) + (bytes[29] << 16)
-    } else if (ascii(12, 16) === 'VP8L' && webpChunkSize >= 5 && bytes[20] === 0x2f) {
-      width = 1 + bytes[21] + ((bytes[22] & 0x3f) << 8)
-      height = 1 + ((bytes[22] >> 6) & 0x03) + (bytes[23] << 2) + ((bytes[24] & 0x0f) << 10)
-    } else if (ascii(12, 16) === 'VP8 ' && webpChunkSize >= 10 && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
-      width = ((bytes[27] & 0x3f) << 8) | bytes[26]
-      height = ((bytes[29] & 0x3f) << 8) | bytes[28]
-    }
-    return validDimensions(width, height) ? { type: 'image/webp', width, height } : null
-  }
-  return null
-}
-
-async function sha256(value) {
-  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
-  let binary = ''
-  bytes.forEach((byte) => { binary += String.fromCharCode(byte) })
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
 async function sha256Bytes(bytes) {
