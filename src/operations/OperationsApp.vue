@@ -531,6 +531,7 @@ async function reviewRequestResponse(expertResponse, action) {
       ? (data.queued ? 'Respuesta aprobada; el correo quedó en la cola de envío.' : 'Respuesta aprobada.')
       : 'Respuesta devuelta al experto para corrección.'
     await openRequestDetail({ id: requestId })
+    requestDetailTab.value = 'responses'
     responseReviewNotice.value = action === 'approve'
       ? (data.queued ? 'Respuesta aprobada; el correo quedó en la cola de envío.' : 'Respuesta aprobada.')
       : 'Respuesta devuelta al experto para corrección.'

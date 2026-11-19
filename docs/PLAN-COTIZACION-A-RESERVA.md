@@ -1,8 +1,25 @@
 # Plan: solicitud en estado cotización → reserva pagada
 
-**Estado:** Planificado
+**Estado:** Implementado y validado localmente; validación de entorno Dev pendiente
 **Rama:** `dev`
 **Modelo:** una sola solicitud en Neon; Turso conserva únicamente contenido editorial.
+
+### Estado de cierre local — 2026-11-19
+
+- Slices A–F implementados en `dev`: persistencia, API Worker, compatibilidad Node,
+  formulario de cotización, reserva/pago y panel operativo.
+- Slice G revisado localmente: Worker es el runtime operativo, Node responde
+  `not_available` para rutas operativas no soportadas, Neon es la fuente única y
+  `contact_leads` no participa en el flujo de cotización.
+- Slice H validado con pruebas de contratos, adjuntos, idempotencia, notificaciones,
+  compatibilidad y flujo E2E simulado.
+- Suite local: `npm test` — 214/214; `npm run build` — correcto; `npm run test:e2e` —
+  18/18 después de corregir la navegación de la revisión administrativo-experto.
+- Cobertura adicional: descarga de adjunto ajeno rechazada sin leer almacenamiento y
+  adjuntos de reserva conservan estado `validated` al convertir.
+- Pendiente externo: ejecutar la matriz de aceptación sobre Dev con Neon, Resend,
+  Mercado Pago sandbox y cuentas de prueba; no se considera validado por los mocks
+  locales. No incluye secretos ni despliegue automático.
 
 **Decisión de compatibilidad Node/Worker:** el Worker es el runtime operativo canónico
 para cotizaciones, reservas, pagos, asignación, notificaciones y lectura/escritura de

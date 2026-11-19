@@ -228,6 +228,7 @@ test('el experto responde y administración aprueba la respuesta desde la UI', a
   await expect(page.getByText('Cargando detalle…')).toHaveCount(0)
   expect(browserErrors).toEqual([])
   await expect(page.getByRole('heading', { name: requestReference })).toBeVisible()
+  await page.getByRole('button', { name: 'Respuestas', exact: true }).click()
   await expect(page.getByText('La respuesta está pendiente de aprobación administrativa.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Aprobar y enviar' })).toBeVisible()
   await page.getByRole('button', { name: 'Aprobar y enviar' }).click()

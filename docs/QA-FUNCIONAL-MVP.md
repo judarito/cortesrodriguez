@@ -7,6 +7,17 @@
 **Entorno:** Dev  
 **Objetivo:** registrar la ejecución de los recorridos funcionales del [plan priorizado](./PLAN-PRIORIZADO-OPERACIONES.md) y dejar evidencia reproducible.
 
+### Actualización local — 2026-11-19
+
+La implementación vigente del flujo cotización → reserva queda validada localmente:
+
+- `npm test`: 214/214 pruebas pasaron.
+- `npm run build`: correcto.
+- `npm run test:e2e`: 18/18 pruebas pasaron en Chromium desktop y mobile.
+- La cobertura E2E usa APIs simuladas; los casos contra Dev, Neon, Resend y Mercado
+  Pago sandbox siguen pendientes y no deben marcarse como `PASS` hasta ejecutarse con
+  evidencia redactada.
+
 ## Decisiones de arquitectura bajo prueba
 
 - **Runtime operativo:** el Worker es el runtime canónico para cotizaciones, reservas,

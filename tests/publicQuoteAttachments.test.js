@@ -58,6 +58,7 @@ function mockDatabase({
   gaps = [],
   updateRows = [{ reference: 'CRA-20261118-ABC123', payment_required: true, service_amount_cents: 5000, service_currency: 'USD' }],
   serviceActive = true,
+  attachmentRequestId = quoteId,
 } = {}) {
   const queries = []
   const params = []
@@ -92,6 +93,7 @@ function mockDatabase({
       }
       if (query.includes('operations.request_attachments_complete')) return pgResult([{ complete }], ['complete'], ['complete'])
       if (query.includes('SELECT storage_key, mime_type, original_name, size_bytes')) {
+        if (attachmentRequestId !== quoteId) return pgResult([], ['storage_key', 'mime_type', 'original_name', 'size_bytes'])
         return pgResult([{ storage_key: `requests/${quoteId}/${attachmentId}-factura.pdf`, mime_type: 'application/pdf', original_name: 'factura.pdf', size_bytes: 42 }], ['storage_key', 'mime_type', 'original_name', 'size_bytes'])
       }
       if (query.includes('FROM operations.request_attachments')) {
@@ -202,6 +204,19 @@ test('public quote download does not read storage when the token does not own th
   let reads = 0
   await withMockedFetch(db, async () => {
     const response = await handlePublicAttachments(new Request(`${baseUrl}/attachments/${attachmentId}?token=${quoteToken}`), mockEnv({
+      GALLERY_IMAGES: { get: async () => { reads += 1; return { body: new Blob(['%PDF-1.4']) } } },
+    }))
+    assert.equal(response.status, 404)
+    assert.equal(reads, 0)
+  })
+})
+
+test('public quote download rejects a foreign attachment even with a valid quote token', async () => {
+  const foreignAttachmentId = 'b0199877-a6f9-46fc-8f87-6117846d8eef'
+  const db = mockDatabase({ attachmentRequestId: '81199877-a6f9-46fc-8f87-6117846d8eef' })
+  let reads = 0
+  await withMockedFetch(db, async () => {
+    const response = await handlePublicAttachments(new Request(`${baseUrl}/attachments/${foreignAttachmentId}?token=${quoteToken}`), mockEnv({
       GALLERY_IMAGES: { get: async () => { reads += 1; return { body: new Blob(['%PDF-1.4']) } } },
     }))
     assert.equal(response.status, 404)
@@ -404,6 +419,7 @@ test('conversion stores reservation attachments on the same request and marks it
     const payload = await response.json()
     assert.equal(payload.converted, true)
     assert.equal(payload.stored, 1)
+    assert.equal(payload.attachments[0].status, 'validated')
   })
   assert.ok(puts[0].startsWith(`requests/${quoteId}/factura_comercial/`))
   const insertParams = db.params[db.queries.findIndex((query) => query.includes('INSERT INTO operations.request_attachments'))]

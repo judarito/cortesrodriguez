@@ -34,12 +34,12 @@ Codex mantiene la responsabilidad de revisar cambios, pruebas y riesgos. Esta gu
 
 ## Reparto obligatorio de subagentes
 
-- Cuando una tarea sea paralelizable y se utilicen subagentes, iniciar como mínimo 2 agentes Claude/DeepSeek y como mínimo 2 agentes Codex basados en GPT-5.6 Luna.
-- La cantidad mínima aplica por proveedor, aunque el trabajo se divida en más slices; no considerar una única tarea grande como sustituto de los dos agentes requeridos.
-- Para las tareas que se deleguen, distribuir aproximadamente el 50% entre agentes Claude/DeepSeek y el 50% entre agentes Codex basados en GPT-5.6 Luna.
-- Ejecutar ambos grupos en modo `low`, salvo que la solicitud actual autorice explícitamente otro nivel.
-- El reparto se mide por número de tareas o slices delegados, no por cantidad de tokens ni por tiempo de ejecución.
-- Antes de delegar, asignar cada slice al proveedor que corresponda y registrar en el resumen qué tareas ejecutó cada grupo.
+- Clasificar primero la solicitud por tamaño:
+  - **Tarea pequeña:** 1 o 2 ítems concretos y acotados. Puede delegarse a un solo agente del proveedor más adecuado.
+  - **Tarea grande o paralelizable:** 3 o más ítems, varios módulos, o trabajo que pueda dividirse en slices independientes. Debe delegarse con un reparto aproximado de 50% Claude/DeepSeek y 50% Codex basado en GPT-5.6 Luna.
+- En toda tarea grande o paralelizable se deben iniciar como mínimo 2 agentes Claude/DeepSeek y como mínimo 2 agentes Codex basados en GPT-5.6 Luna. Una única tarea grande no sustituye los dos agentes mínimos de cada grupo.
+- Tanto el grupo Claude/DeepSeek como el grupo Codex GPT-5.6 Luna deben ejecutarse explícitamente con nivel `low` y modo `full-access`, salvo que la solicitud actual autorice explícitamente otro nivel o modo.
+- El reparto se mide por número de tareas o slices delegados, no por tokens ni tiempo de ejecución. Antes de delegar, asignar cada slice al proveedor correspondiente y registrar en el resumen qué tareas ejecutó cada grupo.
 - Mantener el mismo alcance, restricciones, ownership de archivos y criterios de aceptación para ambos grupos.
 - No delegar secretos, archivos `.env`, credenciales, tokens ni despliegues.
 - Codex conserva la responsabilidad de integrar, revisar diffs, ejecutar pruebas y resolver conflictos.
