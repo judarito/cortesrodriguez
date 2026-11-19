@@ -22,7 +22,7 @@ function queryResult(rows, columns, types = []) {
   }), { headers: { 'content-type': 'application/json' } })
 }
 
-function mockDatabaseFetch(currentPermissions, activeSession = true, requestPaymentState = null, currentRoles = ['expert']) {
+function mockDatabaseFetch(currentPermissions, activeSession = true, requestPaymentState = null, currentRoles = ['expert'], responseCreated = false) {
   const statements = []
   return {
     statements,
@@ -41,7 +41,7 @@ function mockDatabaseFetch(currentPermissions, activeSession = true, requestPaym
       if (query.includes('SELECT r.id, r.payment_required, r.status')) {
         return queryResult(requestPaymentState ? [{ id: userId, ...requestPaymentState }] : [], ['id', 'payment_required', 'status', 'payment_approved'], [25, 16, 25, 16])
       }
-      if (query.includes('WITH eligible AS MATERIALIZED')) return queryResult([], ['id', 'version', 'status', 'created_at'])
+      if (query.includes('WITH eligible AS MATERIALIZED')) return queryResult(responseCreated ? [{ id: 'response-1', version: 1, status: 'pending_admin_review', created_at: '2026-11-19T12:00:00.000Z' }] : [], ['id', 'version', 'status', 'created_at'])
       if (query.includes('FROM operations.clients c')) {
         return queryResult([], query.includes('COUNT(*)::int') ? ['total'] : ['id', 'full_name', 'created_at', 'request_count'])
       }
@@ -143,6 +143,28 @@ test('expert cannot submit a response for an assigned request with payment pendi
     const guardedInsert = db.statements.find((query) => query.includes('WITH eligible AS MATERIALIZED'))
     assert.ok(guardedInsert)
     assert.match(guardedInsert, /r\.payment_required = FALSE OR EXISTS/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('admin can respond to an unassigned quote without a payment approval', async () => {
+  const db = mockDatabaseFetch(['expert_requests.read', 'expert_responses.create'], true, {
+    payment_required: true, payment_approved: false, status: 'cotizacion',
+  }, ['admin'], true)
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = db.fetch
+  try {
+    const request = new Request(`https://app.example.test/api/app/expert/requests/${userId}/response`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tokenWithPermissions([])}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'Respuesta administrativa opcional' }),
+    })
+    const result = await handleOperationsExpert(request, { NEON_DATABASE_URL: 'postgres://user:pass@ep-test.neon.tech/db', OPERATIONS_JWT_SECRET: jwtSecret })
+    assert.equal(result.status, 201)
+    const insertQuery = db.statements.find((query) => query.includes('WITH eligible AS MATERIALIZED'))
+    assert.match(insertQuery, /r\.status = 'cotizacion'/)
+    assert.doesNotMatch(insertQuery, /r\.assigned_expert_id =/)
   } finally {
     globalThis.fetch = originalFetch
   }

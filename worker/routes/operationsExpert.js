@@ -67,20 +67,25 @@ export async function handleOperationsExpert(request, env) {
   if (!body) return response({ error: 'La respuesta no puede estar vacía.' }, 400)
   if (body.length > 20000) return response({ error: 'La respuesta no puede superar 20.000 caracteres.' }, 400)
   const requestId = responseMatch[1]
+  const isAdmin = claims.roles?.includes('admin')
   const assigned = await sql`SELECT r.id, r.payment_required, r.status,
       EXISTS (SELECT 1 FROM operations.request_payments p WHERE p.request_id = r.id AND p.status = 'approved') AS payment_approved
-    FROM operations.requests r WHERE r.id = ${requestId} AND r.assigned_expert_id = ${claims.sub} LIMIT 1`
+    FROM operations.requests r
+    WHERE r.id = ${requestId}
+      AND (${isAdmin ? sql`r.status = 'cotizacion'` : sql`r.assigned_expert_id = ${claims.sub}`})
+    LIMIT 1`
   if (!assigned[0]) return response({ error: 'La solicitud no está asignada a este experto.' }, 404)
-  if (assigned[0].payment_required && !assigned[0].payment_approved) return response({ error: 'La solicitud requiere un pago aprobado antes de responder.' }, 409)
+  if (!isAdmin && assigned[0].payment_required && !assigned[0].payment_approved) return response({ error: 'La solicitud requiere un pago aprobado antes de responder.' }, 409)
   if (['closed', 'cancelled'].includes(String(assigned[0].status))) return response({ error: 'La solicitud ya no está habilitada para recibir respuestas.' }, 409)
   const created = await sql`
     WITH eligible AS MATERIALIZED (
       SELECT r.id FROM operations.requests r
-      WHERE r.id = ${requestId} AND r.assigned_expert_id = ${claims.sub}
+      WHERE r.id = ${requestId}
+        AND (${isAdmin ? sql`r.status = 'cotizacion'` : sql`r.assigned_expert_id = ${claims.sub}`})
         AND r.status NOT IN ('closed', 'cancelled')
-        AND (r.payment_required = FALSE OR EXISTS (
+        AND (${isAdmin ? sql`TRUE` : sql`r.payment_required = FALSE OR EXISTS (
           SELECT 1 FROM operations.request_payments p WHERE p.request_id = r.id AND p.status = 'approved'
-        ))
+        )`})
       FOR UPDATE
     ), next_version AS (
       SELECT e.id, COALESCE(MAX(er.version), 0)::int + 1 AS version
