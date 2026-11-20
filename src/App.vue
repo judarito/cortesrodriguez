@@ -205,8 +205,6 @@ const quoteFormCopy = {
     successTitle: 'Cotización recibida',
     successText: 'Recibimos tu cotización. Nuestro equipo la revisará y te contactará con la propuesta.',
     successReference: 'Referencia',
-    successContinue: 'Continuar con la reserva',
-    successContinueHint: 'La reserva y el pago se completan en el siguiente paso.',
     successClose: 'Cerrar',
   },
   en: {
@@ -255,8 +253,6 @@ const quoteFormCopy = {
     successTitle: 'Quote received',
     successText: 'We received your quote request. Our team will review it and contact you with a proposal.',
     successReference: 'Reference',
-    successContinue: 'Continue to booking',
-    successContinueHint: 'Booking and payment are completed in the next step.',
     successClose: 'Close',
   },
 }
@@ -961,16 +957,6 @@ function isDuplicateQuoteError(error) {
   )
 }
 
-function safeQuoteContinuationUrl(value) {
-  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) return ''
-  try {
-    const url = new URL(value, window.location.origin)
-    return url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : ''
-  } catch {
-    return ''
-  }
-}
-
 function openTestimonialModal() {
   testimonialModalOpen.value = true
   menuOpen.value = false
@@ -1134,15 +1120,8 @@ async function submitLead() {
     if (quoteTurnstileToken.value) payload.turnstileToken = quoteTurnstileToken.value
 
     const response = await submitQuoteRequest(payload)
-    const quoteToken = typeof response.quoteToken === 'string' && /^[A-Za-z0-9_-]{40,60}$/.test(response.quoteToken)
-      ? response.quoteToken
-      : ''
-    const continuationUrl = safeQuoteContinuationUrl(
-      response.quoteUrl || response.continuationUrl || response.quotePath || response.continuationPath,
-    ) || (quoteToken ? `/solicitud#quoteToken=${encodeURIComponent(quoteToken)}` : '')
     quoteSuccess.value = {
       reference: response.reference || response.quoteReference || '',
-      continuationUrl,
     }
     leadForm.value = createEmptyLeadForm(activeLocale.value)
     removeQuoteTurnstile()
@@ -2699,10 +2678,6 @@ watch(site, (newSite) => {
               <p v-if="quoteSuccess.reference" class="quote-success-reference">
                 {{ leadCopy.successReference }} <strong>{{ quoteSuccess.reference }}</strong>
               </p>
-              <template v-if="quoteSuccess.continuationUrl">
-                <p class="lead-form-help">{{ leadCopy.successContinueHint }}</p>
-                <a class="quote-success-continue" :href="quoteSuccess.continuationUrl">{{ leadCopy.successContinue }} <ArrowRight :size="17" /></a>
-              </template>
               <button type="button" class="quote-success-close" @click="closeLeadModal">{{ leadCopy.successClose }}</button>
             </div>
           </template>
