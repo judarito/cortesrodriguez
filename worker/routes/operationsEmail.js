@@ -628,12 +628,15 @@ async function sendApprovedResponseNotification(sql, env, item) {
   const isQuote = Boolean(row.quote_expires_at)
   if (isQuote) {
     const reservationToken = createEmailOpaqueToken()
-    await sql`
+    const reservationRows = await sql`
       UPDATE operations.requests
-      SET quote_token_hash = ${await sha256(reservationToken)}, quote_expires_at = NOW() + INTERVAL '2 hours', updated_at = NOW()
-      WHERE id = ${row.request_id} AND status = 'cotizacion'
+      SET status = 'cotizacion', quote_token_hash = ${await sha256(reservationToken)}, quote_expires_at = NOW() + INTERVAL '2 hours', updated_at = NOW()
+      WHERE id = ${row.request_id}
+        AND quote_converted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM operations.request_payments p WHERE p.request_id = operations.requests.id AND p.status = 'approved')
+      RETURNING id
     `
-    reservationUrl = `${baseUrl}/solicitud#quoteToken=${encodeURIComponent(reservationToken)}`
+    if (reservationRows[0]) reservationUrl = `${baseUrl}/solicitud#quoteToken=${encodeURIComponent(reservationToken)}`
   }
   const logoUrl = new URL('/email-logo.png', baseUrl).toString()
   const subject = `Respuesta a tu solicitud · ${row.reference}`

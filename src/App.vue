@@ -2839,12 +2839,23 @@ watch(site, (newSite) => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  align-items: start;
+}
+
+.lead-form-row > label {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  gap: 8px;
 }
 
 .lead-form select {
   width: 100%;
   min-height: 46px;
-  padding: 10px 12px;
+  height: 46px !important;
+  box-sizing: border-box;
+  padding: 0 12px;
+  line-height: 1.2;
   color: var(--ink);
   font: inherit;
   font-weight: 600;
