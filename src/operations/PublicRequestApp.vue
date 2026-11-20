@@ -458,6 +458,7 @@ async function requestPaymentPreference() {
           reference: reference.value,
           idempotencyKey: paymentAttemptKey.value,
           submissionToken: requestIdempotencyKey.value,
+          quoteToken: quoteToken.value,
           locale: locale.value === 'en' ? 'en-US' : 'es-CO',
         }),
       })
@@ -481,7 +482,7 @@ async function requestPaymentPreference() {
     const response = await fetch('/api/public/payments/preference', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ reference: reference.value, idempotencyKey: paymentAttemptKey.value, submissionToken: requestIdempotencyKey.value }),
+      body: JSON.stringify({ reference: reference.value, idempotencyKey: paymentAttemptKey.value, submissionToken: requestIdempotencyKey.value, quoteToken: quoteToken.value }),
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok || !data.initPoint) throw new Error(localizedError(data.error || tr('La solicitud quedó registrada, pero no fue posible cotizar el pago.', 'Your request was registered, but we could not prepare the payment quote.')))
@@ -510,6 +511,7 @@ async function processBrickPayment(submission) {
       body: JSON.stringify({
         attemptId: submission.attemptId,
         submissionToken: requestIdempotencyKey.value,
+        quoteToken: quoteToken.value,
         idempotencyKey: submission.idempotencyKey,
         ...submission.payload,
       }),

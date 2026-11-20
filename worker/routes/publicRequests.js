@@ -402,7 +402,7 @@ async function convertPublicQuote(request, env) {
     SELECT id, reference, status, service_type, product_type, payment_required,
       service_amount_cents, service_currency,
       (quote_expires_at IS NOT NULL AND quote_expires_at > NOW()) AS quote_active
-    FROM operations.requests
+    FROM operations.requests AS request
     WHERE quote_token_hash = ${tokenHash}
     LIMIT 1
   `
@@ -551,23 +551,25 @@ async function createBricksPaymentIntentForEmail(request, env, verifiedEmail) {
   if (!body) return response({ error: 'Los datos del pago no son válidos.' }, 400)
   const reference = text(body.reference)
   const submissionToken = text(body.submissionToken)
+  const quoteToken = text(body.quoteToken)
   const idempotencyKey = text(body.idempotencyKey)
   if (!/^CRA-[A-Z0-9-]{8,40}$/i.test(reference)) return response({ error: 'La referencia de la solicitud no es válida.' }, 400)
-  if (!verifiedEmail && !isUuid(submissionToken)) return response({ error: 'No se pudo autorizar el pago de esta solicitud.' }, 401)
+  if (!verifiedEmail && !isUuid(submissionToken) && !/^[A-Za-z0-9_-]{40,60}$/.test(quoteToken)) return response({ error: 'No se pudo autorizar el pago de esta solicitud.' }, 401)
   if (!isUuid(idempotencyKey)) return response({ error: 'La clave de intento de pago no es válida.' }, 400)
 
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   await ensurePaymentSchema(sql)
   const submissionTokenHash = verifiedEmail ? null : await sha256(submissionToken)
+  const quoteTokenHash = !verifiedEmail && quoteToken ? await sha256(quoteToken) : null
   const requests = await sql`
     SELECT id, reference, service_amount_cents, service_currency, payment_required, status,
       confirmed_payment_attempt_id, preferred_locale
     FROM operations.requests
     WHERE reference = ${reference}
       AND ((${verifiedEmail}::text IS NOT NULL AND lower(trim(email)) = ${verifiedEmail}) OR
-        (${verifiedEmail}::text IS NULL AND public_idempotency_key_hash = ${submissionTokenHash}
-          AND public_submission_completed_at > NOW() - INTERVAL '2 hours'))
+        (${verifiedEmail}::text IS NULL AND ((public_idempotency_key_hash = ${submissionTokenHash}
+          AND public_submission_completed_at > NOW() - INTERVAL '2 hours') OR to_jsonb(operations.requests)->>'quote_token_hash' = ${quoteTokenHash})))
     LIMIT 1
   `
   const requestRow = requests[0]
@@ -673,8 +675,10 @@ async function processBricksPayment(request, env, verifiedEmail = null) {
   const input = validateBricksPaymentInput(body)
   if (!input) return response({ error: 'Los datos del pago no tienen un formato válido.' }, 400)
   const submissionToken = text(body.submissionToken)
-  if (!verifiedEmail && !isUuid(submissionToken)) return response({ error: 'No se pudo autorizar el pago de esta solicitud.' }, 401)
+  const quoteToken = text(body.quoteToken)
+  if (!verifiedEmail && !isUuid(submissionToken) && !/^[A-Za-z0-9_-]{40,60}$/.test(quoteToken)) return response({ error: 'No se pudo autorizar el pago de esta solicitud.' }, 401)
   const submissionTokenHash = verifiedEmail ? null : await sha256(submissionToken)
+  const quoteTokenHash = !verifiedEmail && quoteToken ? await sha256(quoteToken) : null
 
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
@@ -687,8 +691,8 @@ async function processBricksPayment(request, env, verifiedEmail = null) {
     JOIN operations.requests request ON request.id = payment.request_id
     WHERE payment.id = ${input.attemptId}::uuid
       AND ((${verifiedEmail}::text IS NOT NULL AND lower(trim(request.email)) = ${verifiedEmail}) OR
-        (${verifiedEmail}::text IS NULL AND request.public_idempotency_key_hash = ${submissionTokenHash}
-          AND request.public_submission_completed_at > NOW() - INTERVAL '2 hours'))
+        (${verifiedEmail}::text IS NULL AND ((request.public_idempotency_key_hash = ${submissionTokenHash}
+          AND request.public_submission_completed_at > NOW() - INTERVAL '2 hours') OR to_jsonb(request)->>'quote_token_hash' = ${quoteTokenHash})))
     LIMIT 1
   `
   const attempt = rows[0]
@@ -1115,20 +1119,22 @@ async function createPaymentPreference(request, env, verifiedEmail = null) {
   const reference = text(body.reference)
   const idempotencyKey = text(body.idempotencyKey)
   const submissionToken = text(body.submissionToken)
+  const quoteToken = text(body.quoteToken)
   if (!reference) return response({ error: 'Falta la referencia de la solicitud.' }, 400)
   if (!/^[0-9a-f-]{36}$/i.test(idempotencyKey)) return response({ error: 'La clave de intento de pago no es válida.' }, 400)
-  if (!verifiedEmail && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(submissionToken)) {
+  if (!verifiedEmail && !isUuid(submissionToken) && !/^[A-Za-z0-9_-]{40,60}$/.test(quoteToken)) {
     return response({ error: 'No se pudo autorizar el pago de esta solicitud.' }, 401)
   }
   const submissionTokenHash = verifiedEmail ? null : await sha256(submissionToken)
+  const quoteTokenHash = !verifiedEmail && quoteToken ? await sha256(quoteToken) : null
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(env.NEON_DATABASE_URL)
   await ensurePaymentSchema(sql)
   const rows = await sql`SELECT id, reference, service_amount_cents, service_currency, payment_required, status, confirmed_payment_attempt_id
-    FROM operations.requests WHERE reference = ${reference}
+    FROM operations.requests AS request WHERE reference = ${reference}
       AND (${verifiedEmail}::text IS NULL OR lower(trim(email)) = ${verifiedEmail})
-      AND (${verifiedEmail}::text IS NOT NULL OR (public_idempotency_key_hash = ${submissionTokenHash}
-        AND public_submission_completed_at > NOW() - INTERVAL '2 hours')) LIMIT 1`
+      AND (${verifiedEmail}::text IS NOT NULL OR ((public_idempotency_key_hash = ${submissionTokenHash}
+        AND public_submission_completed_at > NOW() - INTERVAL '2 hours') OR to_jsonb(request)->>'quote_token_hash' = ${quoteTokenHash})) LIMIT 1`
   if (!rows[0]) return response({ error: 'Solicitud no encontrada.' }, 404)
   if (String(rows[0].service_currency).toUpperCase() !== 'USD') return response({ error: 'La solicitud no tiene un precio USD válido.' }, 400)
   if (!rows[0].payment_required) return response({ error: 'Esta solicitud no requiere pago.' }, 409)
