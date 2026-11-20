@@ -21,7 +21,7 @@ before(async () => {
     CREATE TABLE operations.requests (
       id uuid PRIMARY KEY, email text, reference text, status text, payment_required boolean,
       confirmed_payment_attempt_id uuid, public_idempotency_key_hash text,
-      public_submission_completed_at timestamptz
+      public_submission_completed_at timestamptz, quote_token_hash text
     );
     CREATE TABLE operations.request_payments (
       id uuid PRIMARY KEY, request_id uuid, reference text, checkout_mode text, status text,
@@ -32,7 +32,7 @@ before(async () => {
 after(async () => { await db?.close() })
 async function fixture() {
   await db.exec('TRUNCATE operations.request_payments, operations.requests')
-  await db.query(`INSERT INTO operations.requests VALUES ($1,$2,'CRA-20261027-A1B2C3','pending',true,NULL,'capability-hash',NOW())`, [requestId, email])
+  await db.query(`INSERT INTO operations.requests VALUES ($1,$2,'CRA-20261027-A1B2C3','pending',true,NULL,'capability-hash',NOW(),NULL)`, [requestId, email])
   await db.query(`INSERT INTO operations.request_payments (id,request_id,reference,checkout_mode,status,usd_amount_cents,cop_amount_cents)
     VALUES ($1,$2,'CRA-20261027-A1B2C3','bricks','pending',1000,4000000)`, [attemptId, requestId])
 }
@@ -70,6 +70,11 @@ test('PostgreSQL checks owner or current initial-payment capability at reservati
   assert.deepEqual(await reserveBricksSubmission(sql, attemptId, null, 'capability-hash'), [])
   await db.exec('UPDATE operations.requests SET public_submission_completed_at=NOW()')
   assert.equal((await reserveBricksSubmission(sql, attemptId, null, 'capability-hash')).length, 1)
+})
+test('PostgreSQL reserves a quote-token payment attempt for the same quote request', async () => {
+  await fixture()
+  await db.exec("UPDATE operations.requests SET quote_token_hash='quote-token-hash', public_submission_completed_at=NULL")
+  assert.equal((await reserveBricksSubmission(sql, attemptId, null, null, 'quote-token-hash')).length, 1)
 })
 test('rollback cancels only never-submitted Bricks; a stale tab cannot charge the invalidated attempt', async () => {
   await fixture()

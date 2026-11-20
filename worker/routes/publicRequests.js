@@ -738,7 +738,7 @@ async function processBricksPayment(request, env, verifiedEmail = null) {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents % 100 !== 0) return response({ error: 'El valor guardado para este pago no es válido.' }, 409)
   const origin = env.PUBLIC_APP_URL || new URL(request.url).origin
   const providerPayload = buildBricksProviderPayload(attempt, input, `${origin}/api/public/payments/webhook`)
-  const started = await reserveBricksSubmission(sql, attempt.id, verifiedEmail, submissionTokenHash)
+  const started = await reserveBricksSubmission(sql, attempt.id, verifiedEmail, submissionTokenHash, quoteTokenHash)
   if (!started.length) return response({ error: 'La solicitud o el intento ya no permiten iniciar este cobro. Actualiza el estado antes de continuar.' }, 409)
   let payment
   try {
@@ -781,7 +781,7 @@ export async function cancelUnsubmittedBricks(sql, requestId, verifiedEmail, sub
 // The request lock is the authorization point shared with cancellation and payment
 // confirmation. Once reserved, a provider call can be in flight: later cancellation
 // must reconcile it, not claim to have undone an external charge.
-export async function reserveBricksSubmission(sql, attemptId, verifiedEmail, submissionTokenHash = null) {
+export async function reserveBricksSubmission(sql, attemptId, verifiedEmail, submissionTokenHash = null, quoteTokenHash = null) {
   return sql`
     WITH authorized_request AS MATERIALIZED (
       SELECT request.id
@@ -792,8 +792,11 @@ export async function reserveBricksSubmission(sql, attemptId, verifiedEmail, sub
         AND request.payment_required = TRUE
         AND request.confirmed_payment_attempt_id IS NULL
         AND ((${verifiedEmail}::text IS NOT NULL AND lower(trim(request.email)) = ${verifiedEmail}) OR
-          (${verifiedEmail}::text IS NULL AND request.public_idempotency_key_hash = ${submissionTokenHash}
-            AND request.public_submission_completed_at > NOW() - INTERVAL '2 hours'))
+        (${verifiedEmail}::text IS NULL AND (
+          (request.public_idempotency_key_hash = ${submissionTokenHash}
+            AND request.public_submission_completed_at > NOW() - INTERVAL '2 hours')
+          OR to_jsonb(request)->>'quote_token_hash' = ${quoteTokenHash}
+        )))
         AND NOT EXISTS (SELECT 1 FROM operations.request_payments approved
           WHERE approved.request_id = request.id AND approved.status IN ('approved', 'duplicate_approved', 'refunded', 'charged_back'))
       FOR UPDATE OF request
