@@ -565,11 +565,11 @@ async function createBricksPaymentIntentForEmail(request, env, verifiedEmail) {
   const requests = await sql`
     SELECT id, reference, service_amount_cents, service_currency, payment_required, status,
       confirmed_payment_attempt_id, preferred_locale
-    FROM operations.requests
+    FROM operations.requests AS request
     WHERE reference = ${reference}
       AND ((${verifiedEmail}::text IS NOT NULL AND lower(trim(email)) = ${verifiedEmail}) OR
         (${verifiedEmail}::text IS NULL AND ((public_idempotency_key_hash = ${submissionTokenHash}
-          AND public_submission_completed_at > NOW() - INTERVAL '2 hours') OR to_jsonb(operations.requests)->>'quote_token_hash' = ${quoteTokenHash})))
+          AND public_submission_completed_at > NOW() - INTERVAL '2 hours') OR to_jsonb(request)->>'quote_token_hash' = ${quoteTokenHash})))
     LIMIT 1
   `
   const requestRow = requests[0]
