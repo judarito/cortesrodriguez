@@ -11,7 +11,7 @@ function recordingSql(result) {
   return { sql, calls }
 }
 
-test('approval is conditional and closes non-quote requests only with a durable outbox event', async () => {
+test('approval is conditional and keeps non-quote requests active with a durable outbox event', async () => {
   const { sql, calls } = recordingSql([{
     id: 'response-1', version: 3, status: 'approved', public_note: 'Para el cliente', internal_note: 'Nota interna',
   }])
@@ -26,7 +26,7 @@ test('approval is conditional and closes non-quote requests only with a durable 
   assert.match(calls[0].query, /INSERT INTO operations\.notification_outbox/)
   assert.match(calls[0].query, /SELECT id FROM event_written/)
   assert.match(calls[0].query, /EXISTS \(SELECT 1 FROM durable_event\)/)
-  assert.match(calls[0].query, /SET status = CASE WHEN status = 'cotizacion' THEN 'cotizacion' ELSE 'closed' END/)
+  assert.match(calls[0].query, /SET status = CASE WHEN status = 'cotizacion' THEN 'cotizacion' ELSE 'in_progress' END/)
   assert.match(calls[0].query, /admin_note = .*internal_note =/)
   assert.deepEqual(rows[0], {
     id: 'response-1', version: 3, status: 'approved', public_note: 'Para el cliente', internal_note: 'Nota interna',
@@ -38,7 +38,7 @@ test('approved quotes remain in cotizacion until the client reserves from the re
   await transitionReview(sql, {
     responseId: 'response-1', requestId: 'quote-1', action: 'approve', actorId: 'admin-1', publicNote: '', internalNote: '',
   })
-  assert.match(calls[0].query, /status = CASE WHEN status = 'cotizacion' THEN 'cotizacion' ELSE 'closed' END/)
+  assert.match(calls[0].query, /status = CASE WHEN status = 'cotizacion' THEN 'cotizacion' ELSE 'in_progress' END/)
   assert.match(calls[0].query, /expert_response_approved/)
 })
 

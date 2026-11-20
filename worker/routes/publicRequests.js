@@ -1489,7 +1489,9 @@ async function recordVerifiedPayment(payment, paymentId, env, database = null, s
       FOR UPDATE
     ), claimed AS (
       UPDATE operations.requests request
-      SET confirmed_payment_attempt_id = eligible.id, updated_at = NOW()
+      SET confirmed_payment_attempt_id = eligible.id,
+          status = CASE WHEN request.status IN ('pending', 'in_review') THEN 'in_progress' ELSE request.status END,
+          updated_at = NOW()
       FROM eligible
       WHERE request.id = eligible.request_id AND ${status} = 'approved'
         AND (request.confirmed_payment_attempt_id IS NULL OR request.confirmed_payment_attempt_id = eligible.id)

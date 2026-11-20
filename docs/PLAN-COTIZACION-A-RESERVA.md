@@ -38,7 +38,7 @@ editorial y no puede actuar como respaldo operativo.
 
 ## Objetivo
 
-La cotización crea una fila en `operations.requests` con estado `cotizacion`. Al continuar, el cliente completa la misma solicitud, paga y avanza a los estados operativos existentes. No se crea una tabla adicional ni se guarda la cotización en Turso.
+La cotización crea una fila en `operations.requests` con estado `cotizacion`. Responder al cliente no cierra la solicitud: una solicitud atendida queda activa y, cuando el pago se confirma, pasa a reserva/en gestión. `closed` se reserva para el cierre real de la atención. No se crea una tabla adicional ni se guarda la cotización en Turso.
 
 ## Alcance
 
@@ -55,7 +55,7 @@ La cotización crea una fila en `operations.requests` con estado `cotizacion`. A
 La fila sigue este ciclo:
 
 ```text
-cotizacion → respuesta aprobada → enlace `Reservar` en el correo → reserva/pago → pending → in_progress → closed
+cotizacion → respuesta aprobada (abierta) → enlace `Reservar` en el correo → reserva/pago → in_progress (`Reservada / en gestión`) → closed al terminar la atención
                          ↘ cancelled / expired
 ```
 
