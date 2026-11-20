@@ -1057,7 +1057,10 @@ function bricksVerificationPending(attempt) {
 export function bricksIntentResponse(attempt, publicKey, locale) {
   const usdAmountCents = Number(attempt.usd_amount_cents)
   const trm = Number(attempt.trm_cop_per_usd)
-  const trmDate = String(attempt.trm_effective_date || '')
+  const rawTrmDate = attempt.trm_effective_date
+  const trmDate = rawTrmDate instanceof Date
+    ? rawTrmDate.toISOString().slice(0, 10)
+    : String(rawTrmDate || '').slice(0, 10)
   return response({
     attemptId: String(attempt.id),
     publicKey: String(publicKey),
