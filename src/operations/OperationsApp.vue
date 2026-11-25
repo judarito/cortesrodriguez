@@ -185,6 +185,20 @@ function notificationClass(status) {
   return 'status-amber'
 }
 
+function requestCardFields(request) {
+  const fields = [
+    { label: tx('Servicio'), value: labelValue(request.serviceType) },
+    { label: tx('Producto'), value: labelValue(request.productType) },
+  ]
+  if (requestTab.value === 'assigned') fields.push({ label: tx('Experto'), value: request.expertName || tx('Sin nombre') })
+  fields.push(
+    { label: tx('Fuente'), value: sourceLabel(request.source) },
+    { label: tx('Agente'), value: agentLabel(request) },
+    { label: tx('Fecha'), value: formatDate(request.createdAt) },
+  )
+  return fields
+}
+
 const attachmentCategories = {
   identity: 'Identidad', operation: 'Operación', payment: 'Pago', other: 'Otros',
 }
@@ -894,7 +908,7 @@ onMounted(restoreSession)
         <div class="module-heading"><div><p class="eyebrow">{{ tx('Seguimiento operativo') }}</p><h1>{{ tx('Solicitudes') }}</h1><p>{{ tx('Consulta el estado y los datos de cada requerimiento recibido.') }}</p></div><button type="button" class="secondary-button compact" @click="selectMenu({ label: 'Solicitudes' })">↻ {{ tx('Actualizar') }}</button></div>
         <div v-if="isAdmin" class="security-tabs request-tabs" role="tablist" aria-label="Vista de solicitudes"><button type="button" role="tab" :aria-selected="requestTab === 'all'" :class="{ active: requestTab === 'all' }" @click="setRequestTab('all')">{{ tx('Todas') }}</button><button type="button" role="tab" :aria-selected="requestTab === 'assigned'" :class="{ active: requestTab === 'assigned' }" @click="setRequestTab('assigned')">{{ tx('Asignadas') }}</button></div>
         <form class="module-search" @submit.prevent="searchModule('Solicitudes')"><span>⌕</span><input v-model="requestSearch" type="search" :placeholder="tx('Buscar por referencia, cliente, servicio o estado...')" /><button type="submit">{{ tx('Buscar') }}</button></form><div class="advanced-filter-toolbar"><button type="button" class="secondary-button compact" @click="requestFiltersOpen = !requestFiltersOpen">⚙ {{ tx('Filtros avanzados') }}</button><span v-if="requestFilters.status || requestFilters.serviceType || requestFilters.source || requestFilters.agentId || requestFilters.unassignedExpertOnly || requestFilters.dateFrom || requestFilters.dateTo" class="filter-active-note">{{ tx('Filtros activos') }}</span></div><div v-if="requestFiltersOpen" class="advanced-filters panel"><label>Estado<select v-model="requestFilters.status"><option value="">Todos</option><option value="pending">Pendiente</option><option value="in_review">En revisión</option><option value="in_progress">En gestión</option><option value="closed">Cerrada</option><option value="cancelled">Cancelada</option></select></label><label>Tipo de servicio<select v-model="requestFilters.serviceType"><option value="">Todos</option><option value="exportacion">Exportación</option><option value="importacion">Importación</option><option value="agente_carga">Agente de carga</option></select></label><label>Fuente<select v-model="requestFilters.source"><option value="">Todas</option><option value="direct_web">Página web</option><option value="agent_link">Agente</option><option v-if="isAdmin" value="admin_entry">{{ tx('Ingreso administrativo') }}</option></select></label><label v-if="user.permissions?.includes('users.manage')">Agente<select v-model="requestFilters.agentId"><option value="">Todos</option><option v-for="agent in requestAgents" :key="agent.id" :value="agent.id">{{ agent.name }}</option></select></label><label v-if="isAdmin">{{ tx('Experto') }}<select v-model="requestFilters.unassignedExpertOnly"><option value="">Todos</option><option value="true">{{ tx('Sin experto asignado') }}</option></select></label><label>Desde<input v-model="requestFilters.dateFrom" type="date" /></label><label>Hasta<input v-model="requestFilters.dateTo" type="date" /></label><div class="advanced-filter-actions"><button type="button" class="secondary-button compact" @click="clearRequestFilters">Limpiar</button><button type="button" class="primary-button compact" @click="searchModule('Solicitudes')">Aplicar filtros</button></div></div>
-        <div v-if="agentFormOpen" class="agent-request-card panel"><div class="panel-heading"><div><p class="eyebrow">{{ tx('Solicitud interna') }}</p><h2>{{ tx('Nueva solicitud sin cobro') }}</h2><p>{{ tx('Registra una solicitud de tu cliente y quedará asociada a tu usuario.') }}</p></div><button type="button" class="request-detail-close" @click="agentFormOpen = false">×</button></div><form class="agent-request-form" @submit.prevent="createAgentRequest"><label>{{ tx('Nombre completo') }}<input v-model="agentForm.fullName" required :placeholder="tx('Nombre del cliente')" /></label><label>{{ tx('Constitución legal') }}<select v-model="agentForm.legalEntityType" required><option value="" disabled>Selecciona una opción</option><option value="natural">Persona natural</option><option value="juridica">Persona jurídica</option></select></label><label>{{ tx('Correo electrónico') }}<input v-model="agentForm.email" type="email" placeholder="name@company.com" /></label><label>{{ tx('Teléfono') }}<input v-model="agentForm.phone" placeholder="+57 300 000 0000" /></label><label>{{ tx('WhatsApp') }}<input v-model="agentForm.whatsapp" placeholder="+57 300 000 0000" /></label><label>{{ tx('Tipo de servicio') }}<select v-model="agentForm.serviceType" required><option value="" disabled>Selecciona una opción</option><option value="exportacion">Exportación</option><option value="importacion">Importación</option><option value="agente_carga">Agente de carga</option></select></label><label>{{ tx('Tipo de producto') }}<select v-model="agentForm.productType" required><option value="" disabled>Selecciona una opción</option><option value="vehiculos">Vehículos</option><option value="mercancias">Mercancías</option></select></label><p v-if="agentFormError" class="request-error">{{ agentFormError }}</p><div class="form-actions"><button type="button" class="secondary-button compact" @click="agentFormOpen = false">Cancelar</button><button type="submit" class="primary-button" :disabled="agentFormLoading">{{ agentFormLoading ? 'Creando…' : 'Crear solicitud' }} <span>→</span></button></div></form></div><div v-if="moduleLoading" class="module-state panel">Cargando solicitudes…</div><div v-else-if="moduleError" class="module-state module-state-error panel">{{ moduleError }}</div><ListView v-else :locale="locale" :title="tx('Solicitudes')" :description="tx(requestTab === 'assigned' ? 'Solicitudes que ya tienen un experto asignado.' : 'Consulta el estado y los datos de cada requerimiento recibido.')" :count="requestPagination.totalItems" :page="requestPagination.page" :total-pages="requestPagination.totalPages" :empty="!requests.length" :empty-text="tx('No encontramos solicitudes con ese criterio.')" @previous="changePage('Solicitudes', requestPagination.page - 1)" @next="changePage('Solicitudes', requestPagination.page + 1)"><template #actions><button v-if="isAdmin" type="button" class="primary-button compact" @click="openAgentForm()">+ Crear solicitud</button></template><template #columns><th>{{ tx('Referencia') }}</th><th>{{ tx('Cliente') }}</th><th>{{ tx('Servicio') }}</th><th>{{ tx('Producto') }}</th><th v-if="requestTab === 'assigned'">{{ tx('Experto') }}</th><th>{{ tx('Estado') }}</th><th>{{ tx('Pago') }}</th><th>{{ tx('Correos') }}</th><th>{{ tx('Fuente') }}</th><th>{{ tx('Agente') }}</th><th>{{ tx('Fecha') }}</th></template><template #rows><tr v-for="request in requests" :key="request.id"><td><button class="request-link" type="button" @click="openRequestDetail(request)">{{ request.reference }}</button></td><td><button class="client-link" type="button" @click="openRequestDetail(request)">{{ request.clientName }}</button></td><td>{{ labelValue(request.serviceType) }}</td><td>{{ labelValue(request.productType) }}</td><td v-if="requestTab === 'assigned'">{{ request.expertName || tx('Sin nombre') }}</td><td><span :class="['status-pill', statusClass(request.status)]"><i></i>{{ labelValue(request.status) }}</span></td><td><span :class="['status-pill', request.payment ? statusClass(request.payment.status) : 'status-blue']"><i></i>{{ request.payment ? paymentLabel(request.payment.status) : request.paymentRequired ? tx('Sin iniciar') : tx('No requerido') }}</span></td><td><span :class="['status-pill', notificationClass(request.notificationStatus)]" :title="request.notificationStatus === 'opened' ? tx('El correo pudo cargarse automáticamente. Esto no confirma que alguien lo haya leído.') : ''"><i></i>{{ notificationLabel(request.notificationStatus) }}</span></td><td><span class="source-badge">{{ sourceLabel(request.source) }}</span></td><td>{{ agentLabel(request) }}</td><td>{{ formatDate(request.createdAt) }}</td></tr></template></ListView>
+        <div v-if="agentFormOpen" class="agent-request-card panel"><div class="panel-heading"><div><p class="eyebrow">{{ tx('Solicitud interna') }}</p><h2>{{ tx('Nueva solicitud sin cobro') }}</h2><p>{{ tx('Registra una solicitud de tu cliente y quedará asociada a tu usuario.') }}</p></div><button type="button" class="request-detail-close" @click="agentFormOpen = false">×</button></div><form class="agent-request-form" @submit.prevent="createAgentRequest"><label>{{ tx('Nombre completo') }}<input v-model="agentForm.fullName" required :placeholder="tx('Nombre del cliente')" /></label><label>{{ tx('Constitución legal') }}<select v-model="agentForm.legalEntityType" required><option value="" disabled>Selecciona una opción</option><option value="natural">Persona natural</option><option value="juridica">Persona jurídica</option></select></label><label>{{ tx('Correo electrónico') }}<input v-model="agentForm.email" type="email" placeholder="name@company.com" /></label><label>{{ tx('Teléfono') }}<input v-model="agentForm.phone" placeholder="+57 300 000 0000" /></label><label>{{ tx('WhatsApp') }}<input v-model="agentForm.whatsapp" placeholder="+57 300 000 0000" /></label><label>{{ tx('Tipo de servicio') }}<select v-model="agentForm.serviceType" required><option value="" disabled>Selecciona una opción</option><option value="exportacion">Exportación</option><option value="importacion">Importación</option><option value="agente_carga">Agente de carga</option></select></label><label>{{ tx('Tipo de producto') }}<select v-model="agentForm.productType" required><option value="" disabled>Selecciona una opción</option><option value="vehiculos">Vehículos</option><option value="mercancias">Mercancías</option></select></label><p v-if="agentFormError" class="request-error">{{ agentFormError }}</p><div class="form-actions"><button type="button" class="secondary-button compact" @click="agentFormOpen = false">Cancelar</button><button type="submit" class="primary-button" :disabled="agentFormLoading">{{ agentFormLoading ? 'Creando…' : 'Crear solicitud' }} <span>→</span></button></div></form></div><div v-if="moduleLoading" class="module-state panel">Cargando solicitudes…</div><div v-else-if="moduleError" class="module-state module-state-error panel">{{ tx(moduleError) }}</div><ListView v-else :locale="locale" :title="tx('Solicitudes')" :description="tx(requestTab === 'assigned' ? 'Solicitudes que ya tienen un experto asignado.' : 'Consulta el estado y los datos de cada requerimiento recibido.')" :count="requestPagination.totalItems" :page="requestPagination.page" :total-pages="requestPagination.totalPages" :empty="!requests.length" :empty-text="tx('No encontramos solicitudes con ese criterio.')" @previous="changePage('Solicitudes', requestPagination.page - 1)" @next="changePage('Solicitudes', requestPagination.page + 1)"><template #actions><button v-if="isAdmin" type="button" class="primary-button compact" @click="openAgentForm()">+ Crear solicitud</button></template><template #columns><th>{{ tx('Solicitud') }}</th><th>{{ tx('Servicio') }}</th><th>{{ tx('Producto') }}</th><th v-if="requestTab === 'assigned'">{{ tx('Experto') }}</th><th>{{ tx('Estado') }}</th><th>{{ tx('Pago') }}</th><th>{{ tx('Correos') }}</th><th>{{ tx('Fuente') }}</th><th>{{ tx('Agente') }}</th><th>{{ tx('Fecha') }}</th></template><template #rows><tr v-for="request in requests" :key="request.id" class="request-list-card"><td class="request-card-identity"><button class="request-link" type="button" @click="openRequestDetail(request)">{{ request.reference }}</button><button class="client-link" type="button" @click="openRequestDetail(request)">{{ request.clientName }}</button></td><td v-for="field in requestCardFields(request)" :key="field.label" class="request-card-meta"><span class="request-card-label">{{ field.label }}</span><span class="request-card-value">{{ field.value }}</span></td><td class="request-card-state request-card-state-request"><span class="request-card-label">{{ tx('Solicitud') }}</span><span :class="['status-pill', statusClass(request.status)]"><i></i>{{ labelValue(request.status) }}</span></td><td class="request-card-state request-card-state-payment"><span class="request-card-label">{{ tx('Pago') }}</span><span :class="['status-pill', request.payment ? statusClass(request.payment.status) : 'status-blue']"><i></i>{{ request.payment ? paymentLabel(request.payment.status) : request.paymentRequired ? tx('Sin iniciar') : tx('No requerido') }}</span></td><td class="request-card-state request-card-state-communication"><span class="request-card-label">{{ tx('Comunicación') }}</span><span :class="['status-pill', notificationClass(request.notificationStatus)]" :title="request.notificationStatus === 'opened' ? tx('El correo pudo cargarse automáticamente. Esto no confirma que alguien lo haya leído.') : ''"><i></i>{{ notificationLabel(request.notificationStatus) }}</span></td></tr></template></ListView>
       </section>
       <SecurityPanel v-else-if="activeMenu === 'Usuarios y roles'" :token="token" :locale="locale" />
       <section v-else-if="false && activeMenu === 'Usuarios y roles'" class="module-view security-view">
@@ -1084,101 +1098,45 @@ onMounted(restoreSession)
 <style>
 /* Keep operational text readable across admin, agent, reviewer, and expert roles. */
 .operations-shell { font-size: 14px; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 220px;
-  grid-template-areas:
-    "reference client request-status"
-    "service product payment-status"
-    "source agent communication-status"
-    "date date communication-status";
-  align-items: center;
-  gap: 16px 22px;
-  padding: 22px 24px;
+.operations-shell .list-view-cards .list-view-table tr.request-list-card {
+  display:grid; grid-template-columns:repeat(6,minmax(0,1fr)) 220px;
+  grid-template-rows:auto auto auto; gap:0; padding:24px; background:#fff;
+  border-radius:14px; box-shadow:0 3px 12px #19304608;
 }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td { min-width: 0; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(1) { grid-area: reference; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(2) { grid-area: client; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(3) { grid-area: service; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(4) { grid-area: product; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(8) { grid-area: source; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(9) { grid-area: agent; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(10) { grid-area: date; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(5),
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6),
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7) {
-  grid-column: 3;
-  padding: 2px 0 2px 18px;
-  border-left: 1px solid #dce5ed;
+.operations-shell .list-view-cards .list-view-table tr.request-list-card > td {
+  min-width:0; margin:0; border:0; padding:0; grid-area:auto;
 }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(5) { grid-row: 1; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6) { grid-row: 2; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7) { grid-row: 3 / span 2; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(5)::before { content: 'Solicitud'; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7)::before { content: 'Comunicación'; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(5)::before,
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6)::before,
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7)::before { font-size: 11px; font-weight: 500; text-transform:none; letter-spacing:0; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) .request-link,
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) .client-link { font-size: 16px; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) .status-pill { align-self: start; width: fit-content; font-size: 12px; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(5):not(:has(.status-pill)) {
-  grid-area: expert;
-  grid-column: auto;
-  grid-row: auto;
-  padding: 0;
-  border-left: 0;
+.operations-shell .list-view-cards .list-view-table tr.request-list-card > td::before { display:none; }
+.operations-shell .list-view-cards .list-view-table .request-list-card .request-card-identity {
+  grid-column:1 / 7; grid-row:1; display:flex; flex-direction:row; align-items:center;
+  flex-wrap:wrap; gap:16px 24px; padding:8px 20px 22px 0; border-bottom:1px solid #e2e9f0;
 }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(9):not(:has(.status-pill)) { grid-area: source; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(10):not(:has(.status-pill)) { grid-area: agent; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(11):not(:has(.status-pill)) { grid-area: date; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6):has(.status-pill),
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7):has(.status-pill),
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(8):has(.status-pill) { grid-column: 3; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6):has(.status-pill) { grid-row: 1; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7):has(.status-pill) { grid-row: 2; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(8):has(.status-pill) { grid-row: 3 / span 2; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6):has(.status-pill)::before { content: 'Solicitud'; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(8):has(.status-pill)::before { content: 'Comunicación'; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) {
-  grid-template-areas:
-    "reference client request-status"
-    "service product payment-status"
-    "expert expert communication-status"
-    "source agent communication-status"
-    "date date communication-status";
+.operations-shell .request-card-identity .request-link {font-size:18px;font-weight:600;color:#173a55;overflow-wrap:anywhere}
+.operations-shell .request-card-identity .client-link {font-size:18px;font-weight:500;color:#243b53;padding-left:24px;border-left:1px solid #dce5ed}
+.operations-shell .list-view-cards .list-view-table .request-list-card .request-card-meta {
+  grid-row:2 / 4; display:flex; justify-content:center; gap:7px; padding:22px 12px 10px 0;
 }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(5) { grid-area: expert; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(6) { grid-area: request-status; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(7) { grid-area: payment-status; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(8) { grid-area: communication-status; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(9) { grid-area: source; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(10) { grid-area: agent; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(11) { grid-area: date; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(6),
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(7),
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(8) { grid-column: 3; grid-row: auto; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(6) { grid-row: 1; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(7) { grid-row: 2; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(8) { grid-row: 3 / span 3; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(6)::before { content: 'Solicitud'; }
-.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(8)::before { content: 'Comunicación'; }
-@media (max-width: 720px) {
-  .operations-shell .list-view-cards .list-view-table tr:has(.request-link) {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: none;
-    gap: 14px;
-  }
-  .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td,
-  .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(n) {
-    grid-area: auto;
-    grid-column: auto;
-    grid-row: auto;
-    padding: 0;
-    border-left: 0;
-  }
-  .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(1),
-  .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(2) { grid-column: 1 / -1; }
+.operations-shell .request-card-label {color:#78899b;font-size:12px;font-weight:400;line-height:1.4}
+.operations-shell .request-card-value {color:#304a62;font-size:14px;font-weight:400;line-height:1.5;overflow-wrap:anywhere}
+.operations-shell .list-view-cards .list-view-table .request-list-card .request-card-state {
+  grid-column:7; display:flex; gap:6px; padding:6px 0 10px 22px;border-left:1px solid #dce5ed;
+}
+.operations-shell .list-view-cards .list-view-table .request-list-card .request-card-state-request {grid-row:1}
+.operations-shell .list-view-cards .list-view-table .request-list-card .request-card-state-payment {grid-row:2}
+.operations-shell .list-view-cards .list-view-table .request-list-card .request-card-state-communication {grid-row:3}
+.operations-shell .request-list-card .status-pill {align-self:flex-start;font-size:12px;font-weight:600;white-space:normal}
+@media(max-width:1050px){
+ .operations-shell .list-view-cards .list-view-table tr.request-list-card {grid-template-columns:repeat(3,minmax(0,1fr)) 200px}
+ .operations-shell .list-view-cards .list-view-table .request-list-card .request-card-identity {grid-column:1 / 4}
+ .operations-shell .list-view-cards .list-view-table .request-list-card .request-card-meta {grid-row:auto}
+ .operations-shell .list-view-cards .list-view-table .request-list-card .request-card-state {grid-column:4}
+}
+@media(max-width:620px){
+ .operations-shell .list-view-cards .list-view-table tr.request-list-card {grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding:18px}
+ .operations-shell .list-view-cards .list-view-table .request-list-card .request-card-identity {grid-column:1 / -1;grid-row:1;padding:0 0 16px;gap:8px}
+ .operations-shell .request-card-identity .client-link {padding-left:0;border:0;width:100%}
+ .operations-shell .list-view-cards .list-view-table .request-list-card .request-card-meta {grid-column:auto;grid-row:auto;padding:0}
+ .operations-shell .list-view-cards .list-view-table .request-list-card .request-card-state {grid-column:1 / -1;grid-row:auto;padding:12px 0 0;border-left:0;border-top:1px solid #e5eaf0}
 }
 .operations-shell .operations-menu-item { font-size: 14px; }
 .operations-shell .breadcrumb { font-size: 13px; }
