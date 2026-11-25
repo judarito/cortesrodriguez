@@ -1139,6 +1139,29 @@ onMounted(restoreSession)
 .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(8):has(.status-pill) { grid-row: 3 / span 2; }
 .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6):has(.status-pill)::before { content: 'Solicitud'; }
 .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(8):has(.status-pill)::before { content: 'Comunicación'; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) {
+  grid-template-areas:
+    "reference client request-status"
+    "service product payment-status"
+    "expert expert communication-status"
+    "source agent communication-status"
+    "date date communication-status";
+}
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(5) { grid-area: expert; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(6) { grid-area: request-status; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(7) { grid-area: payment-status; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(8) { grid-area: communication-status; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(9) { grid-area: source; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(10) { grid-area: agent; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(11) { grid-area: date; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(6),
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(7),
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(8) { grid-column: 3; grid-row: auto; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(6) { grid-row: 1; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(7) { grid-row: 2; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(8) { grid-row: 3 / span 3; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(6)::before { content: 'Solicitud'; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link):has(td:nth-child(6) .status-pill) td:nth-child(8)::before { content: 'Comunicación'; }
 @media (max-width: 720px) {
   .operations-shell .list-view-cards .list-view-table tr:has(.request-link) {
     display: grid;
