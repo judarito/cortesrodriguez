@@ -1084,6 +1084,79 @@ onMounted(restoreSession)
 <style>
 /* Keep operational text readable across admin, agent, reviewer, and expert roles. */
 .operations-shell { font-size: 14px; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 220px;
+  grid-template-areas:
+    "reference client request-status"
+    "service product payment-status"
+    "source agent communication-status"
+    "date date communication-status";
+  align-items: center;
+  gap: 16px 22px;
+  padding: 22px 24px;
+}
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td { min-width: 0; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(1) { grid-area: reference; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(2) { grid-area: client; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(3) { grid-area: service; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(4) { grid-area: product; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(8) { grid-area: source; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(9) { grid-area: agent; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(10) { grid-area: date; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(5),
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6),
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7) {
+  grid-column: 3;
+  padding: 2px 0 2px 18px;
+  border-left: 1px solid #dce5ed;
+}
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(5) { grid-row: 1; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6) { grid-row: 2; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7) { grid-row: 3 / span 2; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(5)::before { content: 'Solicitud'; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7)::before { content: 'Comunicación'; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(5)::before,
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6)::before,
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7)::before { font-size: 11px; font-weight: 500; text-transform:none; letter-spacing:0; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) .request-link,
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) .client-link { font-size: 16px; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) .status-pill { align-self: start; width: fit-content; font-size: 12px; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(5):not(:has(.status-pill)) {
+  grid-area: expert;
+  grid-column: auto;
+  grid-row: auto;
+  padding: 0;
+  border-left: 0;
+}
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(9):not(:has(.status-pill)) { grid-area: source; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(10):not(:has(.status-pill)) { grid-area: agent; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(11):not(:has(.status-pill)) { grid-area: date; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6):has(.status-pill),
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7):has(.status-pill),
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(8):has(.status-pill) { grid-column: 3; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6):has(.status-pill) { grid-row: 1; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(7):has(.status-pill) { grid-row: 2; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(8):has(.status-pill) { grid-row: 3 / span 2; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(6):has(.status-pill)::before { content: 'Solicitud'; }
+.operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(8):has(.status-pill)::before { content: 'Comunicación'; }
+@media (max-width: 720px) {
+  .operations-shell .list-view-cards .list-view-table tr:has(.request-link) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas: none;
+    gap: 14px;
+  }
+  .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td,
+  .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(n) {
+    grid-area: auto;
+    grid-column: auto;
+    grid-row: auto;
+    padding: 0;
+    border-left: 0;
+  }
+  .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(1),
+  .operations-shell .list-view-cards .list-view-table tr:has(.request-link) td:nth-child(2) { grid-column: 1 / -1; }
+}
 .operations-shell .operations-menu-item { font-size: 14px; }
 .operations-shell .breadcrumb { font-size: 13px; }
 .operations-shell .sidebar-label { font-size: 11px; }
